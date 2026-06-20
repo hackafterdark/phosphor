@@ -10,8 +10,8 @@ const docTemplate = `{
         "description": "{{escape .Description}}",
         "title": "{{.Title}}",
         "contact": {
-            "name": "Charm",
-            "url": "https://charm.sh"
+            "name": "Phosphor",
+            "url": "https://github.com/hackafterdark/phosphor"
         },
         "license": {
             "name": "MIT",
@@ -1825,7 +1825,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/github_com_charmbracelet_phosphor_internal_proto.Message"
+                                "$ref": "#/definitions/github_com_hackafterdark_phosphor_internal_proto.Message"
                             }
                         }
                     },
@@ -2519,7 +2519,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/github_com_charmbracelet_phosphor_internal_proto.Message"
+                                "$ref": "#/definitions/github_com_hackafterdark_phosphor_internal_proto.Message"
                             }
                         }
                     },
@@ -2569,7 +2569,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/github_com_charmbracelet_phosphor_internal_proto.Message"
+                                "$ref": "#/definitions/github_com_hackafterdark_phosphor_internal_proto.Message"
                             }
                         }
                     },
@@ -2966,7 +2966,7 @@ const docTemplate = `{
         "csync.Map-string-config_ProviderConfig": {
             "type": "object"
         },
-        "github_com_charmbracelet_phosphor_internal_config.Config": {
+        "github_com_hackafterdark_phosphor_internal_config.Config": {
             "type": "object",
             "properties": {
                 "$schema": {
@@ -2995,7 +2995,7 @@ const docTemplate = `{
                     }
                 },
                 "options": {
-                    "$ref": "#/definitions/github_com_charmbracelet_phosphor_internal_config.Options"
+                    "$ref": "#/definitions/github_com_hackafterdark_phosphor_internal_config.Options"
                 },
                 "permissions": {
                     "$ref": "#/definitions/config.Permissions"
@@ -3023,7 +3023,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_charmbracelet_phosphor_internal_config.Options": {
+        "github_com_hackafterdark_phosphor_internal_config.Options": {
             "type": "object",
             "properties": {
                 "attribution": {
@@ -3092,7 +3092,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_charmbracelet_phosphor_internal_proto.Message": {
+        "github_com_hackafterdark_phosphor_internal_proto.Message": {
             "type": "object",
             "properties": {
                 "created_at": {
@@ -3643,7 +3643,7 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "config": {
-                    "$ref": "#/definitions/github_com_charmbracelet_phosphor_internal_config.Config"
+                    "$ref": "#/definitions/github_com_hackafterdark_phosphor_internal_config.Config"
                 },
                 "data_dir": {
                     "type": "string"

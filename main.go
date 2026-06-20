@@ -3,8 +3,8 @@
 //	@title			Phosphor API
 //	@version		1.0
 //	@description	Phosphor is a terminal-based AI coding assistant. This API is served over a Unix socket (or Windows named pipe) and provides programmatic access to workspaces, sessions, agents, LSP, MCP, and more.
-//	@contact.name	Charm
-//	@contact.url	https://charm.sh
+//	@contact.name	HackAfterDark
+//	@contact.url	https://hackafterdark.com
 //	@license.name	MIT
 //	@license.url	https://github.com/hackafterdark/phosphor/blob/main/LICENSE
 //	@BasePath		/v1

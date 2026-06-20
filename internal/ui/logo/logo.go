@@ -91,7 +91,7 @@ func Render(base lipgloss.Style, version string, compact bool, o Opts) string {
 	}
 	phosphor = b.String()
 
-	// Charm and version.
+	// Logo and version.
 	metaRowGap := 1
 	maxVersionWidth := phosphorWidth - lipgloss.Width(charm) - metaRowGap
 	version = ansi.Truncate(version, maxVersionWidth, "…") // truncate version if too long.

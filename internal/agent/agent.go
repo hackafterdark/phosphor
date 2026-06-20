@@ -59,7 +59,7 @@ const (
 	DefaultSessionName = "Untitled Session"
 )
 
-var userAgent = fmt.Sprintf("Charm-Phosphor/%s (https://charm.land/phosphor)", version.Version)
+var userAgent = fmt.Sprintf("Phosphor/%s (https://github.com/hackafterdark/phosphor)", version.Version)
 
 //go:embed templates/title.md
 var titlePrompt []byte

@@ -15,7 +15,7 @@ interactions:
       Content-Type:
       - application/json
       User-Agent:
-      - Charm-Phosphor/devel (https://charm.land/phosphor)
+      - Phosphor/devel (https://charm.land/phosphor)
     url: https://hyper.charm.land/v1/chat/completions
     method: POST
   response:
@@ -79,7 +79,7 @@ interactions:
       Content-Type:
       - application/json
       User-Agent:
-      - Charm-Phosphor/devel (https://charm.land/phosphor)
+      - Phosphor/devel (https://charm.land/phosphor)
     url: https://hyper.charm.land/v1/chat/completions
     method: POST
   response:
@@ -455,7 +455,7 @@ interactions:
       Content-Type:
       - application/json
       User-Agent:
-      - Charm-Phosphor/devel (https://charm.land/phosphor)
+      - Phosphor/devel (https://charm.land/phosphor)
     url: https://hyper.charm.land/v1/chat/completions
     method: POST
   response:
