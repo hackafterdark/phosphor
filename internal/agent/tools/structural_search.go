@@ -11,6 +11,7 @@ import (
 
 	"charm.land/fantasy"
 	"github.com/hackafterdark/phosphor/internal/agent/parser"
+	"github.com/hackafterdark/phosphor/internal/filepathext"
 	"github.com/hackafterdark/phosphor/internal/otel"
 	"go.opentelemetry.io/otel/attribute"
 )
@@ -296,9 +297,13 @@ func executeStructuralSearch(ctx context.Context, workingDir string, params Stru
 		), nil
 	}
 
-	searchPath := params.Path
-	if searchPath == "" {
-		searchPath = workingDir
+	searchPath := workingDir
+	if params.Path != "" {
+		resolved, err := filepathext.ResolveSearchPath(workingDir, params.Path)
+		if err != nil {
+			return fantasy.NewTextErrorResponse(fmt.Sprintf("error resolving search path: %v", err)), nil
+		}
+		searchPath = resolved
 	}
 
 	// Determine language: use explicit param, or detect from first file

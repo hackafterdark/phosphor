@@ -25,3 +25,19 @@ func SmartIsAbs(path string) bool {
 		return filepath.IsAbs(path)
 	}
 }
+
+// ResolveSearchPath resolves a search path against a working directory.
+// If the path is empty, it returns the absolute path of the working directory.
+// If the path is relative, it joins it with the working directory and returns
+// the absolute path. Absolute paths are returned as-is (resolved to absolute).
+func ResolveSearchPath(workingDir, searchPath string) (string, error) {
+	if searchPath == "" {
+		return filepath.Abs(workingDir)
+	}
+
+	if !SmartIsAbs(searchPath) {
+		searchPath = filepath.Join(workingDir, searchPath)
+	}
+
+	return filepath.Abs(searchPath)
+}

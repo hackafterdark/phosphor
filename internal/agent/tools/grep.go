@@ -3,7 +3,6 @@ package tools
 import (
 	"bufio"
 	"bytes"
-	"cmp"
 	"context"
 	_ "embed"
 	"encoding/json"
@@ -22,6 +21,7 @@ import (
 	"charm.land/fantasy"
 	"github.com/hackafterdark/phosphor/internal/config"
 	"github.com/hackafterdark/phosphor/internal/csync"
+	"github.com/hackafterdark/phosphor/internal/filepathext"
 	"github.com/hackafterdark/phosphor/internal/fsext"
 	"github.com/hackafterdark/phosphor/internal/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -143,7 +143,10 @@ func NewGrepTool(workingDir string, config config.ToolGrep) fantasy.AgentTool {
 				searchPattern = escapeRegexPattern(params.Pattern)
 			}
 
-			searchPath := cmp.Or(params.Path, workingDir)
+			searchPath, err := filepathext.ResolveSearchPath(workingDir, params.Path)
+			if err != nil {
+				return fantasy.NewTextErrorResponse(fmt.Sprintf("error resolving search path: %v", err)), nil
+			}
 
 			searchCtx, cancel := context.WithTimeout(ctx, config.GetTimeout())
 			defer cancel()
@@ -413,7 +416,7 @@ func isTextFile(filePath string) bool {
 
 	// Read first 512 bytes for MIME type detection.
 	buffer := make([]byte, 512)
-	n, err := file.Read(buffer)
+	n, err := file.Read(buffer[:512])
 	if err != nil && err != io.EOF {
 		return false
 	}

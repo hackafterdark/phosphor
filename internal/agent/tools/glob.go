@@ -2,7 +2,6 @@ package tools
 
 import (
 	"bytes"
-	"cmp"
 	"context"
 	_ "embed"
 	"fmt"
@@ -66,7 +65,10 @@ func NewGlobTool(workingDir string) fantasy.AgentTool {
 				return fantasy.NewTextErrorResponse("pattern is required"), nil
 			}
 
-			searchPath := cmp.Or(params.Path, workingDir)
+			searchPath, err := filepathext.ResolveSearchPath(workingDir, params.Path)
+			if err != nil {
+				return fantasy.NewTextErrorResponse(fmt.Sprintf("error resolving search path: %v", err)), nil
+			}
 
 			files, truncated, err := globFiles(ctx, params.Pattern, searchPath, 100)
 			if err != nil {
