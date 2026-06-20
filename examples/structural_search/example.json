@@ -1,0 +1,30 @@
+{
+  "name": "phosphor-structural-search",
+  "version": "1.0.0",
+  "description": "Example JSON for structural search testing",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "test": "jest",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "express": "^4.18.0",
+    "lodash": "^4.17.21"
+  },
+  "devDependencies": {
+    "jest": "^29.0.0",
+    "eslint": "^8.0.0"
+  },
+  "keywords": ["example", "testing"],
+  "author": "Phosphor",
+  "license": "MIT",
+  "config": {
+    "host": "localhost",
+    "port": 3000,
+    "features": {
+      "darkMode": true,
+      "notifications": false
+    }
+  }
+}

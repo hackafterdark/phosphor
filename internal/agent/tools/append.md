@@ -1,0 +1,1 @@
+Append content to the end of a file; creates the file if it does not exist. Auto-creates parent directories. For replacing specific content use edit or multiedit.
