@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/hackafterdark/phosphor/internal/agent/hyper"
-	"github.com/hackafterdark/phosphor/internal/event"
 	"github.com/hackafterdark/phosphor/internal/oauth"
 )
 
@@ -102,7 +101,6 @@ func PollForToken(ctx context.Context, deviceCode string, expiresIn int) (string
 				return "", err
 			}
 			if result.RefreshToken != "" {
-				event.Alias(result.UserID)
 				return result.RefreshToken, nil
 			}
 			switch result.Error {

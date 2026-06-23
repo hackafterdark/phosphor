@@ -18,7 +18,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/hackafterdark/phosphor/internal/client"
 	"github.com/hackafterdark/phosphor/internal/config"
-	"github.com/hackafterdark/phosphor/internal/event"
 	"github.com/hackafterdark/phosphor/internal/format"
 	"github.com/hackafterdark/phosphor/internal/proto"
 	"github.com/hackafterdark/phosphor/internal/pubsub"
@@ -86,24 +85,12 @@ phosphor run --continue "Follow up on your last response"
 		if prompt == "" {
 			return fmt.Errorf("no prompt provided")
 		}
-
-		event.SetNonInteractive(true)
-
-		switch {
-		case sessionID != "":
-			event.SetContinueBySessionID(true)
-		case useLast:
-			event.SetContinueLastSession(true)
-		}
-
 		if useClientServer() {
 			c, ws, cleanup, err := connectToServer(cmd)
 			if err != nil {
 				return err
 			}
 			defer cleanup()
-
-			event.AppInitialized()
 
 			if sessionID != "" {
 				sess, err := resolveSessionByID(ctx, c, ws.ID, sessionID)
@@ -129,8 +116,6 @@ phosphor run --continue "Follow up on your last response"
 			return err
 		}
 		defer cleanup()
-
-		event.AppInitialized()
 
 		if !ws.Config().IsConfigured() {
 			return fmt.Errorf("no providers configured - please run 'phosphor' to set up a provider interactively")

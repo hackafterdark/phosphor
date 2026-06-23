@@ -34,7 +34,6 @@ import (
 	"github.com/hackafterdark/phosphor/internal/client"
 	"github.com/hackafterdark/phosphor/internal/config"
 	"github.com/hackafterdark/phosphor/internal/db"
-	"github.com/hackafterdark/phosphor/internal/event"
 	"github.com/hackafterdark/phosphor/internal/lock"
 	phosphorlog "github.com/hackafterdark/phosphor/internal/log"
 	"github.com/hackafterdark/phosphor/internal/projects"
@@ -123,9 +122,7 @@ phosphor --continue
 			}
 			sessionID = sess.ID
 		}
-
-		event.AppInitialized()
-
+		
 		com := common.NewCommon(ws, dbConn)
 		model := ui.New(com, sessionID, continueLast)
 
@@ -140,9 +137,8 @@ phosphor --continue
 		go ws.Subscribe(program)
 
 		if _, err := program.Run(); err != nil {
-			event.Error(err)
 			slog.Error("TUI run error", "error", err)
-			return errors.New("Phosphor crashed. If metrics are enabled, we were notified about it. If you'd like to report it, please copy the stacktrace above and open an issue at https://github.com/hackafterdark/phosphor/issues/new?template=bug.yml") //nolint:staticcheck
+			return errors.New("Phosphor crashed. If you'd like to report it, please copy the stacktrace above and open an issue at https://github.com/hackafterdark/phosphor/issues/new?template=bug.yml") //nolint:staticcheck
 		}
 		return nil
 	},
@@ -311,10 +307,6 @@ func setupLocalWorkspace(cmd *cobra.Command) (workspace.Workspace, func(), *sql.
 		return nil, nil, nil, err
 	}
 
-	if shouldEnableMetrics(cfg) {
-		event.Init()
-	}
-
 	ws := workspace.NewAppWorkspace(appInstance, store)
 	cleanup := func() { appInstance.Shutdown() }
 	return ws, cleanup, conn, err
@@ -399,10 +391,6 @@ func connectToServer(cmd *cobra.Command) (*client.Client, *proto.Workspace, func
 	ws, err := c.CreateWorkspace(ctx, wsReq)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to create workspace: %v", err)
-	}
-
-	if shouldEnableMetrics(ws.Config) {
-		event.Init()
 	}
 
 	if ws.Config != nil {
@@ -761,19 +749,6 @@ func startDetachedServer(cmd *cobra.Command, hostURL *url.URL) error {
 	}
 
 	return nil
-}
-
-func shouldEnableMetrics(cfg *config.Config) bool {
-	if v, _ := strconv.ParseBool(os.Getenv("PHOSPHOR_DISABLE_METRICS")); v {
-		return false
-	}
-	if v, _ := strconv.ParseBool(os.Getenv("DO_NOT_TRACK")); v {
-		return false
-	}
-	if cfg.Options.DisableMetrics {
-		return false
-	}
-	return true
 }
 
 func MaybePrependStdin(prompt string) (string, error) {

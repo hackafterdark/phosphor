@@ -861,8 +861,6 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 		}
 	}
 
-	startTime := time.Now()
-	a.eventPromptSent(call.SessionID)
 
 	// Create OTEL span for prompt with attachments.
 	var promptWithAttachmentsSpan trace.Span
@@ -1197,7 +1195,6 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 		},
 	})
 
-	a.eventPromptResponded(call.SessionID, time.Since(startTime).Truncate(time.Second))
 
 	if err != nil {
 		isHyper := largeModel.ModelCfg.Provider == hyper.Name
@@ -2154,10 +2151,6 @@ func (a *sessionAgent) updateSessionUsage(ctx context.Context, model Model, sess
 		modelConfig.CostPer1MOutCached/1e6*float64(usage.CacheReadTokens) +
 		modelConfig.CostPer1MIn/1e6*float64(usage.InputTokens) +
 		modelConfig.CostPer1MOut/1e6*float64(usage.OutputTokens)
-
-	if !estimated {
-		a.eventTokensUsed(session.ID, model, usage, cost)
-	}
 
 	if estimated {
 		cost = 0

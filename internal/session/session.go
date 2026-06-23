@@ -11,7 +11,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/hackafterdark/phosphor/internal/db"
-	"github.com/hackafterdark/phosphor/internal/event"
 	"github.com/hackafterdark/phosphor/internal/pubsub"
 	"github.com/zeebo/xxh3"
 )
@@ -105,7 +104,6 @@ func (s *service) Create(ctx context.Context, title string) (Session, error) {
 	}
 	session := s.fromDBItem(dbSession)
 	s.Publish(pubsub.CreatedEvent, session)
-	event.SessionCreated()
 	return session, nil
 }
 
@@ -166,7 +164,6 @@ func (s *service) Delete(ctx context.Context, id string) error {
 	session := s.fromDBItem(dbSession)
 	s.clearEstimatedUsageState(dbSession.ID)
 	s.Publish(pubsub.DeletedEvent, session)
-	event.SessionDeleted()
 	return nil
 }
 

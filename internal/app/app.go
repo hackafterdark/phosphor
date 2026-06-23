@@ -28,7 +28,6 @@ import (
 	"github.com/hackafterdark/phosphor/internal/clipboard"
 	"github.com/hackafterdark/phosphor/internal/config"
 	"github.com/hackafterdark/phosphor/internal/db"
-	"github.com/hackafterdark/phosphor/internal/event"
 	"github.com/hackafterdark/phosphor/internal/filetracker"
 	"github.com/hackafterdark/phosphor/internal/format"
 	"github.com/hackafterdark/phosphor/internal/goal"
@@ -698,11 +697,6 @@ func (app *App) Shutdown() {
 
 	// Now run remaining cleanup tasks in parallel.
 	var wg sync.WaitGroup
-
-	// Send exit event
-	wg.Go(func() {
-		event.AppExited()
-	})
 
 	// Kill all background shells.
 	wg.Go(func() {

@@ -23,7 +23,6 @@ import (
 	"github.com/hackafterdark/phosphor/internal/agent/tools"
 	"github.com/hackafterdark/phosphor/internal/config"
 	"github.com/hackafterdark/phosphor/internal/discover"
-	"github.com/hackafterdark/phosphor/internal/event"
 	"github.com/hackafterdark/phosphor/internal/filetracker"
 	"github.com/hackafterdark/phosphor/internal/goal"
 	"github.com/hackafterdark/phosphor/internal/history"
@@ -1161,7 +1160,6 @@ func (c *coordinator) buildProvider(providerCfg config.ProviderConfig, model con
 		switch providerCfg.ID {
 		case hyper.Name:
 			baseURL = hyper.BaseURL() + "/v1"
-			headers["x-phosphor-id"] = event.GetID()
 		case string(catwalk.InferenceProviderZAI):
 			if providerCfg.ExtraBody == nil {
 				providerCfg.ExtraBody = map[string]any{}
