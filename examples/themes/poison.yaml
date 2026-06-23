@@ -1,0 +1,34 @@
+# Phosphor Theme: Poison
+name: Poison
+primary: "#00FF41"
+secondary: "#008F11"
+accent: "#00FF41"
+keyword: "#00FF41"
+
+# Backgrounds (Maintained for depth)
+bgBase: "#000000"
+bgMostVisible: "#0d0d0d"
+bgLessVisible: "#050505"
+bgLeastVisible: "#020202"
+
+# Foregrounds (Shifted up to ensure readability)
+fgBase: "#E8E8E8"        # Brighter Off-white
+fgSubtle: "#C0C0C0"      # Much more visible
+fgMoreSubtle: "#888888"  # Clearly legible metadata
+fgMostSubtle: "#505050"  # Visible, but still receded
+
+# Component Overrides
+dialogSelectedBackground: "#004B00"
+dialogSelectedForeground: "#FFFFFF"
+
+# Status colors
+success: "#00FF41"
+error: "#FF5555"         # Slightly warmer red for readability
+warning: "#E0B000"       # Golden amber, brighter
+info: "#00FF41"
+
+# Logo Branding
+logo:
+  figlet_font: "Poison"
+  figlet_solid: true
+  sidebar_logo_type: "figlet"

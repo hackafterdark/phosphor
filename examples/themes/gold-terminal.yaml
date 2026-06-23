@@ -1,0 +1,43 @@
+# Phosphor Theme: Gold-Terminal
+name: Gold-Terminal
+primary: "#E6B450"        # Warm Amber Gold
+secondary: "#9C7D38"      # Muted Bronze
+accent: "#E6B450"         # Warm Amber
+keyword: "#E6B450"        # Warm Amber
+
+# Backgrounds (Charcoal instead of blue/black)
+bgBase: "#1A1A1A"
+bgMostVisible: "#262626"
+bgLessVisible: "#202020"
+bgLeastVisible: "#161616"
+
+# Foregrounds (Warm neutrals)
+fgBase: "#D1CFC9"
+fgSubtle: "#A5A39E"
+fgMoreSubtle: "#706E6A"
+fgMostSubtle: "#403E3A"
+
+# Contrast pairings
+onPrimary: "#1A1A1A"
+separator: "#262626"
+
+# Component Overrides (Using the new keys)
+dialogSelectedBackground: "#403520" # Dark bronze selection
+dialogSelectedForeground: "#FFFFFF" 
+buttonFocusedBackground: "#9C7D38"
+buttonFocusedForeground: "#FFFFFF"
+
+# Status colors
+success: "#85B660"        # Soft leaf green
+error: "#D56868"          # Desaturated brick red
+warning: "#E6B450"        # Amber warning
+info: "#68A5D5"           # Muted slate blue
+destructive: "#D56868"
+denied: "#D56868"
+busy: "#E6B450"
+
+# Logo
+logo:
+  app_title: "PHOSPHOR"
+  figlet_font: "Pagga"
+  figlet_solid: true

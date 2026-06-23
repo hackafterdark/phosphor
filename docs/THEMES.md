@@ -86,6 +86,45 @@ Here is a reference of the available color keys you can define in your theme fil
 | `denied` | Permission denied status | Tool call refusal banners, security alerts. |
 | `busy` | Processing status | Active prompt generator spinners, loading states. |
 
+### Component Overrides
+
+Override keys let you target specific UI elements without changing their underlying palette token. This is useful when a single color (like `primary` or `secondary`) is shared across multiple elements and you only want to adjust one. All override keys are optional — if omitted, the element falls back to its normal palette token.
+
+#### Dialog Selected Items (Command Menu, Model Selector, Session List, Reasoning, Notifications)
+
+| Key | Fallback | Description |
+| :--- | :--- | :--- |
+| `dialogSelectedBackground` | `primary` | Background color of the highlighted row in list-based dialogs. |
+| `dialogSelectedForeground` | `onPrimary` | Text color of the highlighted row in list-based dialogs. |
+
+**Example use case**: Your `primary` is a bright green that makes white text hard to read in the command menu. Set `dialogSelectedBackground` to a darker shade without affecting the logo, headers, or other `primary` elements.
+
+#### Buttons (Quit Confirmation, Modal Dialogs)
+
+| Key | Fallback | Description |
+| :--- | :--- | :--- |
+| `buttonFocusedBackground` | `secondary` | Background of a button when it is selected/focused. |
+| `buttonFocusedForeground` | `onPrimary` | Text color of a button when it is selected/focused. |
+| `buttonBlurredBackground` | `bgLessVisible` | Background of a button when it is unselected/unfocused. |
+| `buttonBlurredForeground` | `fgBase` | Text color of a button when it is unselected/unfocused. |
+
+**Example use case**: The quit confirmation dialog buttons use `secondary` for the focused button. If `secondary` clashes with the dialog background, override `buttonFocusedBackground` independently.
+
+```yaml
+# Example: Override just the command menu selection and button colors.
+name: My Theme
+primary: "#3787A2"
+secondary: "#52B4E3"
+
+# Override the command menu highlight without touching `primary`.
+dialogSelectedBackground: "#2A6070"
+dialogSelectedForeground: "#f8f8f2"
+
+# Override the quit dialog button colors without touching `secondary`.
+buttonFocusedBackground: "#1E3A4A"
+buttonFocusedForeground: "#f8f8f2"
+```
+
 ---
 
 ## Logo Branding

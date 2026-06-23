@@ -1,0 +1,40 @@
+# Phosphor Theme: AfterDark-Gothic
+name: AfterDark-Gothic
+primary: "#00F0FF"        # Cyber Cyan
+secondary: "#FF007F"      # Neon Magenta
+accent: "#00F0FF"
+keyword: "#FF007F"
+
+# Backgrounds (The "Midnight" foundation)
+bgBase: "#0D0E1C"         # Deep Midnight Navy
+bgMostVisible: "#1B1D33"
+bgLessVisible: "#16182E"
+bgLeastVisible: "#121426"
+
+# Foregrounds (Soft, neutral whites)
+fgBase: "#E0E4E8"
+fgSubtle: "#B0B4B8"
+fgMoreSubtle: "#707880"
+fgMostSubtle: "#404850"
+
+# UI Structural
+sectionTitle: "#00F0FF"   # Electric Cyan for headers
+sectionLine: "#1B1D33"    # Subtle contrast
+
+# Component Overrides (Legibility prioritized)
+dialogSelectedBackground: "#242845" # Muted deep indigo
+dialogSelectedForeground: "#FFFFFF" 
+
+# Status colors
+success: "#50FA7B"        # Mint green for a fresh contrast
+error: "#FF5555"          
+warning: "#FFB86C"        
+info: "#8BE9FD"           # Soft sky blue
+destructive: "#FF3333"
+
+# Logo Branding
+logo:
+  app_title: "Phosphor"
+  figlet_font: "Fraktur"
+  figlet_solid: false
+  sidebar_logo_type: "plain_text"

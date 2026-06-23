@@ -73,6 +73,71 @@ bgBase: "#0000FF"
 	}
 }
 
+func TestThemeDialogSelectedItemOverride(t *testing.T) {
+	tempDir := t.TempDir()
+
+	yamlContent := `
+name: Test Theme
+primary: "#FF0000"
+dialogSelectedBackground: "#00FF00"
+dialogSelectedForeground: "#0000FF"
+`
+	path := filepath.Join(tempDir, "theme.yaml")
+	if err := os.WriteFile(path, []byte(yamlContent), 0o644); err != nil {
+		t.Fatalf("failed to write test theme: %v", err)
+	}
+
+	s := Theme(path, "openai", "")
+
+	bgHex := hex(s.Dialog.SelectedItem.GetBackground())
+	if bgHex == nil || *bgHex != "#00ff00" {
+		t.Errorf("expected dialog selected background #00ff00, got %v", bgHex)
+	}
+
+	fgHex := hex(s.Dialog.SelectedItem.GetForeground())
+	if fgHex == nil || *fgHex != "#0000ff" {
+		t.Errorf("expected dialog selected foreground #0000ff, got %v", fgHex)
+	}
+}
+
+func TestThemeButtonOverrides(t *testing.T) {
+	tempDir := t.TempDir()
+
+	yamlContent := `
+name: Test Theme
+buttonFocusedBackground: "#111111"
+buttonFocusedForeground: "#222222"
+buttonBlurredBackground: "#333333"
+buttonBlurredForeground: "#444444"
+`
+	path := filepath.Join(tempDir, "theme.yaml")
+	if err := os.WriteFile(path, []byte(yamlContent), 0o644); err != nil {
+		t.Fatalf("failed to write test theme: %v", err)
+	}
+
+	s := Theme(path, "openai", "")
+
+	bgHex := hex(s.Button.Focused.GetBackground())
+	if bgHex == nil || *bgHex != "#111111" {
+		t.Errorf("expected focused button background #111111, got %v", bgHex)
+	}
+
+	fgHex := hex(s.Button.Focused.GetForeground())
+	if fgHex == nil || *fgHex != "#222222" {
+		t.Errorf("expected focused button foreground #222222, got %v", fgHex)
+	}
+
+	bgHex = hex(s.Button.Blurred.GetBackground())
+	if bgHex == nil || *bgHex != "#333333" {
+		t.Errorf("expected blurred button background #333333, got %v", bgHex)
+	}
+
+	fgHex = hex(s.Button.Blurred.GetForeground())
+	if fgHex == nil || *fgHex != "#444444" {
+		t.Errorf("expected blurred button foreground #444444, got %v", fgHex)
+	}
+}
+
 func TestThemeLookup(t *testing.T) {
 	tempDir := t.TempDir()
 

@@ -1,0 +1,40 @@
+# Phosphor Theme: Synthwave
+name: Synthwave
+# The Goldilocks Palette: Vibrant, but controlled
+primary: "#d93d9e"        # Balanced Orchid (Pop, but not piercing)
+secondary: "#00a8b5"      # Balanced Teal (Rich, but not radioactive)
+accent: "#bf45bf"         # Tied to the orchid hue
+keyword: "#f2e66d"        # Sunny, readable yellow
+
+# Backgrounds
+bgBase: "#10141a"         # Deep, solid midnight
+bgMostVisible: "#1a1f26"
+bgLessVisible: "#14181e"
+bgLeastVisible: "#0c1014"
+
+# Foregrounds
+fgBase: "#f0f0f0"         # Clean, neutral white
+fgSubtle: "#c0c0c0"
+fgMoreSubtle: "#909090"
+fgMostSubtle: "#606060"
+
+# Contrast pairings
+onPrimary: "#10141a"
+separator: "#1a1f26"
+
+# Status colors
+success: "#45c585"        # Natural, legible green
+error: "#e64545"          # Clear, warning-red
+warning: "#e6a545"        # Soft-orange sunset
+info: "#4595c5"           # Deep sky blue
+
+# Section titles and lines
+sectionTitle: "#bf45bf"   # Defaults to charmtone.Oyster (#605F6B)
+sectionLine: "#1a1f26"    # Defaults to charmtone.Char (#3A3943)
+# sectionSeparator: ":" # Defaults to -
+
+# Logo title and figlet font
+logo:
+    app_title: "Phosphor"
+    figlet_font: "Shaded_Blocky"
+    figlet_solid: true

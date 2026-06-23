@@ -67,6 +67,17 @@ type ThemePalette struct {
 
 	// Logo configuration for the application logo and sidebar logo.
 	Logo *ThemeLogoConfig `json:"logo,omitempty" yaml:"logo,omitempty"`
+
+	// Dialog selected item override colors. These allow the command menu
+	// and other list-based dialog items to use a different background/foreground
+	// for the highlighted row without affecting the rest of the `primary` token.
+	DialogSelectedBackground *string `json:"dialogSelectedBackground,omitempty" yaml:"dialogSelectedBackground,omitempty"`
+	DialogSelectedForeground *string `json:"dialogSelectedForeground,omitempty" yaml:"dialogSelectedForeground,omitempty"`
+	// Button override colors.
+	ButtonFocusedBackground *string `json:"buttonFocusedBackground,omitempty" yaml:"buttonFocusedBackground,omitempty"`
+	ButtonFocusedForeground *string `json:"buttonFocusedForeground,omitempty" yaml:"buttonFocusedForeground,omitempty"`
+	ButtonBlurredBackground *string `json:"buttonBlurredBackground,omitempty" yaml:"buttonBlurredBackground,omitempty"`
+	ButtonBlurredForeground *string `json:"buttonBlurredForeground,omitempty" yaml:"buttonBlurredForeground,omitempty"`
 }
 
 // ThemeForProvider returns the Styles associated with the given provider
@@ -152,6 +163,26 @@ func Theme(themeOption string, providerID string, workingDir string) Styles {
 
 	if palette.SectionSeparator != nil {
 		s.SectionSeparator = *palette.SectionSeparator
+	}
+
+	if palette.DialogSelectedBackground != nil {
+		s.Dialog.SelectedItem = s.Dialog.SelectedItem.Background(parseColor(palette.DialogSelectedBackground, baseOpts.primary))
+	}
+	if palette.DialogSelectedForeground != nil {
+		s.Dialog.SelectedItem = s.Dialog.SelectedItem.Foreground(parseColor(palette.DialogSelectedForeground, baseOpts.onPrimary))
+	}
+
+	if palette.ButtonFocusedBackground != nil {
+		s.Button.Focused = s.Button.Focused.Background(parseColor(palette.ButtonFocusedBackground, baseOpts.secondary))
+	}
+	if palette.ButtonFocusedForeground != nil {
+		s.Button.Focused = s.Button.Focused.Foreground(parseColor(palette.ButtonFocusedForeground, baseOpts.onPrimary))
+	}
+	if palette.ButtonBlurredBackground != nil {
+		s.Button.Blurred = s.Button.Blurred.Background(parseColor(palette.ButtonBlurredBackground, baseOpts.bgLessVisible))
+	}
+	if palette.ButtonBlurredForeground != nil {
+		s.Button.Blurred = s.Button.Blurred.Foreground(parseColor(palette.ButtonBlurredForeground, baseOpts.fgBase))
 	}
 
 	// Apply logo configuration from theme if present.
