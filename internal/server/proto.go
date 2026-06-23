@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/google/uuid"
 	"github.com/hackafterdark/phosphor/internal/backend"
 	"github.com/hackafterdark/phosphor/internal/proto"
 	"github.com/hackafterdark/phosphor/internal/session"
-	"github.com/google/uuid"
 )
 
 type controllerV1 struct {

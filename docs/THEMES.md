@@ -1,6 +1,6 @@
 # TUI Theme System
 
-Phosphor features a robust, user-configurable theme system for its terminal interface (TUI). You can customize every aspect of the application's color scheme using simple YAML or JSON files.
+Phosphor features a robust, user-configurable theme system for its terminal interface (TUI). You can customize every aspect of the application's color scheme and logo branding using simple YAML or JSON files.
 
 ---
 
@@ -43,8 +43,8 @@ Here is a reference of the available color keys you can define in your theme fil
 ### Brand & Brand Contrast
 | Key | Description | TUI Elements Controlled |
 | :--- | :--- | :--- |
-| `primary` | Primary brand accent color | Top-level title background, "PHOSPHOR" logo gradient start, active dialog header gradient start. |
-| `secondary` | Secondary brand accent color | Blinking cursor color, logo gradient end, active selection bars, focus border lines. |
+| `primary` | Primary brand accent color | Top-level title background, active dialog header gradient start. |
+| `secondary` | Secondary brand accent color | Blinking cursor color, active selection bars, focus border lines. |
 | `accent` | Brand highlighting accent | Focused input prompt character (`>`), active list bullets. |
 | `keyword` | Keyword highlight color | Code block syntax highlighting for programming language keywords. |
 | `onPrimary` | Text on primary backgrounds | Color of text when it sits on top of a `primary`-colored background. |
@@ -88,6 +88,31 @@ Here is a reference of the available color keys you can define in your theme fil
 
 ---
 
+## Logo Branding
+
+Themes can include a `logo` block to define the application's visual branding. This replaces the old `options.tui` logo settings.
+
+```yaml
+logo:
+  app_title: "Phosphor"
+  figlet_font: "Pagga"
+  figlet_solid: false
+  sidebar_logo_type: "figlet"
+  sidebar_figlet_font: "Pagga"
+```
+
+| Key | Type | Description |
+| :--- | :--- | :--- |
+| `app_title` | `string` | Text displayed as the logo on startup and in the sidebar (default: `"Phosphor"`) |
+| `figlet_font` | `string` | Built-in font name or absolute path to a `.flf` file (default: `"Pagga"`) |
+| `figlet_solid` | `bool` | Render with solid block characters (default: `false`) |
+| `sidebar_logo_type` | `string` | Sidebar logo style: `"figlet"`, `"plain_text"`, or `"hidden"` (default: `"figlet"`) |
+| `sidebar_figlet_font` | `string` | Separate FIGlet font for the sidebar logo (inherits `figlet_font` if omitted) |
+
+For details on included fonts, previewing, and installing custom fonts, see [LOGO_CUSTOMIZATION.md](../LOGO_CUSTOMIZATION.md).
+
+---
+
 ## Example Theme (`synthwave.yaml`)
 
 ```yaml
@@ -120,4 +145,12 @@ successMostSubtle: "#629657"
 error: "#ff5555"
 warning: "#ffb86c"
 info: "#8be9fd"
+
+# Logo branding
+logo:
+  app_title: "Synthwave"
+  figlet_font: "Digital"
+  figlet_solid: true
+  sidebar_logo_type: "figlet"
+  sidebar_figlet_font: "Doom"
 ```

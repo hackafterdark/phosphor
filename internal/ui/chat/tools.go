@@ -10,6 +10,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"charm.land/lipgloss/v2/tree"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/hackafterdark/phosphor/internal/agent"
 	"github.com/hackafterdark/phosphor/internal/agent/tools"
 	"github.com/hackafterdark/phosphor/internal/diff"
@@ -21,7 +22,6 @@ import (
 	"github.com/hackafterdark/phosphor/internal/ui/common"
 	"github.com/hackafterdark/phosphor/internal/ui/list"
 	"github.com/hackafterdark/phosphor/internal/ui/styles"
-	"github.com/charmbracelet/x/ansi"
 )
 
 // responseContextHeight limits the number of lines displayed in tool output.

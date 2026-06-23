@@ -155,17 +155,28 @@ type Styles struct {
 		SmallGradToColor   color.Color    // Small "Phosphor" wordmark gradient end
 	}
 
+	// Logo configuration (app title, font settings).
+	LogoConfig struct {
+		AppTitle         string
+		FigletFont       string
+		FigletSolid      bool
+		SidebarLogoType  string // "figlet", "plain_text", or "hidden"
+		SidebarFigletFont string
+	}
+
 	// Working indicator gradient (spinners/shimmers on assistant "thinking",
 	// tool-call pending, CLI generating, startup).
 	WorkingGradFromColor color.Color
 	WorkingGradToColor   color.Color
 	WorkingLabelColor    color.Color // Label text color next to the indicator
 
-	// Section Title
+	// Section
 	Section struct {
 		Title lipgloss.Style
 		Line  lipgloss.Style
 	}
+	// SectionSeparator is the character used for section divider lines.
+	SectionSeparator string
 
 	// Initialize
 	Initialize struct {

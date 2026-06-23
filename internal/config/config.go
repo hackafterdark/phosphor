@@ -218,6 +218,96 @@ type LSPConfig struct {
 	Timeout     int               `json:"timeout,omitempty" jsonschema:"description=Timeout in seconds for LSP server initialization,default=30,example=60,example=120"`
 }
 
+// TUIOptions defines options for the TUI interface.
+// LandingComponentConfig defines a single component on the landing screen.
+// Display order is determined by the position in the components array.
+// Components are visible by default; set `hidden` to true to hide.
+type LandingComponentConfig struct {
+	// ID is the unique identifier for the component.
+	ID string `json:"id" jsonschema:"required,description=Component ID,enum=recent_sessions,enum=quick_actions,enum=active_project,enum=active_llm,enum=capabilities"`
+	// Hidden controls whether the component is hidden from the landing screen.
+	// Defaults to false (visible).
+	Hidden bool `json:"hidden,omitempty" jsonschema:"description=Whether this component is hidden,default=false"`
+	// MaxItems limits the number of items shown (applies to Recent Sessions).
+	MaxItems int `json:"max_items,omitempty" jsonschema:"description=Maximum number of items to display (applies to Recent Sessions),minimum=1,default=5"`
+}
+
+// LandingConfig defines the layout and components of the startup landing screen.
+// Components are displayed in the order they appear in the array.
+type LandingConfig struct {
+	// MaxColumns is the maximum number of columns to use for the layout.
+	MaxColumns int `json:"max_columns,omitempty" jsonschema:"description=Maximum number of columns,default=2"`
+	// MinColWidth is the minimum width per column before stacking.
+	MinColWidth int `json:"min_col_width,omitempty" jsonschema:"description=Minimum column width before stacking,default=40"`
+	// Gap is the horizontal space between columns.
+	Gap int `json:"gap,omitempty" jsonschema:"description=Horizontal space between columns,default=4"`
+	// VerticalGap is the number of blank lines between components in the same column.
+	VerticalGap int `json:"vertical_gap,omitempty" jsonschema:"description=Blank lines between stacked components in a column,default=1"`
+	// Components defines the components to show on the landing screen.
+	// Components are visible by default; use `hidden` to opt out.
+	Components []LandingComponentConfig `json:"components,omitempty" jsonschema:"description=List of components to show on the landing screen"`
+}
+
+// DefaultLandingConfig returns the default landing screen configuration.
+// Components are displayed in the order they appear in the array.
+func DefaultLandingConfig() LandingConfig {
+	return LandingConfig{
+		MaxColumns: 2,
+		MinColWidth: 40,
+		Gap:         4,
+		VerticalGap: 1,
+		Components: []LandingComponentConfig{
+			{ID: "recent_sessions", MaxItems: 5},
+			{ID: "quick_actions"},
+			{ID: "active_project"},
+			{ID: "active_llm"},
+			{ID: "capabilities"},
+		},
+	}
+}
+
+// SidebarComponentConfig defines a single component in the sidebar.
+// Components are visible by default; set `hidden` to true to hide.
+type SidebarComponentConfig struct {
+	// ID is the unique identifier for the sidebar component.
+	ID string `json:"id" jsonschema:"required,description=Component ID,enum=logo,enum=session_title,enum=working_dir,enum=active_llm,enum=goal,enum=files,enum=lsps,enum=mcps,enum=skills"`
+	// Hidden controls whether the component is hidden in the sidebar.
+	// Defaults to false (visible).
+	Hidden bool `json:"hidden,omitempty" jsonschema:"description=Whether this component is hidden,default=false"`
+	// MaxItems limits the number of items shown for list-type components (files, lsps, mcps, skills).
+	MaxItems int `json:"max_items,omitempty" jsonschema:"description=Maximum items to display for list components,minimum=1,default=10"`
+}
+
+// SidebarLayoutConfig defines the layout and components of the right sidebar.
+// Components are displayed in the order they appear in the array.
+type SidebarLayoutConfig struct {
+	// VerticalGap is the number of blank lines between components.
+	VerticalGap int `json:"vertical_gap,omitempty" jsonschema:"description=Blank lines between stacked components,default=1"`
+	// Components defines the sidebar components.
+	// Components are visible by default; use `hidden` to opt out.
+	Components []SidebarComponentConfig `json:"components,omitempty" jsonschema:"description=List of sidebar components"`
+}
+
+// DefaultSidebarConfig returns the default sidebar layout configuration.
+// Components are displayed in the order they appear in the array.
+func DefaultSidebarConfig() SidebarLayoutConfig {
+	return SidebarLayoutConfig{
+		VerticalGap: 1,
+		Components: []SidebarComponentConfig{
+			{ID: "logo"},
+			{ID: "session_title"},
+			{ID: "working_dir"},
+			{ID: "active_llm"},
+			{ID: "goal"},
+			{ID: "files"},
+			{ID: "lsps"},
+			{ID: "mcps"},
+			{ID: "skills"},
+		},
+	}
+}
+
+// TUIOptions defines options for the TUI interface.
 type TUIOptions struct {
 	CompactMode bool   `json:"compact_mode,omitempty" jsonschema:"description=Enable compact mode for the TUI interface,default=false"`
 	DiffMode    string `json:"diff_mode,omitempty" jsonschema:"description=Diff mode for the TUI interface,enum=unified,enum=split"`
@@ -229,6 +319,12 @@ type TUIOptions struct {
 
 	HistoryLimit     *int `json:"history_limit,omitempty" jsonschema:"description=Initial number of messages to load in chat history,default=100"`
 	HistoryBatchSize *int `json:"history_batch_size,omitempty" jsonschema:"description=Number of messages to load when pagination is triggered,default=50"`
+
+	// Landing configures the startup landing screen layout.
+	Landing *LandingConfig `json:"landing,omitempty" jsonschema:"description=Configuration for the startup landing screen layout"`
+
+	// Sidebar configures the right sidebar layout.
+	Sidebar *SidebarLayoutConfig `json:"sidebar,omitempty" jsonschema:"description=Configuration for the right sidebar layout"`
 }
 
 // HistoryLimits returns the user-defined history_limit and history_batch_size, or their defaults.

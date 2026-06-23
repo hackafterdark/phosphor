@@ -1,34 +1,36 @@
 :root {
-  /* Dark mode colors - charmtone dark palette */
+  /* Dark mode colors */
   --bg: #201f26;
   --bg-secondary: #2d2c35;
   --text: #fffaf1;
   --text-muted: #858392;
+  --border: rgba(255, 255, 255, 0.1);
 
-  /* Charmtone colors (global - same in both light and dark modes) */
-  --charple: #6b50ff;
-  --cherry: #ff388b;
-  --julep: #00ffb2;
-  --urchin: #c337e0;
+  /* Accent colors (global - same in both light and dark modes) */
+  --accent-primary: #6b50ff;
+  --accent-secondary: #ff388b;
+  --accent-tertiary: #00ffb2;
+  --accent-quaternary: #c337e0;
   --butter: #fffaf1;
   --squid: #858392;
   --pepper: #201f26;
   --iron: #4d4c57;
-  --tuna: #ff6daa;
-  --uni: #ff937d;
-  --coral: #ff577d;
-  --violet: #c259ff;
-  --malibu: #00a4ff;
-  --hazy: #8b75ff;
+  --accent-warm: #ff6daa;
+  --accent-orange: #ff937d;
+  --accent-rose: #ff577d;
+  --accent-purple: #c259ff;
+  --accent-blue: #00a4ff;
+  --accent-lavender: #8b75ff;
 }
 
-/* Light mode colors - charmtone light palette */
+/* Light mode colors */
 @media (prefers-color-scheme: light) {
   :root {
     --bg: #f0f0f0;
     --bg-secondary: #fbfbfb;
     --text: #201f26;
     --text-muted: #4d4c57;
+    --border: rgba(0, 0, 0, 0.1);
   }
 }
 
@@ -103,7 +105,7 @@ body {
 .header-info {
   margin-bottom: 2rem;
   font-size: 0.875rem;
-  color: var(--hazy);
+  color: var(--accent-lavender);
   font-family: "JetBrains Mono", "SF Mono", Consolas, monospace;
 }
 
@@ -245,26 +247,27 @@ td {
   font-size: 0.875rem;
 }
 
-.footer-container {
+.logo-figlet-container {
   max-width: 1200px;
-  margin: 2rem auto 0;
+  margin: 0 auto 2rem;
 }
 
-.footer-container svg {
-  width: 100%;
-  height: auto;
+.logo-figlet {
+  font-family: "JetBrains Mono", "SF Mono", Consolas, monospace;
+  font-size: 1.2rem;
+  line-height: 0.5;
+  letter-spacing: -0.05rem;
+  white-space: pre;
+  overflow: hidden;
+  background: linear-gradient(90deg, var(--accent-primary), var(--accent-warm));
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: var(--accent-primary);
+}
+
+.logo-line {
   display: block;
-}
-
-/* Override charm brand colors in footer */
-.footer-container .st2 {
-  fill: #fffaf1 !important;
-}
-
-@media (prefers-color-scheme: light) {
-
-  /* Override charm brand colors in footer */
-  .footer-container .st2 {
-    fill: #644ced !important;
-  }
+  margin: 0;
+  padding: 0;
 }

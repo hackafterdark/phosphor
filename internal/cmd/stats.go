@@ -14,6 +14,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hackafterdark/phosphor/internal/ui/logo"
+
 	"github.com/hackafterdark/phosphor/internal/config"
 	"github.com/hackafterdark/phosphor/internal/db"
 	"github.com/hackafterdark/phosphor/internal/event"
@@ -29,15 +31,6 @@ var statsCSS string
 
 //go:embed stats/index.js
 var statsJS string
-
-//go:embed stats/header.svg
-var headerSVG string
-
-//go:embed stats/heartbit.svg
-var heartbitSVG string
-
-//go:embed stats/footer.svg
-var footerSVG string
 
 var statsCmd = &cobra.Command{
 	Use:   "stats",
@@ -358,22 +351,20 @@ func generateHTML(stats *Stats, projName, username, path string) error {
 		StatsJSON   template.JS
 		CSS         template.CSS
 		JS          template.JS
-		Header      template.HTML
-		Heartbit    template.HTML
-		Footer      template.HTML
 		GeneratedAt string
 		ProjectName string
 		Username    string
+		AppTitle    string
+		LogoText    template.HTML
 	}{
 		StatsJSON:   template.JS(statsJSON),
 		CSS:         template.CSS(statsCSS),
 		JS:          template.JS(statsJS),
-		Header:      template.HTML(headerSVG),
-		Heartbit:    template.HTML(heartbitSVG),
-		Footer:      template.HTML(footerSVG),
 		GeneratedAt: stats.GeneratedAt.Format("2006-01-02"),
 		ProjectName: projName,
 		Username:    username,
+		AppTitle:    "Phosphor",
+		LogoText:    template.HTML(renderLogoText("Phosphor")),
 	}
 
 	var buf bytes.Buffer
@@ -387,4 +378,30 @@ func generateHTML(stats *Stats, projName, username, path string) error {
 	}
 
 	return os.WriteFile(path, buf.Bytes(), 0o644)
+}
+
+// renderLogoText renders the app title using the Pagga figlet font,
+// converting each character into a styled HTML span.
+func renderLogoText(title string) string {
+	text, _, _, _ := logo.FigletText(title, "Pagga", false)
+	lines := strings.Split(strings.TrimSpace(text), "\n")
+	if len(lines) == 0 {
+		return ""
+	}
+
+	var buf strings.Builder
+	buf.WriteString("<div class=\"logo-figlet\">\n")
+	for _, line := range lines {
+		buf.WriteString("<span class=\"logo-line\">")
+		for _, ch := range line {
+			if ch == ' ' {
+				buf.WriteString("&nbsp;")
+			} else {
+				buf.WriteString(template.HTMLEscapeString(string(ch)))
+			}
+		}
+		buf.WriteString("</span>\n")
+	}
+	buf.WriteString("</div>")
+	return buf.String()
 }

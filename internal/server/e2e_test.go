@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/hackafterdark/phosphor/internal/app"
 	"github.com/hackafterdark/phosphor/internal/backend"
 	"github.com/hackafterdark/phosphor/internal/db"
@@ -21,7 +22,6 @@ import (
 	"github.com/hackafterdark/phosphor/internal/permission"
 	"github.com/hackafterdark/phosphor/internal/proto"
 	"github.com/hackafterdark/phosphor/internal/pubsub"
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
 

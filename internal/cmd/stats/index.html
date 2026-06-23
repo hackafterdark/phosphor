@@ -11,20 +11,15 @@
       href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap"
       rel="stylesheet"
     />
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js/dist/chart.umd.js"></script>
     <style>
       {{.CSS}}
     </style>
   </head>
   <body>
     <div class="container">
-      <div class="header-wrapper">
-        <a href="https://github.com/hackafterdark/phosphor" class="header-link">
-          <div class="header-content">
-            <div class="header-svg">{{.Header}}</div>
-            <div class="heartbit-svg">{{.Heartbit}}</div>
-          </div>
-        </a>
+      <div class="logo-figlet-container">
+        {{.LogoText}}
       </div>
 
       <div class="header-info">
@@ -123,10 +118,7 @@
         </div>
       </div>
     </div>
-
-    <div class="footer-container">
-      <div class="footer">{{.Footer}}</div>
-    </div>
+    <!-- end container -->
 
     <script>
       const stats = {{.StatsJSON}};

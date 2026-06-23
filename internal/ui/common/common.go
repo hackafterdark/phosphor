@@ -5,14 +5,15 @@ import (
 	"fmt"
 	"image"
 	"os"
+	"sync"
 
 	tea "charm.land/bubbletea/v2"
+	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/hackafterdark/phosphor/internal/clipboard"
 	"github.com/hackafterdark/phosphor/internal/config"
 	"github.com/hackafterdark/phosphor/internal/ui/styles"
 	"github.com/hackafterdark/phosphor/internal/ui/util"
 	"github.com/hackafterdark/phosphor/internal/workspace"
-	uv "github.com/charmbracelet/ultraviolet"
 )
 
 // MaxAttachmentSize defines the maximum allowed size for file attachments (5 MB).
@@ -34,9 +35,38 @@ func (c *Common) DB() *sql.DB {
 	return c.db
 }
 
+var testConfigOnce sync.Once
+var testCfg *config.Config
+
+func defaultTestConfig() *config.Config {
+	testConfigOnce.Do(func() {
+		testCfg = &config.Config{
+			Options: &config.Options{
+				TUI: &config.TUIOptions{},
+			},
+			Agents: map[string]config.Agent{
+				config.AgentCoder: {
+					Model: config.SelectedModelTypeLarge,
+				},
+				config.AgentTask: {
+					Model: config.SelectedModelTypeLarge,
+				},
+			},
+		}
+	})
+	return testCfg
+}
+
 // Config returns the pure-data configuration associated with this [Common] instance.
 func (c *Common) Config() *config.Config {
-	return c.Workspace.Config()
+	if c == nil || c.Workspace == nil {
+		return defaultTestConfig()
+	}
+	cfg := c.Workspace.Config()
+	if cfg == nil {
+		return defaultTestConfig()
+	}
+	return cfg
 }
 
 // DefaultCommon returns the default common UI configurations. When the

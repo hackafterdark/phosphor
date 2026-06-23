@@ -10,9 +10,9 @@ import (
 	"github.com/alecthomas/chroma/v2"
 	"github.com/alecthomas/chroma/v2/lexers"
 	"github.com/aymanbagabas/go-udiff"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/hackafterdark/phosphor/internal/ansiext"
 	"github.com/hackafterdark/phosphor/internal/ui/xchroma"
-	"github.com/charmbracelet/x/ansi"
 	"github.com/zeebo/xxh3"
 )
 

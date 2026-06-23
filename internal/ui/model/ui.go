@@ -172,9 +172,10 @@ type (
 
 // UI represents the main user interface model.
 type UI struct {
-	com          *common.Common
-	session      *session.Session
-	sessionFiles []SessionFile
+	com            *common.Common
+	session        *session.Session
+	sessionFiles   []SessionFile
+	recentSessions []session.Session
 
 	// keeps track of read files while we don't have a session id
 	sessionFileReads []string
@@ -258,6 +259,9 @@ type UI struct {
 
 	// sidebarLogo keeps a cached version of the sidebar sidebarLogo.
 	sidebarLogo string
+
+	// sidebarScrollOffset tracks the vertical scroll position of the sidebar.
+	sidebarScrollOffset int
 
 	// Notification state
 	notifyBackend       notification.Backend
@@ -426,6 +430,8 @@ func (m *UI) Init() tea.Cmd {
 	if m.com.IsHyper() {
 		cmds = append(cmds, m.fetchHyperCredits())
 	}
+	// load recent sessions for the landing page
+	cmds = append(cmds, m.loadRecentSessions())
 	return tea.Batch(cmds...)
 }
 
@@ -725,6 +731,9 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.promptHistory.index = -1
 		m.promptHistory.draft = ""
 
+	case loadRecentSessionsMsg:
+		m.recentSessions = msg
+
 	case closeDialogMsg:
 		m.dialog.CloseFrontDialog()
 
@@ -748,6 +757,7 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.updateLayoutAndSize()
 		}
 	case pubsub.Event[session.Session]:
+		cmds = append(cmds, m.loadRecentSessions())
 		if msg.Type == pubsub.DeletedEvent {
 			if m.session != nil && m.session.ID == msg.Payload.ID {
 				if cmd := m.newSession(); cmd != nil {
@@ -989,6 +999,12 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Pass mouse events to dialogs first if any are open.
 		if m.dialog.HasDialogs() {
 			m.dialog.Update(msg)
+			return m, tea.Batch(cmds...)
+		}
+
+		// Check if mouse is over the sidebar for sidebar scrolling.
+		if m.layout.sidebar.Dx() > 0 && image.Pt(msg.Mouse.X, msg.Mouse.Y).In(m.layout.sidebar) {
+			m.sidebarScrollOffset += int(msg.DeltaY)
 			return m, tea.Batch(cmds...)
 		}
 
@@ -3215,9 +3231,13 @@ func (m *UI) generateLayout(w, h int) uiLayout {
 	// The editor height: textarea height + margin for attachments and bottom spacing.
 	editorHeight := m.textarea.Height() + editorHeightMargin
 	// The sidebar width
-	sidebarWidth := 30
+	sidebarWidth := 34
 	// The header height
-	const landingHeaderHeight = 4
+	landingHeaderHeight := 12
+	if m.state == uiLanding || m.state == uiInitialize || m.state == uiOnboarding {
+		logoH := logo.LogoHeight(m.com.Styles.LogoConfig.AppTitle, m.com.Styles.LogoConfig.FigletFont)
+		landingHeaderHeight = logoH + 3
+	}
 
 	var helpKeyMap help.KeyMap = m
 	if m.status != nil && m.status.ShowingAll() {
@@ -3729,7 +3749,7 @@ func (m *UI) renderEditorView(width int) string {
 
 // cacheSidebarLogo renders and caches the sidebar logo at the specified width.
 func (m *UI) cacheSidebarLogo(width int) {
-	m.sidebarLogo = renderLogo(m.com.Styles, true, m.com.IsHyper(), width)
+	m.sidebarLogo = renderLogo(m.com.Styles, m.com.Styles.LogoConfig.AppTitle, m.com.Styles.LogoConfig.FigletFont, m.com.Styles.LogoConfig.FigletSolid, true, m.com.IsHyper(), width)
 }
 
 // applyTheme replaces the active styles with the given theme, drops the
@@ -4680,8 +4700,8 @@ func (m *UI) disableDockerMCP() tea.Msg {
 	return util.NewInfoMsg("Docker MCP disabled successfully")
 }
 
-// renderLogo renders the Phosphor logo with the given styles and dimensions.
-func renderLogo(t *styles.Styles, compact, hyper bool, width int) string {
+// renderLogo renders the application logo with the given styles and dimensions.
+func renderLogo(t *styles.Styles, appTitle, figletFont string, figletSolid bool, compact, hyper bool, width int) string {
 	return logo.Render(t.Logo.GradCanvas, version.Version, compact, logo.Opts{
 		FieldColor:   t.Logo.FieldColor,
 		TitleColorA:  t.Logo.TitleColorA,
@@ -4690,5 +4710,8 @@ func renderLogo(t *styles.Styles, compact, hyper bool, width int) string {
 		VersionColor: t.Logo.VersionColor,
 		Width:        width,
 		Hyper:        hyper,
+		AppTitle:     appTitle,
+		FigletFont:   figletFont,
+		FigletSolid:  figletSolid,
 	})
 }

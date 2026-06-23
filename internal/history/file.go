@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/hackafterdark/phosphor/internal/db"
 	"github.com/hackafterdark/phosphor/internal/pubsub"
-	"github.com/google/uuid"
 )
 
 const (

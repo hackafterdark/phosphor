@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"charm.land/fantasy"
+	"github.com/google/uuid"
 	"github.com/hackafterdark/phosphor/internal/agent"
 	"github.com/hackafterdark/phosphor/internal/app"
 	"github.com/hackafterdark/phosphor/internal/backend"
@@ -20,7 +21,6 @@ import (
 	"github.com/hackafterdark/phosphor/internal/message"
 	"github.com/hackafterdark/phosphor/internal/proto"
 	"github.com/hackafterdark/phosphor/internal/pubsub"
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
 

@@ -8,9 +8,9 @@ import (
 	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/hackafterdark/phosphor/internal/ui/common"
 	"github.com/hackafterdark/phosphor/internal/ui/util"
-	uv "github.com/charmbracelet/ultraviolet"
 )
 
 // GoalInputID is the identifier for the goal input dialog.

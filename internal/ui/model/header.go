@@ -13,6 +13,7 @@ import (
 	"github.com/hackafterdark/phosphor/internal/session"
 	"github.com/hackafterdark/phosphor/internal/ui/common"
 	"github.com/hackafterdark/phosphor/internal/ui/styles"
+	"github.com/hackafterdark/phosphor/internal/version"
 )
 
 const (
@@ -46,10 +47,7 @@ func newHeader(com *common.Common) *header {
 // after the theme changes.
 func (h *header) refresh() {
 	t := h.com.Styles
-	titleCaseName := "Phosphor"
-	capitalizedName := "PHOSPHOR"
-	h.compactLogo = t.Header.AppTitle.Render(titleCaseName) + " " +
-		styles.ApplyBoldForegroundGrad(t.Header.LogoGradCanvas, capitalizedName, t.Header.LogoGradFromColor, t.Header.LogoGradToColor) + " "
+	h.compactLogo = styles.ApplyForegroundGrad(t.Header.LogoGradCanvas, t.LogoConfig.AppTitle, t.Header.LogoGradFromColor, t.Header.LogoGradToColor)
 	// Force drawHeader to re-render the wide logo on the next frame.
 	h.width = 0
 	h.logo = ""
@@ -68,14 +66,36 @@ func (h *header) drawHeader(
 ) {
 	t := h.com.Styles
 	if width != h.width || compact != h.compact {
-		h.logo = renderLogo(h.com.Styles, compact, h.com.IsHyper(), width)
+		h.logo = renderLogo(h.com.Styles, t.LogoConfig.AppTitle, t.LogoConfig.FigletFont, t.LogoConfig.FigletSolid, compact, h.com.IsHyper(), width)
 	}
 
 	h.width = width
 	h.compact = compact
 
 	if !compact || session == nil {
-		uv.NewStyledString(h.logo).Draw(scr, area)
+		logoLines := strings.Split(h.logo, "\n")
+		logoWidth := 0
+		if len(logoLines) > 0 {
+			logoWidth = lipgloss.Width(logoLines[0])
+		}
+
+		leftPadLogo := max(0, (width-logoWidth)/2)
+		padLogo := strings.Repeat(" ", leftPadLogo)
+		for i, line := range logoLines {
+			logoLines[i] = padLogo + line
+		}
+		centeredLogo := strings.Join(logoLines, "\n")
+
+		versionStr := version.Version
+		if !strings.HasPrefix(versionStr, "v") {
+			versionStr = "v" + versionStr
+		}
+		versionWidth := lipgloss.Width(versionStr)
+		leftPadVersion := max(0, (width-versionWidth)/2)
+		versionStyled := strings.Repeat(" ", leftPadVersion) + lipgloss.NewStyle().Foreground(t.Logo.VersionColor).Render(versionStr)
+
+		fullHeader := centeredLogo + "\n\n" + versionStyled
+		uv.NewStyledString(fullHeader).Draw(scr, area)
 		return
 	}
 
@@ -85,6 +105,7 @@ func (h *header) drawHeader(
 
 	var b strings.Builder
 	b.WriteString(h.compactLogo)
+	b.WriteString(" ")
 
 	availDetailWidth := width - leftPadding - rightPadding - lipgloss.Width(b.String()) - minHeaderDiags - diagToDetailsSpacing
 	lspErrorCount := 0

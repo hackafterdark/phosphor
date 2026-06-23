@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hackafterdark/phosphor/internal/ui/styles"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/hackafterdark/phosphor/internal/ui/styles"
 	"github.com/stretchr/testify/require"
 )
 

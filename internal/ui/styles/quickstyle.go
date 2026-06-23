@@ -55,6 +55,11 @@ type quickStyleOpts struct {
 	success           color.Color
 	successMoreSubtle color.Color
 	successMostSubtle color.Color
+
+	// Section title and divider line colors.
+	sectionTitle color.Color
+	sectionLine  color.Color
+	sectionSeparator string
 }
 
 // quickStyle builds the default Styles (that is, the default theme, Charmtone
@@ -721,8 +726,8 @@ func quickStyle(o quickStyleOpts) Styles {
 	s.Logo.SmallGradToColor = o.primary
 
 	// Section
-	s.Section.Title = subtle
-	s.Section.Line = base.Foreground(o.separator)
+	s.Section.Title = lipgloss.NewStyle().Foreground(o.sectionTitle)
+	s.Section.Line = lipgloss.NewStyle().Foreground(o.sectionLine)
 
 	// Initialize
 	s.Initialize.Header = base
@@ -968,6 +973,13 @@ func quickStyle(o quickStyleOpts) Styles {
 	s.Pills.HelpKey = lipgloss.NewStyle().Foreground(o.fgMoreSubtle)
 	s.Pills.HelpText = lipgloss.NewStyle().Foreground(o.fgMostSubtle)
 	s.Pills.Area = base
+
+	// Default logo configuration.
+	s.LogoConfig.AppTitle = "Phosphor"
+	s.LogoConfig.FigletFont = "Pagga"
+	s.LogoConfig.FigletSolid = false
+	s.LogoConfig.SidebarLogoType = "figlet"
+	s.LogoConfig.SidebarFigletFont = "Pagga"
 
 	return s
 }

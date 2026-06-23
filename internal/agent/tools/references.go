@@ -15,9 +15,9 @@ import (
 	"strings"
 
 	"charm.land/fantasy"
+	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 	"github.com/hackafterdark/phosphor/internal/lsp"
 	"github.com/hackafterdark/phosphor/internal/otel"
-	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 	"go.opentelemetry.io/otel/attribute"
 )
 

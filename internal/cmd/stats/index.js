@@ -1,18 +1,18 @@
-// Get all charmtone colors once from computed styles
+// Get accent colors from computed styles
 const rootStyles = getComputedStyle(document.documentElement);
 const colors = {
-  charple: rootStyles.getPropertyValue("--charple").trim(),
-  cherry: rootStyles.getPropertyValue("--cherry").trim(),
-  julep: rootStyles.getPropertyValue("--julep").trim(),
-  urchin: rootStyles.getPropertyValue("--urchin").trim(),
+  primary: rootStyles.getPropertyValue("--accent-primary").trim(),
+  secondary: rootStyles.getPropertyValue("--accent-secondary").trim(),
+  tertiary: rootStyles.getPropertyValue("--accent-tertiary").trim(),
+  quaternary: rootStyles.getPropertyValue("--accent-quaternary").trim(),
   butter: rootStyles.getPropertyValue("--butter").trim(),
   squid: rootStyles.getPropertyValue("--squid").trim(),
   pepper: rootStyles.getPropertyValue("--pepper").trim(),
-  tuna: rootStyles.getPropertyValue("--tuna").trim(),
-  uni: rootStyles.getPropertyValue("--uni").trim(),
-  coral: rootStyles.getPropertyValue("--coral").trim(),
-  violet: rootStyles.getPropertyValue("--violet").trim(),
-  malibu: rootStyles.getPropertyValue("--malibu").trim(),
+  warm: rootStyles.getPropertyValue("--accent-warm").trim(),
+  orange: rootStyles.getPropertyValue("--accent-orange").trim(),
+  rose: rootStyles.getPropertyValue("--accent-rose").trim(),
+  purple: rootStyles.getPropertyValue("--accent-purple").trim(),
+  blue: rootStyles.getPropertyValue("--accent-blue").trim(),
 };
 
 const easeDuration = 500;
@@ -38,13 +38,13 @@ function formatTime(ms) {
   return (ms / 1000).toFixed(1) + "s";
 }
 
-const charpleColor = { r: 107, g: 80, b: 255 };
-const tunaColor = { r: 255, g: 109, b: 170 };
+const gradientFrom = { r: 107, g: 80, b: 255 };
+const gradientTo = { r: 255, g: 109, b: 170 };
 
 function interpolateColor(ratio, alpha = 1) {
-  const r = Math.round(charpleColor.r + (tunaColor.r - charpleColor.r) * ratio);
-  const g = Math.round(charpleColor.g + (tunaColor.g - charpleColor.g) * ratio);
-  const b = Math.round(charpleColor.b + (tunaColor.b - charpleColor.b) * ratio);
+  const r = Math.round(gradientFrom.r + (gradientTo.r - gradientFrom.r) * ratio);
+  const g = Math.round(gradientFrom.g + (gradientTo.g - gradientFrom.g) * ratio);
+  const b = Math.round(gradientFrom.b + (gradientTo.b - gradientFrom.b) * ratio);
   if (alpha < 1) {
     return `rgba(${r}, ${g}, ${b}, ${alpha})`;
   }
@@ -95,14 +95,14 @@ if (stats.recent_activity?.length > 0) {
         {
           label: "Sessions",
           data: stats.recent_activity.map((d) => d.session_count),
-          backgroundColor: colors.charple,
+          backgroundColor: colors.primary,
           borderRadius: 4,
           yAxisID: "y",
         },
         {
           label: "Tokens (K)",
           data: stats.recent_activity.map((d) => d.total_tokens / 1000),
-          backgroundColor: colors.julep,
+          backgroundColor: colors.tertiary,
           borderRadius: 4,
           yAxisID: "y1",
         },
@@ -247,7 +247,7 @@ new Chart(document.getElementById("tokenPieChart"), {
           stats.total.total_prompt_tokens,
           stats.total.total_completion_tokens,
         ],
-        backgroundColor: [colors.charple, colors.julep],
+        backgroundColor: [colors.primary, colors.tertiary],
         borderWidth: 0,
       },
     ],
@@ -305,12 +305,12 @@ if (stats.usage_by_model?.length > 0) {
     return acc;
   }, {});
   const providerColors = [
-    colors.malibu,
-    colors.charple,
-    colors.violet,
-    colors.tuna,
-    colors.coral,
-    colors.uni,
+    colors.blue,
+    colors.primary,
+    colors.purple,
+    colors.warm,
+    colors.rose,
+    colors.orange,
   ];
   new Chart(document.getElementById("providerPieChart"), {
     type: "doughnut",

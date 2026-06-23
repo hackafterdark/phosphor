@@ -1,168 +1,142 @@
-// Package logo renders a Phosphor wordmark in a stylized way.
 package logo
 
 import (
-	"fmt"
 	"image/color"
-	"math/rand/v2"
 	"strings"
 
 	"charm.land/lipgloss/v2"
-	"github.com/charmbracelet/x/ansi"
 	"github.com/hackafterdark/phosphor/internal/ui/styles"
 )
 
-// letterform represents a letterform. It can be stretched horizontally by
-// a given amount via the boolean argument.
-type letterform func(bool) string
-
-const diag = `╱`
-
-// Opts are the options for rendering the Phosphor title art.
+// Opts are the options for rendering the application logo.
 type Opts struct {
-	FieldColor   color.Color // diagonal lines
-	TitleColorA  color.Color // left gradient ramp point
-	TitleColorB  color.Color // right gradient ramp point
-	CharmColor   color.Color // Charm™ text color
-	VersionColor color.Color // version text color
-	Width        int         // width of the rendered logo, used for truncation
-	Hyper        bool        // whether it is Phosphor or Hyperphosphor
+	FieldColor   color.Color
+	TitleColorA  color.Color
+	TitleColorB  color.Color
+	CharmColor   color.Color
+	VersionColor color.Color
+	Width        int
+	Hyper        bool
 
-	// When true, stretch a random letterform on each render. Has no effect in
-	// compact mode. Mainly for testing. In production you will want to cache
-	// the stretched letterform to keep the logo from jittering on resize.
+	// AppTitle overrides the default "Phosphor" title text.
+	AppTitle string
+	// FigletFont specifies the FIGlet font to use. Empty means use the default.
+	FigletFont string
+	// FigletSolid renders the logo with solid block characters instead of raw font characters.
+	FigletSolid bool
+
 	Unstable bool
+
+	// SidebarLogoPlain forces the sidebar logo to use plain text instead of FIGlet.
+	SidebarLogoPlain bool
+	// SidebarLogoHidden hides the sidebar logo entirely.
+	SidebarLogoHidden bool
+	// SidebarFigletFont specifies the FIGlet font for the sidebar logo.
+	SidebarFigletFont string
 }
 
-// Render renders the Phosphor logo. Set the argument to true to render the narrow
-// version, intended for use in a sidebar.
-//
-// The compact argument determines whether it renders compact for the sidebar
-// or wider for the main pane.
+// Render renders the logo. Set compact to true for the narrow sidebar version.
 func Render(base lipgloss.Style, version string, compact bool, o Opts) string {
-	charm := "Charm™"
-	if !o.Hyper {
-		charm = " " + charm
+	title := o.AppTitle
+	if title == "" {
+		title = "Phosphor"
 	}
 
-	fg := func(c color.Color, s string) string {
-		return lipgloss.NewStyle().Foreground(c).Render(s)
-	}
-
-	// Title.
-	const spacing = 1
-	var hyperLetterforms []letterform
-	if o.Hyper {
-		hyperLetterforms = []letterform{
-			LetterH,
-			LetterYAlt,
-			LetterP,
-			LetterE,
-			LetterR,
-		}
-	}
-	phosphorLetterforms := []letterform{
-		LetterC,
-		LetterR,
-		LetterU,
-		LetterSAlt,
-		LetterH,
-	}
-	if o.Hyper && !compact {
-		phosphorLetterforms = append(hyperLetterforms, phosphorLetterforms...)
-	}
-
-	stretchIndex := -1 // -1 means no stretching.
-	if !compact && !o.Unstable {
-		// Always stretch the same letterform, which is picked once at random.
-		stretchIndex = cachedRandN(len(phosphorLetterforms))
-	} else if !compact && o.Unstable {
-		// Stretch a random letterform on every render.
-		stretchIndex = rand.IntN(len(phosphorLetterforms))
-	}
-	phosphor := renderWord(spacing, stretchIndex, phosphorLetterforms...)
-	if o.Hyper && compact {
-		phosphor = renderWord(spacing, stretchIndex, hyperLetterforms...) + "\n" + phosphor
-	}
-	phosphorWidth := lipgloss.Width(phosphor)
-	b := new(strings.Builder)
-	for r := range strings.SplitSeq(phosphor, "\n") {
-		fmt.Fprintln(b, styles.ApplyForegroundGrad(base, r, o.TitleColorA, o.TitleColorB))
-	}
-	phosphor = b.String()
-
-	// Logo and version.
-	metaRowGap := 1
-	maxVersionWidth := phosphorWidth - lipgloss.Width(charm) - metaRowGap
-	version = ansi.Truncate(version, maxVersionWidth, "…") // truncate version if too long.
-	if o.Hyper && compact {
-		version += " "
-	}
-	gap := max(0, phosphorWidth-lipgloss.Width(charm)-lipgloss.Width(version))
-	metaRow := fg(o.CharmColor, charm) + strings.Repeat(" ", gap) + fg(o.VersionColor, version)
-
-	// Join the meta row and big Phosphor title.
-	phosphor = strings.TrimSpace(metaRow + "\n" + phosphor)
-
-	// Narrow version. If this is Hyperphosphor, this is also a stacked version.
+	// Compact version: app title with diagonal decorations.
 	if compact {
-		field := fg(o.FieldColor, strings.Repeat(diag, phosphorWidth))
-		return strings.Join([]string{field, field, phosphor, field, ""}, "\n")
+		field := fg(o.FieldColor, strings.Repeat("╱", o.Width))
+		return strings.Join([]string{field, field, "", field, ""}, "\n")
 	}
 
-	fieldHeight := lipgloss.Height(phosphor)
-
-	// Left field.
-	const leftWidth = 6
-	leftFieldRow := fg(o.FieldColor, strings.Repeat(diag, leftWidth))
-	leftField := new(strings.Builder)
-	for range fieldHeight {
-		fmt.Fprintln(leftField, leftFieldRow)
-	}
-
-	// Right field.
-	rightWidth := max(15, o.Width-phosphorWidth-leftWidth-2) // 2 for the gap.
-	const stepDownAt = 0
-	rightField := new(strings.Builder)
-	for i := range fieldHeight {
-		width := rightWidth
-		if i >= stepDownAt {
-			width = rightWidth - (i - stepDownAt)
-		}
-		fmt.Fprint(rightField, fg(o.FieldColor, strings.Repeat(diag, width)), "\n")
-	}
-
-	// Return the wide version.
-	const hGap = " "
-	logo := lipgloss.JoinHorizontal(lipgloss.Top, leftField.String(), hGap, phosphor, hGap, rightField.String())
-	if o.Width > 0 {
-		// Truncate the logo to the specified width.
-		lines := strings.Split(logo, "\n")
-		for i, line := range lines {
-			lines[i] = ansi.Truncate(line, o.Width, "")
-		}
-		logo = strings.Join(lines, "\n")
-	}
-	return logo
+	// Wide version: render figlet text with gradient.
+	return renderWideLogo(title, base, o.TitleColorA, o.TitleColorB, o.FigletFont, o.FigletSolid)
 }
 
-// SmallRender renders a smaller version of the Phosphor logo, suitable for
-// smaller windows or sidebar usage.
-func SmallRender(t *styles.Styles, width int, o Opts) string {
-	name := "Phosphor"
-	if o.Hyper {
-		name = "HYPERPHOSPHOR"
+func renderWideLogo(title string, base lipgloss.Style, colorA, colorB color.Color, fontName string, figletSolid bool) string {
+	titleText, width, _, _ := FigletText(title, fontName, figletSolid)
+	lines := strings.Split(strings.TrimRight(titleText, "\n"), "\n")
+	for i, line := range lines {
+		currentWidth := lipgloss.Width(line)
+		if currentWidth < width {
+			lines[i] = line + strings.Repeat(" ", width-currentWidth)
+		}
 	}
-	charm := "Charm™"
-	if !o.Hyper {
-		charm = " " + charm
+	paddedText := strings.Join(lines, "\n")
+	return applyGradient(paddedText, base, colorA, colorB)
+}
+
+// LogoHeight returns the visual height of the wide logo.
+func LogoHeight(appTitle, figletFont string) int {
+	title := appTitle
+	if title == "" {
+		title = "Phosphor"
 	}
-	title := t.Logo.SmallCharm.Render(charm)
-	title = fmt.Sprintf("%s %s", title, styles.ApplyBoldForegroundGrad(t.Logo.GradCanvas, name, t.Logo.SmallGradFromColor, t.Logo.SmallGradToColor))
-	remainingWidth := width - lipgloss.Width(title) - 1 // 1 for the space after the name
-	if remainingWidth > 0 {
-		lines := strings.Repeat("╱", remainingWidth)
-		title = fmt.Sprintf("%s %s", title, t.Logo.SmallDiagonals.Render(lines))
+	_, _, height, err := FigletText(title, figletFont, false)
+	if err != nil {
+		return 5
 	}
-	return title
+	return height
+}
+
+// SmallRender renders a small logo suitable for the sidebar.
+// If SidebarLogoHidden is true, it returns an empty string.
+// If SidebarLogoPlain is true, or if the figlet text does not fit within
+// the given width, it falls back to a single-line plain-text title with
+// gradient styling.
+// maxHeight limits the number of lines returned; if the figlet exceeds
+// this height, plain text is used instead.
+func SmallRender(t *styles.Styles, width, maxHeight int, o Opts) string {
+	// If hidden, return empty string so the sidebar skips the logo.
+	if o.SidebarLogoHidden {
+		return ""
+	}
+
+	name := o.AppTitle
+	if name == "" {
+		name = "Phosphor"
+	}
+
+	// If plain text is explicitly requested, skip figlet rendering.
+	if o.SidebarLogoPlain {
+		return applyGradient(name, t.Logo.GradCanvas, t.Logo.SmallGradFromColor, t.Logo.SmallGradToColor)
+	}
+
+	// Use the configured sidebar figlet font (default "Pagga").
+	fontName := o.SidebarFigletFont
+	if fontName == "" {
+		fontName = "Pagga"
+	}
+
+	// Render using figlet font.
+	titleText, _, _, _ := FigletText(name, fontName, false)
+	lines := strings.Split(strings.TrimRight(titleText, "\n"), "\n")
+
+	// Check if the figlet text exceeds the width or height constraints.
+	for _, line := range lines {
+		if lipgloss.Width(line) > width {
+			return applyGradient(name, t.Logo.GradCanvas, t.Logo.SmallGradFromColor, t.Logo.SmallGradToColor)
+		}
+	}
+	if len(lines) > maxHeight {
+		return applyGradient(name, t.Logo.GradCanvas, t.Logo.SmallGradFromColor, t.Logo.SmallGradToColor)
+	}
+
+	titleText = applyGradient(titleText, t.Logo.GradCanvas, t.Logo.SmallGradFromColor, t.Logo.SmallGradToColor)
+	return titleText
+}
+
+func fg(c color.Color, s string) string {
+	return lipgloss.NewStyle().Foreground(c).Render(s)
+}
+
+func applyGradient(text string, base lipgloss.Style, colorA, colorB color.Color) string {
+	result := new(strings.Builder)
+	lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
+	for i, line := range lines {
+		if i > 0 {
+			result.WriteString("\n")
+		}
+		result.WriteString(styles.ApplyForegroundGrad(base, line, colorA, colorB))
+	}
+	return result.String()
 }

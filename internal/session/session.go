@@ -9,10 +9,10 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/google/uuid"
 	"github.com/hackafterdark/phosphor/internal/db"
 	"github.com/hackafterdark/phosphor/internal/event"
 	"github.com/hackafterdark/phosphor/internal/pubsub"
-	"github.com/google/uuid"
 	"github.com/zeebo/xxh3"
 )
 

@@ -6,14 +6,14 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	"github.com/hackafterdark/phosphor/internal/ui/anim"
-	"github.com/hackafterdark/phosphor/internal/ui/chat"
-	"github.com/hackafterdark/phosphor/internal/ui/common"
-	"github.com/hackafterdark/phosphor/internal/ui/list"
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/clipperhouse/displaywidth"
 	"github.com/clipperhouse/uax29/v2/words"
+	"github.com/hackafterdark/phosphor/internal/ui/anim"
+	"github.com/hackafterdark/phosphor/internal/ui/chat"
+	"github.com/hackafterdark/phosphor/internal/ui/common"
+	"github.com/hackafterdark/phosphor/internal/ui/list"
 )
 
 // Constants for multi-click detection.

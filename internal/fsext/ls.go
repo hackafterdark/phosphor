@@ -11,10 +11,10 @@ import (
 	"sync"
 
 	"github.com/charlievieth/fastwalk"
-	"github.com/hackafterdark/phosphor/internal/csync"
-	"github.com/hackafterdark/phosphor/internal/home"
 	gitconfig "github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing/format/gitignore"
+	"github.com/hackafterdark/phosphor/internal/csync"
+	"github.com/hackafterdark/phosphor/internal/home"
 )
 
 // fastIgnoreDirs is a set of directory names that are always ignored.
@@ -34,7 +34,7 @@ var fastIgnoreDirs = map[string]bool{
 	".Trash":          true,
 	".Spotlight-V100": true,
 	".fseventsd":      true,
-	".phosphor":          true,
+	".phosphor":       true,
 	"OrbStack":        true,
 	".local":          true,
 	".share":          true,

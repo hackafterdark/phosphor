@@ -6,10 +6,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 	"github.com/hackafterdark/phosphor/internal/config"
 	"github.com/hackafterdark/phosphor/internal/csync"
 	"github.com/hackafterdark/phosphor/internal/env"
-	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 	"github.com/stretchr/testify/require"
 )
 

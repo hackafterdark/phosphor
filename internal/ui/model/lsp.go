@@ -7,11 +7,11 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 	"github.com/hackafterdark/phosphor/internal/lsp"
 	"github.com/hackafterdark/phosphor/internal/ui/common"
 	"github.com/hackafterdark/phosphor/internal/ui/styles"
 	"github.com/hackafterdark/phosphor/internal/workspace"
-	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 )
 
 // LSPInfo wraps LSP client information with diagnostic counts by severity.
@@ -41,9 +41,9 @@ func (m *UI) lspInfo(width, maxItems int, isSection bool) string {
 		lsps = append(lsps, LSPInfo{LSPClientInfo: state, Diagnostics: lspErrs})
 	}
 
-	title := t.Resource.Heading.Render("LSPs")
-	if isSection {
-		title = common.Section(t, title, width)
+	title := common.Section(t, "LSPs", width)
+	if !isSection {
+		title = t.Resource.Heading.Render("LSPs")
 	}
 	list := t.Resource.AdditionalText.Render("None")
 	if len(lsps) > 0 {
@@ -117,7 +117,7 @@ func lspList(t *styles.Styles, lsps []LSPInfo, width, maxItems int) string {
 	}
 
 	if len(renderedLsps) > maxItems {
-		visibleItems := renderedLsps[:maxItems-1]
+		visibleItems := renderedLsps[:maxItems]
 		remaining := len(renderedLsps) - maxItems
 		visibleItems = append(visibleItems, t.Resource.AdditionalText.Render(fmt.Sprintf("…and %d more", remaining)))
 		return lipgloss.JoinVertical(lipgloss.Left, visibleItems...)

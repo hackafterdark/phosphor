@@ -14,6 +14,20 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// ThemeLogoConfig holds logo-related settings that can be defined in theme files.
+type ThemeLogoConfig struct {
+	// AppTitle is the application title displayed in the logo.
+	AppTitle string `json:"app_title,omitempty" yaml:"app_title,omitempty"`
+	// FigletFont is the name of a FIGlet font to use for the logo.
+	FigletFont string `json:"figlet_font,omitempty" yaml:"figlet_font,omitempty"`
+	// FigletSolid renders the FIGlet logo using solid block characters.
+	FigletSolid bool `json:"figlet_solid,omitempty" yaml:"figlet_solid,omitempty"`
+	// SidebarLogoType controls the sidebar logo style: "figlet", "plain_text", or "hidden".
+	SidebarLogoType string `json:"sidebar_logo_type,omitempty" yaml:"sidebar_logo_type,omitempty"`
+	// SidebarFigletFont specifies a separate FIGlet font for the sidebar logo.
+	SidebarFigletFont string `json:"sidebar_figlet_font,omitempty" yaml:"sidebar_figlet_font,omitempty"`
+}
+
 // ThemePalette represents the JSON/YAML structure for a custom color theme.
 // All color fields are optional strings to allow partial overrides of a
 // base theme.
@@ -45,6 +59,14 @@ type ThemePalette struct {
 	Success           *string `json:"success,omitempty" yaml:"success,omitempty"`
 	SuccessMoreSubtle *string `json:"successMoreSubtle,omitempty" yaml:"successMoreSubtle,omitempty"`
 	SuccessMostSubtle *string `json:"successMostSubtle,omitempty" yaml:"successMostSubtle,omitempty"`
+
+	// Section title and divider line colors.
+	SectionTitle *string `json:"sectionTitle,omitempty" yaml:"sectionTitle,omitempty"`
+	SectionLine  *string `json:"sectionLine,omitempty" yaml:"sectionLine,omitempty"`
+	SectionSeparator *string `json:"sectionSeparator,omitempty" yaml:"sectionSeparator,omitempty"`
+
+	// Logo configuration for the application logo and sidebar logo.
+	Logo *ThemeLogoConfig `json:"logo,omitempty" yaml:"logo,omitempty"`
 }
 
 // ThemeForProvider returns the Styles associated with the given provider
@@ -119,9 +141,37 @@ func Theme(themeOption string, providerID string, workingDir string) Styles {
 		success:           parseColor(palette.Success, baseOpts.success),
 		successMoreSubtle: parseColor(palette.SuccessMoreSubtle, baseOpts.successMoreSubtle),
 		successMostSubtle: parseColor(palette.SuccessMostSubtle, baseOpts.successMostSubtle),
+
+		sectionTitle: parseColor(palette.SectionTitle, baseOpts.sectionTitle),
+		sectionLine:  parseColor(palette.SectionLine, baseOpts.sectionLine),
+
+		sectionSeparator: baseOpts.sectionSeparator,
 	}
 
-	return quickStyle(opts)
+	s := quickStyle(opts)
+
+	if palette.SectionSeparator != nil {
+		s.SectionSeparator = *palette.SectionSeparator
+	}
+
+	// Apply logo configuration from theme if present.
+	if palette.Logo != nil {
+		if palette.Logo.AppTitle != "" {
+			s.LogoConfig.AppTitle = palette.Logo.AppTitle
+		}
+		if palette.Logo.FigletFont != "" {
+			s.LogoConfig.FigletFont = palette.Logo.FigletFont
+		}
+		s.LogoConfig.FigletSolid = palette.Logo.FigletSolid
+		if palette.Logo.SidebarLogoType != "" {
+			s.LogoConfig.SidebarLogoType = palette.Logo.SidebarLogoType
+		}
+		if palette.Logo.SidebarFigletFont != "" {
+			s.LogoConfig.SidebarFigletFont = palette.Logo.SidebarFigletFont
+		}
+	}
+
+	return s
 }
 
 // CharmtonePantera returns the Charmtone dark theme. It's the default style
@@ -175,6 +225,10 @@ func panteraOpts() quickStyleOpts {
 		success:           charmtone.Julep,
 		successMoreSubtle: charmtone.Bok,
 		successMostSubtle: charmtone.Guac,
+
+		sectionTitle: charmtone.Oyster,
+		sectionLine:  charmtone.Char,
+		sectionSeparator: SectionSeparator,
 	}
 }
 
@@ -210,6 +264,10 @@ func obsidianaOpts() quickStyleOpts {
 		success:           charmtone.Julep,
 		successMoreSubtle: charmtone.Bok,
 		successMostSubtle: charmtone.Guac,
+
+		sectionTitle: charmtone.Oyster,
+		sectionLine:  charmtone.Char,
+		sectionSeparator: SectionSeparator,
 	}
 }
 

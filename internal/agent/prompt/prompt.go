@@ -21,27 +21,27 @@ import (
 
 // Prompt represents a template-based prompt generator.
 type Prompt struct {
-	name                         string
-	template                     string
-	now                          func() time.Time
-	platform                     string
-	workingDir                   string
-	structuralSearchAvailable    bool
+	name                      string
+	template                  string
+	now                       func() time.Time
+	platform                  string
+	workingDir                string
+	structuralSearchAvailable bool
 }
 
 type PromptDat struct {
-	Provider                     string
-	Model                        string
-	Config                       config.Config
-	WorkingDir                   string
-	IsGitRepo                    bool
-	Platform                     string
-	Date                         string
-	GitStatus                    string
-	ContextFiles                 []ContextFile
-	GlobalContextFiles           []ContextFile
-	AvailSkillXML                string
-	StructuralSearchAvailable    bool
+	Provider                  string
+	Model                     string
+	Config                    config.Config
+	WorkingDir                string
+	IsGitRepo                 bool
+	Platform                  string
+	Date                      string
+	GitStatus                 string
+	ContextFiles              []ContextFile
+	GlobalContextFiles        []ContextFile
+	AvailSkillXML             string
+	StructuralSearchAvailable bool
 }
 
 type ContextFile struct {
@@ -214,15 +214,15 @@ func (p *Prompt) promptData(ctx context.Context, provider, model string, store *
 
 	isGit := isGitRepo(store.WorkingDir())
 	data := PromptDat{
-		Provider:                     provider,
-		Model:                        model,
-		Config:                       *cfg,
-		WorkingDir:                   filepath.ToSlash(workingDir),
-		IsGitRepo:                    isGit,
-		Platform:                     platform,
-		Date:                         p.now().Format("1/2/2006"),
-		AvailSkillXML:                availSkillXML,
-		StructuralSearchAvailable:    p.structuralSearchAvailable,
+		Provider:                  provider,
+		Model:                     model,
+		Config:                    *cfg,
+		WorkingDir:                filepath.ToSlash(workingDir),
+		IsGitRepo:                 isGit,
+		Platform:                  platform,
+		Date:                      p.now().Format("1/2/2006"),
+		AvailSkillXML:             availSkillXML,
+		StructuralSearchAvailable: p.structuralSearchAvailable,
 	}
 	if isGit {
 		var err error

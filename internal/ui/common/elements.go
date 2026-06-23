@@ -8,10 +8,10 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/hackafterdark/phosphor/internal/agent/hyper"
 	"github.com/hackafterdark/phosphor/internal/home"
 	"github.com/hackafterdark/phosphor/internal/ui/styles"
-	"github.com/charmbracelet/x/ansi"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
 )
@@ -204,7 +204,10 @@ func Status(t *styles.Styles, opts StatusOpts, width int) string {
 // Section renders a section header with a title and a horizontal line filling
 // the remaining width.
 func Section(t *styles.Styles, text string, width int, info ...string) string {
-	char := styles.SectionSeparator
+	char := t.SectionSeparator
+	if char == "" {
+		char = styles.SectionSeparator
+	}
 	length := lipgloss.Width(text) + 1
 	remainingWidth := width - length
 

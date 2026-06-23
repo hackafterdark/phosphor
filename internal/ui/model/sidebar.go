@@ -3,13 +3,13 @@ package model
 import (
 	"cmp"
 	"fmt"
-	"image"
+	"strings"
 
 	"charm.land/lipgloss/v2"
+	uv "github.com/charmbracelet/ultraviolet"
+	"github.com/hackafterdark/phosphor/internal/config"
 	"github.com/hackafterdark/phosphor/internal/ui/common"
 	"github.com/hackafterdark/phosphor/internal/ui/logo"
-	uv "github.com/charmbracelet/ultraviolet"
-	"github.com/charmbracelet/ultraviolet/layout"
 )
 
 // modelInfo renders the current model information including reasoning
@@ -73,75 +73,6 @@ func (m *UI) modelInfo(width int) string {
 	return common.ModelInfo(m.com.Styles, modelName, providerName, reasoningInfo, modelContext, width, m.hyperCredits)
 }
 
-// getDynamicHeightLimits will give us the num of items to show in each section based on the height
-// some items are more important than others.
-func getDynamicHeightLimits(availableHeight, fileCount, lspCount, mcpCount, skillCount int) (maxFiles, maxLSPs, maxMCPs, maxSkills int) {
-	const (
-		minItemsPerSection = 2
-		// Keep these high so dynamic layout uses available sidebar space
-		// instead of hitting small hard limits.
-		defaultMaxFilesShown    = 1000
-		defaultMaxLSPsShown     = 1000
-		defaultMaxMCPsShown     = 1000
-		defaultMaxSkillsShown   = 1000
-		minAvailableHeightLimit = 10
-	)
-
-	if availableHeight < minAvailableHeightLimit {
-		return minItemsPerSection, minItemsPerSection, minItemsPerSection, minItemsPerSection
-	}
-
-	maxFiles = minItemsPerSection
-	maxLSPs = minItemsPerSection
-	maxMCPs = minItemsPerSection
-	maxSkills = minItemsPerSection
-
-	remainingHeight := max(0, availableHeight-(minItemsPerSection*4))
-
-	sectionValues := []*int{&maxFiles, &maxLSPs, &maxMCPs, &maxSkills}
-	sectionCaps := []int{defaultMaxFilesShown, defaultMaxLSPsShown, defaultMaxMCPsShown, defaultMaxSkillsShown}
-	sectionNeeds := []int{max(0, fileCount-maxFiles), max(0, lspCount-maxLSPs), max(0, mcpCount-maxMCPs), max(0, skillCount-maxSkills)}
-
-	for remainingHeight > 0 {
-		allocated := false
-		for i, section := range sectionValues {
-			if remainingHeight == 0 {
-				break
-			}
-			if sectionNeeds[i] == 0 || *section >= sectionCaps[i] {
-				continue
-			}
-			*section = *section + 1
-			sectionNeeds[i]--
-			remainingHeight--
-			allocated = true
-		}
-		if !allocated {
-			break
-		}
-	}
-
-	for remainingHeight > 0 {
-		allocated := false
-		for i, section := range sectionValues {
-			if remainingHeight == 0 {
-				break
-			}
-			if *section >= sectionCaps[i] {
-				continue
-			}
-			*section = *section + 1
-			remainingHeight--
-			allocated = true
-		}
-		if !allocated {
-			break
-		}
-	}
-
-	return maxFiles, maxLSPs, maxMCPs, maxSkills
-}
-
 // sidebar renders the chat sidebar containing session title, working
 // directory, model info, file list, LSP status, and MCP status.
 func (m *UI) goalInfo(width int) string {
@@ -163,85 +94,140 @@ func (m *UI) drawSidebar(scr uv.Screen, area uv.Rectangle) {
 		return
 	}
 
-	const logoHeightBreakpoint = 30
-
-	t := m.com.Styles
 	width := area.Dx()
 	height := area.Dy()
 
-	title := t.Sidebar.SessionTitle.Width(width).MaxHeight(2).Render(m.session.Title)
-	cwd := common.PrettyPath(t, m.com.Workspace.WorkingDir(), width)
-	sidebarLogo := m.sidebarLogo
-	if height < logoHeightBreakpoint {
-		sidebarLogo = logo.SmallRender(m.com.Styles, width, logo.Opts{
-			Hyper: m.com.IsHyper(),
-		})
-	}
-	blocks := []string{
-		sidebarLogo,
-		title,
-		"",
-		cwd,
-		"",
-		m.modelInfo(width),
-		"",
-		m.goalInfo(width),
-		"",
-	}
+	// Get sidebar config, falling back to defaults.
+	cfg := m.getSidebarConfig()
 
-	sidebarHeader := lipgloss.JoinVertical(
-		lipgloss.Left,
-		blocks...,
-	)
-
-	var remainingHeightArea image.Rectangle
-	layout.Vertical(
-		layout.Len(lipgloss.Height(sidebarHeader)),
-		layout.Fill(1),
-	).Split(m.layout.sidebar).Assign(new(image.Rectangle), &remainingHeightArea)
-	remainingHeight := remainingHeightArea.Dy() - 6
-	filesCount := 0
-	for _, f := range m.sessionFiles {
-		if f.Additions == 0 && f.Deletions == 0 {
-			continue
-		}
-		filesCount++
-	}
-
-	lspsCount := len(m.lspStates)
-
-	mcpsCount := 0
-	for _, mcpCfg := range m.com.Config().MCP.Sorted() {
-		if _, ok := m.mcpStates[mcpCfg.Name]; ok {
-			mcpsCount++
+	// Filter non-hidden components; array position determines display order.
+	var components []config.SidebarComponentConfig
+	for _, comp := range cfg.Components {
+		if !comp.Hidden {
+			components = append(components, comp)
 		}
 	}
 
-	skillsCount := len(m.skillStatusItems())
+	// Fallback to default components if none configured.
+	if len(components) == 0 {
+		components = config.DefaultSidebarConfig().Components
+	}
 
-	maxFiles, maxLSPs, maxMCPs, maxSkills := getDynamicHeightLimits(remainingHeight, filesCount, lspsCount, mcpsCount, skillsCount)
+	// Render each component.
+	var renderedSections []string
+	for _, comp := range components {
+		content := m.renderSidebarComponent(comp, width)
+		if content != "" {
+			renderedSections = append(renderedSections, content)
+		}
+	}
 
-	lspSection := m.lspInfo(width, maxLSPs, true)
-	mcpSection := m.mcpInfo(width, maxMCPs, true)
-	skillsSection := m.skillsInfo(width, maxSkills, true)
-	filesSection := m.filesInfo(m.com.Workspace.WorkingDir(), width, maxFiles, true)
+	// Join sections with vertical gap.
+	var content string
+	if len(renderedSections) > 0 {
+		content = joinWithVerticalGap(renderedSections, cfg.VerticalGap)
+	}
+
+	// Clamp scroll offset to valid range.
+	contentLines := strings.Count(content, "\n") + 1
+	maxScroll := max(0, contentLines - height)
+	if m.sidebarScrollOffset < 0 {
+		m.sidebarScrollOffset = 0
+	}
+	if maxScroll >= 0 && m.sidebarScrollOffset > maxScroll {
+		m.sidebarScrollOffset = maxScroll
+	}
+
+	// Apply scroll offset: skip top lines and render the visible portion.
+	if m.sidebarScrollOffset > 0 {
+		visibleContent := strings.Split(content, "\n")
+		if m.sidebarScrollOffset >= len(visibleContent) {
+			m.sidebarScrollOffset = max(0, len(visibleContent) - 1)
+			visibleContent = visibleContent[1:]
+		}
+		content = strings.Join(visibleContent[m.sidebarScrollOffset:], "\n")
+	}
 
 	uv.NewStyledString(
 		lipgloss.NewStyle().
 			MaxWidth(width).
 			MaxHeight(height).
-			Render(
-				lipgloss.JoinVertical(
-					lipgloss.Left,
-					sidebarHeader,
-					filesSection,
-					"",
-					lspSection,
-					"",
-					mcpSection,
-					"",
-					skillsSection,
-				),
-			),
+			Render(content),
 	).Draw(scr, area)
+}
+
+// getSidebarConfig returns the sidebar layout config from TUIOptions,
+// falling back to the built-in defaults.
+func (m *UI) getSidebarConfig() config.SidebarLayoutConfig {
+	if m.com.Config().Options.TUI.Sidebar != nil {
+		cfg := *m.com.Config().Options.TUI.Sidebar
+		if cfg.VerticalGap == 0 {
+			cfg.VerticalGap = config.DefaultSidebarConfig().VerticalGap
+		}
+		if cfg.Components == nil {
+			cfg.Components = config.DefaultSidebarConfig().Components
+		}
+		return cfg
+	}
+	return config.DefaultSidebarConfig()
+}
+
+// renderSidebarComponent renders a single sidebar component by ID.
+func (m *UI) renderSidebarComponent(cfg config.SidebarComponentConfig, width int) string {
+	t := m.com.Styles
+
+	switch cfg.ID {
+	case "logo":
+		sidebarLogo := logo.SmallRender(t, width, 3, logo.Opts{
+			AppTitle:          t.LogoConfig.AppTitle,
+			Hyper:             m.com.IsHyper(),
+			SidebarLogoPlain: t.LogoConfig.SidebarLogoType == "plain_text",
+			SidebarLogoHidden: t.LogoConfig.SidebarLogoType == "hidden",
+			SidebarFigletFont: t.LogoConfig.SidebarFigletFont,
+		})
+		if sidebarLogo != "" {
+			return sidebarLogo
+		}
+		return ""
+	case "session_title":
+		return t.Sidebar.SessionTitle.Width(width).MaxHeight(2).Render(m.session.Title)
+	case "working_dir":
+		return common.PrettyPath(t, m.com.Workspace.WorkingDir(), width)
+	case "active_llm":
+		return m.modelInfo(width)
+	case "goal":
+		return m.goalInfo(width)
+	case "files":
+		return m.sidebarListComponent(cfg, width)
+	case "lsps":
+		return m.sidebarListComponent(cfg, width)
+	case "mcps":
+		return m.sidebarListComponent(cfg, width)
+	case "skills":
+		return m.sidebarListComponent(cfg, width)
+	default:
+		return ""
+	}
+}
+
+// sidebarListComponent handles list-type sidebar components (files, lsps, mcps, skills)
+// with a default max_items of 10 if not specified.
+func (m *UI) sidebarListComponent(cfg config.SidebarComponentConfig, width int) string {
+	maxItems := cfg.MaxItems
+	if maxItems == 0 {
+		maxItems = 10
+	}
+
+	switch cfg.ID {
+	case "files":
+		return m.filesInfo(m.com.Workspace.WorkingDir(), width, maxItems, true)
+	case "lsps":
+		return m.lspInfo(width, maxItems, true)
+	case "mcps":
+		return m.mcpInfo(width, maxItems, true)
+	case "skills":
+		return m.skillsInfo(width, maxItems, true)
+	default:
+		return ""
+	}
 }

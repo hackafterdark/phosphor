@@ -23,9 +23,9 @@ func (m *UI) mcpInfo(width, maxItems int, isSection bool) string {
 		}
 	}
 
-	title := t.Resource.Heading.Render("MCPs")
-	if isSection {
-		title = common.Section(t, title, width)
+	title := common.Section(t, "MCPs", width)
+	if !isSection {
+		title = t.Resource.Heading.Render("MCPs")
 	}
 	list := t.Resource.AdditionalText.Render("None")
 	if len(mcps) > 0 {
@@ -98,7 +98,7 @@ func mcpList(t *styles.Styles, mcps []mcp.ClientInfo, width, maxItems int) strin
 	}
 
 	if len(renderedMcps) > maxItems {
-		visibleItems := renderedMcps[:maxItems-1]
+		visibleItems := renderedMcps[:maxItems]
 		remaining := len(renderedMcps) - maxItems
 		visibleItems = append(visibleItems, t.Resource.AdditionalText.Render(fmt.Sprintf("…and %d more", remaining)))
 		return lipgloss.JoinVertical(lipgloss.Left, visibleItems...)

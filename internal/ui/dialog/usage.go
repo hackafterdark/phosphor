@@ -16,11 +16,11 @@ import (
 	"github.com/NimbleMarkets/ntcharts/barchart"
 	"github.com/NimbleMarkets/ntcharts/canvas"
 	"github.com/NimbleMarkets/ntcharts/canvas/runes"
+	v1lipgloss "github.com/charmbracelet/lipgloss"
+	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/hackafterdark/phosphor/internal/db"
 	"github.com/hackafterdark/phosphor/internal/ui/common"
 	"github.com/hackafterdark/phosphor/internal/ui/styles"
-	v1lipgloss "github.com/charmbracelet/lipgloss"
-	uv "github.com/charmbracelet/ultraviolet"
 )
 
 // UsageID is the identifier for the usage stats dialog.

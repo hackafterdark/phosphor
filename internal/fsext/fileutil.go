@@ -28,7 +28,7 @@ func SkipHidden(path string) bool {
 	}
 
 	commonIgnoredDirs := map[string]bool{
-		".phosphor":           true,
+		".phosphor":        true,
 		"node_modules":     true,
 		"vendor":           true,
 		"dist":             true,

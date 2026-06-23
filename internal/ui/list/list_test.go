@@ -822,4 +822,3 @@ func TestList_PrependItems_Stability(t *testing.T) {
 	}
 	require.Equal(t, expected, lines, "rendered viewport content must remain the same after prepend")
 }
-

@@ -3,9 +3,9 @@ package chat
 import (
 	"testing"
 
+	"github.com/charmbracelet/x/ansi"
 	"github.com/hackafterdark/phosphor/internal/message"
 	"github.com/hackafterdark/phosphor/internal/ui/styles"
-	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/require"
 )
 

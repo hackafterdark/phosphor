@@ -98,7 +98,7 @@ func TestUI_PruneHistoryWithToolMessages(t *testing.T) {
 	// 7. User Message (G) - Top level
 	// Total top level: 5 (A, B, D, E, G).
 	// Since 5 > 4 (limit * 2), pruning should trigger.
-	
+
 	msgs := []message.Message{
 		{ID: "msg-A", Role: message.User},
 		{ID: "msg-B", Role: message.Assistant},
@@ -114,7 +114,7 @@ func TestUI_PruneHistoryWithToolMessages(t *testing.T) {
 		if msg.Role == message.User || msg.Role == message.Assistant {
 			ui.loadedMessagesCount++
 		}
-		
+
 		// Only user/assistant messages produce visible top-level chat items in our test simulation
 		if msg.Role == message.User || msg.Role == message.Assistant {
 			items := chat.ExtractMessageItems(ui.com.Styles, &msg, nil)
@@ -124,28 +124,27 @@ func TestUI_PruneHistoryWithToolMessages(t *testing.T) {
 
 	// Before pruning, loadedMessagesCount should be 5
 	require.Equal(t, 5, ui.loadedMessagesCount)
-	
+
 	// We prune history.
 	ui.pruneHistoryIfNeeded()
 
 	// After pruning, loadedMessagesCount should be historyLimit (2)
 	require.Equal(t, 2, ui.loadedMessagesCount)
-	
+
 	// Remaining top-level messages to load: 5 - 2 = 3
 	// The LoadMoreItem should be prepended, plus msg-E and msg-G
 	require.Equal(t, 3, ui.chat.Len())
-	
+
 	_, ok := ui.chat.ItemAt(0).(*chat.LoadMoreItem)
 	require.True(t, ok, "Expected first item to be LoadMoreItem")
-	
+
 	// Now we click / trigger loadMoreMessages.
 	// With historyBatch = 1, it should load 1 more top-level message (msg-D).
 	ui.loadMoreMessages()
-	
+
 	// After loading 1 more, loadedMessagesCount should be 3 (msg-D, msg-E, msg-G)
 	require.Equal(t, 3, ui.loadedMessagesCount)
-	
+
 	// In the chat, the new items should be: LoadMoreItem + msg-D + msg-E + msg-G = 4 items
 	require.Equal(t, 4, ui.chat.Len())
 }
-

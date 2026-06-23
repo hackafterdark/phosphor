@@ -4,9 +4,9 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/hackafterdark/phosphor/internal/ui/chat"
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/hackafterdark/phosphor/internal/ui/chat"
 	"github.com/stretchr/testify/require"
 )
 
