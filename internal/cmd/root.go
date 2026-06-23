@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	_ "embed"
@@ -23,11 +22,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	fang "charm.land/fang/v2"
-	"charm.land/lipgloss/v2"
-	"github.com/charmbracelet/colorprofile"
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/charmbracelet/x/exp/charmtone"
 	xstrings "github.com/charmbracelet/x/exp/strings"
 	"github.com/charmbracelet/x/term"
 	"github.com/hackafterdark/phosphor/internal/app"
@@ -144,24 +140,6 @@ phosphor --continue
 	},
 }
 
-var heartbit = lipgloss.NewStyle().Foreground(charmtone.Dolly).SetString(`
-    ▄▄▄▄▄▄▄▄    ▄▄▄▄▄▄▄▄
-  ███████████  ███████████
-████████████████████████████
-████████████████████████████
-██████████▀██████▀██████████
-██████████ ██████ ██████████
-▀▀██████▄████▄▄████▄██████▀▀
-  ████████████████████████
-    ████████████████████
-       ▀▀██████████▀▀
-           ▀▀▀▀▀▀
-`)
-
-// copied from cobra:
-const defaultVersionTemplate = `{{with .DisplayName}}{{printf "%s " .}}{{end}}{{printf "version %s" .Version}}
-`
-
 func Execute() {
 	// FIXME: config.Load uses slog internally during provider resolution,
 	// but the file-based logger isn't set up until after config is loaded
@@ -172,20 +150,6 @@ func Execute() {
 	// warnings/diagnostics instead of logging them as a side effect.
 	slog.SetDefault(slog.New(slog.DiscardHandler))
 
-	// NOTE: very hacky: we create a colorprofile writer with STDOUT, then make
-	// it forward to a bytes.Buffer, write the colored heartbit to it, and then
-	// finally prepend it in the version template.
-	// Unfortunately cobra doesn't give us a way to set a function to handle
-	// printing the version, and PreRunE runs after the version is already
-	// handled, so that doesn't work either.
-	// This is the only way I could find that works relatively well.
-	if term.IsTerminal(os.Stdout.Fd()) {
-		var b bytes.Buffer
-		w := colorprofile.NewWriter(os.Stdout, os.Environ())
-		w.Forward = &b
-		_, _ = w.WriteString(heartbit.String())
-		rootCmd.SetVersionTemplate(b.String() + "\n" + defaultVersionTemplate)
-	}
 	if err := fang.Execute(
 		context.Background(),
 		rootCmd,

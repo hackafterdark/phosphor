@@ -89,19 +89,6 @@ body {
   pointer-events: none;
 }
 
-.heartbit-svg {
-  flex-shrink: 0;
-  width: 70px;
-  flex-basis: 70px;
-  margin-left: 1rem;
-}
-
-.heartbit-svg svg {
-  width: 100%;
-  height: auto;
-  display: block;
-}
-
 .header-info {
   margin-bottom: 2rem;
   font-size: 0.875rem;
