@@ -259,16 +259,6 @@ type Styles struct {
 		ToolCallFocused  lipgloss.Style
 		ToolCallCompact  lipgloss.Style
 		ToolCallBlurred  lipgloss.Style
-
-		// Shell (bang mode) item styles.
-		ShellBarFocused    lipgloss.Style // Left vertical bar when focused.
-		ShellBarBlurred    lipgloss.Style // Left vertical bar when blurred.
-		ShellPrompt        lipgloss.Style // "$" prompt symbol (focused).
-		ShellPromptBlurred lipgloss.Style // "$" prompt symbol (blurred).
-		ShellCommand       lipgloss.Style // Command text (syntax-highlighted).
-		ShellOutput        lipgloss.Style // Plain output text.
-		ShellExitCode      lipgloss.Style // Non-zero exit code indicator.
-		ShellTruncation    lipgloss.Style // "N more lines" hint.
 		SectionHeader      lipgloss.Style
 
 		// Thinking section styles

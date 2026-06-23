@@ -3,15 +3,12 @@ package backend
 import (
 	"context"
 	"errors"
-	"os"
 
 	"github.com/hackafterdark/phosphor/internal/agent"
 	"github.com/hackafterdark/phosphor/internal/agent/notify"
 	"github.com/hackafterdark/phosphor/internal/config"
-	"github.com/hackafterdark/phosphor/internal/message"
 	"github.com/hackafterdark/phosphor/internal/proto"
 	"github.com/hackafterdark/phosphor/internal/pubsub"
-	"github.com/hackafterdark/phosphor/internal/shell"
 )
 
 // SendMessage validates and accepts a prompt for the workspace's agent,
@@ -240,43 +237,4 @@ func (b *Backend) GetDefaultSmallModel(workspaceID, providerID string) (config.S
 	}
 
 	return ws.GetDefaultSmallModel(providerID), nil
-}
-
-// RunShellCommand runs a shell command in the workspace directory and
-// persists the command + output as a user message in the session.
-func (b *Backend) RunShellCommand(ctx context.Context, workspaceID string, req proto.ShellCommandRequest) (proto.ShellCommandResponse, error) {
-	ws, err := b.GetWorkspace(workspaceID)
-	if err != nil {
-		return proto.ShellCommandResponse{}, err
-	}
-
-	var persist shell.PersistFunc
-	if req.SessionID != "" {
-		persist = func(cmd, output string, exitCode int) error {
-			_, err := ws.Messages.Create(ctx, req.SessionID, message.CreateMessageParams{
-				Role: message.User,
-				Parts: []message.ContentPart{message.ShellCommand{
-					Command:  cmd,
-					Output:   output,
-					ExitCode: exitCode,
-				}},
-			})
-			return err
-		}
-	}
-
-	result, err := shell.RunAndPersist(ctx, shell.RunOptions{
-		Command:   req.Command,
-		Cwd:       ws.Path,
-		Env:       append(os.Environ(), ws.Env...),
-		TermWidth: req.TermWidth,
-	}, persist)
-	if err != nil {
-		return proto.ShellCommandResponse{}, err
-	}
-
-	return proto.ShellCommandResponse{
-		Output:   result.Output,
-		ExitCode: result.ExitCode,
-	}, nil
 }

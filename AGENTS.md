@@ -201,16 +201,15 @@ three layers:
   the shape of what `quickStyle` produces.
 
 **Adding theme-specific overrides**: When a style genuinely needs a
-color that doesn't fit the token model (e.g. the bang prompt uses
-Salt/Hazy/Larple), keep `quickStyle` on the closest semantic token and
-override only the differing colors in the theme function:
+color that doesn't fit the token model, keep `quickStyle` on the closest
+semantic token and override only the differing colors in the theme function:
 
 ```go
 func CharmtonePantera() Styles {
 	s := quickStyle(quickStyleOpts{ /* palette */ })
 
 	// Override only the colors that differ from the token defaults.
-	s.Editor.PromptBangIconFocused = s.Editor.PromptBangIconFocused.
+	s.Editor.PromptYoloIconFocused = s.Editor.PromptYoloIconFocused.
 		Foreground(charmtone.Salt).
 		Background(charmtone.Hazy)
 

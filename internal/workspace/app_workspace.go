@@ -19,9 +19,7 @@ import (
 	"github.com/hackafterdark/phosphor/internal/message"
 	"github.com/hackafterdark/phosphor/internal/oauth"
 	"github.com/hackafterdark/phosphor/internal/permission"
-	"github.com/hackafterdark/phosphor/internal/proto"
 	"github.com/hackafterdark/phosphor/internal/session"
-	"github.com/hackafterdark/phosphor/internal/shell"
 	"github.com/hackafterdark/phosphor/internal/skills"
 )
 
@@ -107,37 +105,6 @@ func (w *AppWorkspace) AgentRun(ctx context.Context, sessionID, prompt string, a
 	}
 	_, err := w.app.AgentCoordinator.Run(ctx, sessionID, prompt, attachments...)
 	return err
-}
-
-func (w *AppWorkspace) AgentRunShellCommand(ctx context.Context, sessionID, command string, termWidth int) (proto.ShellCommandResponse, error) {
-	var persist shell.PersistFunc
-	if sessionID != "" {
-		persist = func(cmd, output string, exitCode int) error {
-			_, err := w.app.Messages.Create(ctx, sessionID, message.CreateMessageParams{
-				Role: message.User,
-				Parts: []message.ContentPart{message.ShellCommand{
-					Command:  cmd,
-					Output:   output,
-					ExitCode: exitCode,
-				}},
-			})
-			return err
-		}
-	}
-
-	result, err := shell.RunAndPersist(ctx, shell.RunOptions{
-		Command:   command,
-		Cwd:       w.store.WorkingDir(),
-		TermWidth: termWidth,
-	}, persist)
-	if err != nil {
-		return proto.ShellCommandResponse{}, err
-	}
-
-	return proto.ShellCommandResponse{
-		Output:   result.Output,
-		ExitCode: result.ExitCode,
-	}, nil
 }
 
 func (w *AppWorkspace) AgentCancel(sessionID string) {

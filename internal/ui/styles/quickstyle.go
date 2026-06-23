@@ -814,19 +814,6 @@ func quickStyle(o quickStyleOpts) Styles {
 	// No padding or border for compact tool calls within messages
 	s.Messages.ToolCallCompact = muted
 
-	// Shell (bang mode) item styles.
-	s.Messages.ShellBarFocused = lipgloss.NewStyle().PaddingLeft(1).
-		BorderStyle(messageFocussedBorder).BorderLeft(true).
-		BorderForeground(o.primary)
-	s.Messages.ShellBarBlurred = lipgloss.NewStyle().PaddingLeft(1).BorderLeft(true).
-		BorderForeground(o.bgMostVisible).BorderStyle(lipgloss.NormalBorder())
-	s.Messages.ShellPrompt = base.Foreground(o.primary).Bold(true)
-	s.Messages.ShellPromptBlurred = base.Foreground(o.fgMoreSubtle)
-	s.Messages.ShellCommand = base.Foreground(o.fgBase)
-	s.Messages.ShellOutput = subtle
-	s.Messages.ShellExitCode = lipgloss.NewStyle().Foreground(o.destructive)
-	s.Messages.ShellTruncation = muted
-
 	s.Messages.SectionHeader = base.PaddingLeft(2)
 	s.Messages.AssistantInfoIcon = subtle
 	s.Messages.AssistantInfoModel = muted
