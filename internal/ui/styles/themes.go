@@ -61,8 +61,8 @@ type ThemePalette struct {
 	SuccessMostSubtle *string `json:"successMostSubtle,omitempty" yaml:"successMostSubtle,omitempty"`
 
 	// Section title and divider line colors.
-	SectionTitle *string `json:"sectionTitle,omitempty" yaml:"sectionTitle,omitempty"`
-	SectionLine  *string `json:"sectionLine,omitempty" yaml:"sectionLine,omitempty"`
+	SectionTitle     *string `json:"sectionTitle,omitempty" yaml:"sectionTitle,omitempty"`
+	SectionLine      *string `json:"sectionLine,omitempty" yaml:"sectionLine,omitempty"`
 	SectionSeparator *string `json:"sectionSeparator,omitempty" yaml:"sectionSeparator,omitempty"`
 
 	// Logo configuration for the application logo and sidebar logo.
@@ -257,8 +257,8 @@ func panteraOpts() quickStyleOpts {
 		successMoreSubtle: charmtone.Bok,
 		successMostSubtle: charmtone.Guac,
 
-		sectionTitle: charmtone.Oyster,
-		sectionLine:  charmtone.Char,
+		sectionTitle:     charmtone.Oyster,
+		sectionLine:      charmtone.Char,
 		sectionSeparator: SectionSeparator,
 	}
 }
@@ -296,8 +296,8 @@ func obsidianaOpts() quickStyleOpts {
 		successMoreSubtle: charmtone.Bok,
 		successMostSubtle: charmtone.Guac,
 
-		sectionTitle: charmtone.Oyster,
-		sectionLine:  charmtone.Char,
+		sectionTitle:     charmtone.Oyster,
+		sectionLine:      charmtone.Char,
 		sectionSeparator: SectionSeparator,
 	}
 }

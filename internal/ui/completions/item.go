@@ -2,6 +2,7 @@ package completions
 
 import (
 	"slices"
+	"strings"
 
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -21,6 +22,12 @@ type ResourceCompletionValue struct {
 	URI      string
 	Title    string
 	MIMEType string
+}
+
+// SlashCommandValue represents a slash command completion value.
+type SlashCommandValue struct {
+	Name        string
+	Description string
 }
 
 // CompletionItem represents an item in the completions list.
@@ -109,11 +116,16 @@ func (c *CompletionItem) SetFocused(focused bool) {
 
 // Render implements [list.Item].
 func (c *CompletionItem) Render(width int) string {
+	var desc string
+	if cmd, ok := c.value.(SlashCommandValue); ok {
+		desc = cmd.Description
+	}
 	return renderItem(
 		c.normalStyle,
 		c.focusedStyle,
 		c.matchStyle,
 		c.text,
+		desc,
 		c.focused,
 		width,
 		c.cache,
@@ -124,6 +136,7 @@ func (c *CompletionItem) Render(width int) string {
 func renderItem(
 	normalStyle, focusedStyle, matchStyle lipgloss.Style,
 	text string,
+	desc string,
 	focused bool,
 	width int,
 	cache map[int]string,
@@ -138,12 +151,6 @@ func renderItem(
 		return cached
 	}
 
-	innerWidth := width - 2 // Account for padding
-	// Truncate if needed.
-	if ansi.StringWidth(text) > innerWidth {
-		text = ansi.Truncate(text, innerWidth, "…")
-	}
-
 	// Select base style.
 	style := normalStyle
 	matchStyle = matchStyle.Background(style.GetBackground())
@@ -152,18 +159,78 @@ func renderItem(
 		matchStyle = matchStyle.Background(style.GetBackground())
 	}
 
-	// Render full-width text with background.
-	content := style.Padding(0, 1).Width(width).Render(text)
+	innerWidth := width - 2 // Account for padding
+	var content string
 
-	// Apply match highlighting using StyleRanges.
-	if len(match.MatchedIndexes) > 0 {
-		var ranges []lipgloss.Range
-		for _, rng := range matchedRanges(match.MatchedIndexes) {
-			start, stop := bytePosToVisibleCharPos(text, rng)
-			// Offset by 1 for the padding space.
-			ranges = append(ranges, lipgloss.NewRange(start+1, stop+2, matchStyle))
+	if desc == "" {
+		// Truncate if needed.
+		if ansi.StringWidth(text) > innerWidth {
+			text = ansi.Truncate(text, innerWidth, "…")
 		}
-		content = lipgloss.StyleRanges(content, ranges...)
+
+		// Render full-width text with background.
+		content = style.Padding(0, 1).Width(width).Render(text)
+
+		// Apply match highlighting using StyleRanges.
+		if len(match.MatchedIndexes) > 0 {
+			var ranges []lipgloss.Range
+			for _, rng := range matchedRanges(match.MatchedIndexes) {
+				start, stop := bytePosToVisibleCharPos(text, rng)
+				// Offset by 1 for the padding space.
+				ranges = append(ranges, lipgloss.NewRange(start+1, stop+2, matchStyle))
+			}
+			content = lipgloss.StyleRanges(content, ranges...)
+		}
+	} else {
+		// Render dual-column: "name  description"
+		nameWidth := ansi.StringWidth(text)
+		
+		if nameWidth+2 >= innerWidth {
+			// Name takes up all or almost all space. Just render truncated name.
+			truncatedName := ansi.Truncate(text, innerWidth, "…")
+			content = style.Padding(0, 1).Width(width).Render(truncatedName)
+		} else {
+			descMaxWidth := innerWidth - nameWidth - 2
+			truncatedDesc := desc
+			if ansi.StringWidth(desc) > descMaxWidth {
+				truncatedDesc = ansi.Truncate(desc, descMaxWidth, "…")
+			}
+
+			// Style the name and highlight any fuzzy matches.
+			nameStyle := lipgloss.NewStyle().Foreground(style.GetForeground()).Background(style.GetBackground())
+			nameStr := nameStyle.Render(text)
+
+			if len(match.MatchedIndexes) > 0 {
+				var ranges []lipgloss.Range
+				for _, rng := range matchedRanges(match.MatchedIndexes) {
+					start, stop := bytePosToVisibleCharPos(text, rng)
+					ranges = append(ranges, lipgloss.NewRange(start, stop, matchStyle))
+				}
+				nameStr = lipgloss.StyleRanges(nameStr, ranges...)
+			}
+
+			// Style the separator.
+			sepStyle := lipgloss.NewStyle().Background(style.GetBackground())
+			sepStr := sepStyle.Render("  ")
+
+			// Style the description with faint (dimmed) coloring.
+			descStyle := lipgloss.NewStyle().Faint(true).Foreground(style.GetForeground()).Background(style.GetBackground())
+			descStr := descStyle.Render(truncatedDesc)
+
+			// Pad right side to fill exactly innerWidth.
+			usedWidth := nameWidth + 2 + ansi.StringWidth(truncatedDesc)
+			remaining := innerWidth - usedWidth
+			var rightPadStr string
+			if remaining > 0 {
+				rightPadStr = lipgloss.NewStyle().Background(style.GetBackground()).Render(strings.Repeat(" ", remaining))
+			}
+
+			// Add left and right padding spaces (totaling width).
+			leftPadStr := lipgloss.NewStyle().Background(style.GetBackground()).Render(" ")
+			rightPadStr2 := lipgloss.NewStyle().Background(style.GetBackground()).Render(" ")
+
+			content = leftPadStr + nameStr + sepStr + descStr + rightPadStr + rightPadStr2
+		}
 	}
 
 	cache[width] = content

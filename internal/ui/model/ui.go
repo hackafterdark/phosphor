@@ -164,6 +164,8 @@ type (
 	}
 )
 
+type slashCommandHandler func(args []string) tea.Cmd
+
 // UI represents the main user interface model.
 type UI struct {
 	com            *common.Common
@@ -237,6 +239,12 @@ type UI struct {
 	onboarding struct {
 		yesInitializeSelected bool
 	}
+
+	// slashMode indicates the editor is in slash-command mode (input starts with "/").
+	// In this mode, Enter executes slash commands instead of sending a message.
+	// Exits on Escape, Ctrl+X (clear prompt), or when input no longer starts with "/".
+	slashMode     bool
+	slashHandlers map[string]slashCommandHandler
 
 	// lsp
 	lspStates map[string]workspace.LSPClientInfo
@@ -369,7 +377,7 @@ func New(com *common.Common, initialSessionID string, continueLast bool) *UI {
 
 	status := NewStatus(com, ui)
 
-	ui.setEditorPrompt(com.Workspace.PermissionSkipRequests())
+	ui.setEditorPrompt()
 	ui.randomizePlaceholders()
 	ui.textarea.Placeholder = ui.readyPlaceholder
 	ui.status = status
@@ -397,6 +405,8 @@ func New(com *common.Common, initialSessionID string, continueLast bool) *UI {
 	ui.progressBarEnabled = opts.Progress == nil || *opts.Progress
 	// enable transparent mode
 	ui.isTransparent = opts.TUI.Transparent != nil && *opts.TUI.Transparent
+
+	ui.registerSlashCommands()
 
 	return ui
 }
@@ -1749,7 +1759,7 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 	case dialog.ActionToggleYoloMode:
 		yolo := !m.com.Workspace.PermissionSkipRequests()
 		m.com.Workspace.PermissionSetSkipRequests(yolo)
-		m.setEditorPrompt(yolo)
+		m.setEditorPrompt()
 		m.dialog.CloseDialog(dialog.CommandsID)
 	case dialog.ActionSelectNotificationStyle:
 		cfg := m.com.Config()
@@ -2309,7 +2319,7 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 		case key.Matches(msg, m.keyMap.ToggleYolo):
 			yolo := !m.com.Workspace.PermissionSkipRequests()
 			m.com.Workspace.PermissionSetSkipRequests(yolo)
-			m.setEditorPrompt(yolo)
+			m.setEditorPrompt()
 			status := "disabled"
 			if yolo {
 				status = "enabled"
@@ -2376,6 +2386,11 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 						if !msg.KeepOpen {
 							m.closeCompletions()
 						}
+					case completions.SelectionMsg[completions.SlashCommandValue]:
+						cmds = append(cmds, m.insertSlashCommandCompletion(msg.Value.Name))
+						if !msg.KeepOpen {
+							m.closeCompletions()
+						}
 					case completions.ClosedMsg:
 						m.completionsOpen = false
 					}
@@ -2431,8 +2446,11 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 					return m.openQuitDialog()
 				}
 
-				if cmd := m.handleSlashGoal(value); cmd != nil {
-					return cmd
+				if strings.HasPrefix(value, "/") {
+					if cmd := m.handleSlashCommand(value); cmd != nil {
+						return cmd
+					}
+					return func() tea.Msg { return nil }
 				}
 
 				attachments := m.attachments.List()
@@ -2485,17 +2503,21 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 					cmds = append(cmds, cmd)
 				}
 			case key.Matches(msg, m.keyMap.Editor.Escape):
+				if m.slashMode {
+					m.slashMode = false
+					m.textarea.Reset()
+					m.closeCompletions()
+					return tea.Sequence(cmds...)
+				}
 				cmd := m.handleHistoryEscape(msg)
 				if cmd != nil {
 					cmds = append(cmds, cmd)
 				}
 			case key.Matches(msg, m.keyMap.Editor.ClearPrompt):
+				m.slashMode = false
 				m.textarea.Reset()
 				m.attachments.Reset()
-			case key.Matches(msg, m.keyMap.Editor.Commands) && m.textarea.Value() == "":
-				if cmd := m.openCommandsDialog(); cmd != nil {
-					cmds = append(cmds, cmd)
-				}
+				m.closeCompletions()
 			default:
 				if handleGlobalKeys(msg) {
 					// Handle global keys first before passing to textarea.
@@ -2519,6 +2541,28 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 					}
 				}
 
+				// Trigger slash command completions on /.
+				// Enter slash command mode when / is typed at position 0 (empty input).
+				if msg.String() == "/" && !m.completionsOpen {
+					// Only enter slash mode at beginning of empty prompt.
+					if curIdx == 0 {
+						m.slashMode = true
+						// Build list of slash commands for completion.
+						slashCmds := make([]completions.SlashCommandValue, 0, len(commands.GetSlashCommands()))
+						for _, cmd := range commands.GetSlashCommands() {
+							slashCmds = append(slashCmds, completions.SlashCommandValue{
+								Name:        cmd.Name,
+								Description: cmd.Description,
+							})
+						}
+						m.completionsOpen = true
+						m.completionsQuery = ""
+						m.completionsStartIndex = curIdx
+						m.completionsPositionStart = m.completionsPosition()
+						m.completions.SetSlashCommands(slashCmds)
+					}
+				}
+
 				// remove the details if they are open when user starts typing
 				if m.detailsOpen {
 					m.detailsOpen = false
@@ -2528,12 +2572,18 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				prevHeight := m.textarea.Height()
 				cmds = append(cmds, m.updateTextareaWithPrevHeight(msg, prevHeight))
 
+				// Exit slash mode if the input no longer starts with "/".
+				if m.slashMode && !strings.HasPrefix(m.textarea.Value(), "/") {
+					m.slashMode = false
+					m.closeCompletions()
+				}
+
 				// Any text modification becomes the current draft.
 				m.updateHistoryDraft(curValue)
 
 				// After updating textarea, check if we need to filter completions.
 				// Skip filtering on the initial @ keystroke since items are loading async.
-				if m.completionsOpen && msg.String() != "@" {
+				if m.completionsOpen && msg.String() != "@" && msg.String() != "/" {
 					newValue := m.textarea.Value()
 					newIdx := len(newValue)
 
@@ -2547,6 +2597,9 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 						// Extract current word and filter.
 						word := m.textareaWord()
 						if strings.HasPrefix(word, "@") {
+							m.completionsQuery = word[1:]
+							m.completions.Filter(m.completionsQuery)
+						} else if strings.HasPrefix(word, "/") {
 							m.completionsQuery = word[1:]
 							m.completions.Filter(m.completionsQuery)
 						} else if m.completionsOpen {
@@ -2827,9 +2880,6 @@ func (m *UI) ShortHelp() []key.Binding {
 	k := &m.keyMap
 	tab := k.Tab
 	commands := k.Commands
-	if m.focus == uiFocusEditor && m.textarea.Value() == "" {
-		commands.SetHelp("/ or ctrl+p", "commands")
-	}
 
 	switch m.state {
 	case uiInitialize:
@@ -2907,9 +2957,6 @@ func (m *UI) FullHelp() [][]key.Binding {
 	hasAttachments := len(m.attachments.List()) > 0
 	hasSession := m.hasSession()
 	commands := k.Commands
-	if m.focus == uiFocusEditor && m.textarea.Value() == "" {
-		commands.SetHelp("/ or ctrl+p", "commands")
-	}
 
 	switch m.state {
 	case uiInitialize:
@@ -3416,45 +3463,50 @@ func (m *UI) openEditor(value string) tea.Cmd {
 
 // setEditorPrompt configures the textarea prompt function based on whether
 // yolo mode is enabled.
-func (m *UI) setEditorPrompt(yolo bool) {
-	if yolo {
-		m.textarea.SetPromptFunc(4, m.yoloPromptFunc)
-		return
-	}
-	m.textarea.SetPromptFunc(4, m.normalPromptFunc)
+func (m *UI) setEditorPrompt() {
+	m.textarea.SetPromptFunc(4, m.editorPromptFunc)
 }
 
-// normalPromptFunc returns the normal editor prompt style ("  > " on first
-// line, "::: " on subsequent lines).
-func (m *UI) normalPromptFunc(info textarea.PromptInfo) string {
+// editorPromptFunc returns the appropriate editor prompt style based on
+// the current mode (yolo, slash command, or normal).
+func (m *UI) editorPromptFunc(info textarea.PromptInfo) string {
 	t := m.com.Styles
 	if info.LineNumber == 0 {
+		if m.com.Workspace.PermissionSkipRequests() {
+			if info.Focused {
+				return t.Editor.PromptYoloIconFocused.Render()
+			}
+			return t.Editor.PromptYoloIconBlurred.Render()
+		}
+		if m.slashMode {
+			if info.Focused {
+				return t.Editor.PromptSlashIconFocused.Render()
+			}
+			return t.Editor.PromptSlashIconBlurred.Render()
+		}
 		if info.Focused {
 			return "  > "
 		}
 		return "::: "
 	}
+
+	// Continuation lines
+	if m.com.Workspace.PermissionSkipRequests() {
+		if info.Focused {
+			return t.Editor.PromptYoloDotsFocused.Render()
+		}
+		return t.Editor.PromptYoloDotsBlurred.Render()
+	}
+	if m.slashMode {
+		if info.Focused {
+			return t.Editor.PromptSlashDotsFocused.Render()
+		}
+		return t.Editor.PromptSlashDotsBlurred.Render()
+	}
 	if info.Focused {
 		return t.Editor.PromptNormalFocused.Render()
 	}
 	return t.Editor.PromptNormalBlurred.Render()
-}
-
-// yoloPromptFunc returns the yolo mode editor prompt style with warning icon
-// and colored dots.
-func (m *UI) yoloPromptFunc(info textarea.PromptInfo) string {
-	t := m.com.Styles
-	if info.LineNumber == 0 {
-		if info.Focused {
-			return t.Editor.PromptYoloIconFocused.Render()
-		} else {
-			return t.Editor.PromptYoloIconBlurred.Render()
-		}
-	}
-	if info.Focused {
-		return t.Editor.PromptYoloDotsFocused.Render()
-	}
-	return t.Editor.PromptYoloDotsBlurred.Render()
 }
 
 // closeCompletions closes the completions popup and resets state.
@@ -3480,6 +3532,16 @@ func (m *UI) insertCompletionText(text string) bool {
 	m.textarea.MoveToEnd()
 	m.textarea.InsertRune(' ')
 	return true
+}
+
+// insertSlashCommandCompletion inserts the selected slash command into the textarea,
+// preserving the / prefix so the user stays in slash command mode.
+func (m *UI) insertSlashCommandCompletion(name string) tea.Cmd {
+	prevHeight := m.textarea.Height()
+	m.textarea.SetValue("/" + name)
+	m.textarea.MoveToEnd()
+	m.slashMode = true
+	return m.handleTextareaHeightChange(prevHeight)
 }
 
 // insertFileCompletion inserts the selected file path into the textarea,
@@ -3720,6 +3782,15 @@ func (m *UI) attachSkill(skillID, name string) tea.Cmd {
 
 // sendMessage sends a message with the given content and attachments.
 func (m *UI) sendMessage(content string, attachments ...message.Attachment) tea.Cmd {
+	trimmed := strings.TrimSpace(content)
+	if strings.HasPrefix(trimmed, "/") {
+		slog.Warn("sendMessage: blocked sending slash command to agent", "content", content)
+		if cmd := m.handleSlashCommand(trimmed); cmd != nil {
+			return cmd
+		}
+		return func() tea.Msg { return nil }
+	}
+
 	if !m.com.Workspace.AgentIsReady() {
 		return util.ReportError(fmt.Errorf("coder agent is not initialized"))
 	}
@@ -3802,18 +3873,26 @@ func cancelTimerCmd() tea.Cmd {
 // cancelAgent handles the cancel key press. The first press sets isCanceling to true
 // and starts a timer. The second press (before the timer expires) actually
 // cancels the agent.
-func (m *UI) handleSlashGoal(value string) tea.Cmd {
-	if !strings.HasPrefix(value, "/goal") {
-		return nil
-	}
 
-	parts := strings.Fields(value)
-	if len(parts) == 1 {
-		// Just /goal, show status
+// registerSlashCommands sets up the mapping between slash command names and their TUI handlers.
+func (m *UI) registerSlashCommands() {
+	m.slashHandlers = map[string]slashCommandHandler{
+		"goal":  m.handleGoalSlashCommand,
+		"menu":  m.handleMenuSlashCommand,
+		"stats": m.handleStatsSlashCommand,
+		"learn": m.handleLearnSlashCommand,
+		"quit":  m.handleQuitSlashCommand,
+	}
+}
+
+// handleGoalSlashCommand handles the "/goal" slash command.
+func (m *UI) handleGoalSlashCommand(args []string) tea.Cmd {
+	if len(args) == 0 {
+		// Just /goal, show status.
+		if !m.hasSession() {
+			return util.ReportWarn("Start a session first to see goal status.")
+		}
 		return func() tea.Msg {
-			if !m.hasSession() {
-				return util.ReportWarn("Start a session first to see goal status.")
-			}
 			g, err := m.com.Workspace.GoalGet(context.Background(), m.session.ID)
 			if err != nil {
 				return util.ReportError(err)()
@@ -3821,35 +3900,122 @@ func (m *UI) handleSlashGoal(value string) tea.Cmd {
 			if g == nil {
 				return util.NewInfoMsg("No active goal for this session.")
 			}
-			return pubsub.Event[goal.Goal]{
-				Type:    pubsub.UpdatedEvent,
-				Payload: *g,
-			}
+			return util.NewInfoMsg(fmt.Sprintf("Goal: %s", g.Objective))
 		}
 	}
 
-	subcommand := parts[1]
+	subcommand := args[0]
 	switch subcommand {
 	case "clear":
+		if !m.hasSession() {
+			return util.ReportWarn("Start a session first.")
+		}
 		return func() tea.Msg {
-			if !m.hasSession() {
-				return util.ReportWarn("Start a session first.")
-			}
-			g, err := m.com.Workspace.GoalClear(context.Background(), m.session.ID)
-			if err != nil {
-				return util.ReportError(err)()
-			}
-			if g == nil {
-				return nil
-			}
-			return pubsub.Event[goal.Goal]{
-				Type:    pubsub.DeletedEvent,
-				Payload: *g,
-			}
+			m.com.Workspace.GoalClear(context.Background(), m.session.ID)
+			return nil
 		}
 	default:
-		return util.ReportWarn("Use the command palette (set_goal) to set a goal objective.")
+		if !m.hasSession() {
+			return util.ReportWarn("Start a session first.")
+		}
+		objective := strings.Join(args, " ")
+		return func() tea.Msg {
+			m.com.Workspace.GoalSet(context.Background(), m.session.ID, objective)
+			return nil
+		}
 	}
+}
+
+// handleMenuSlashCommand handles the "/menu" slash command.
+func (m *UI) handleMenuSlashCommand(args []string) tea.Cmd {
+	return m.openCommandsDialog()
+}
+
+// handleStatsSlashCommand handles the "/stats" slash command.
+func (m *UI) handleStatsSlashCommand(args []string) tea.Cmd {
+	return m.openUsageStatsDialog()
+}
+
+// handleQuitSlashCommand handles the "/quit" slash command.
+func (m *UI) handleQuitSlashCommand(args []string) tea.Cmd {
+	if m.dialog.ContainsDialog(dialog.QuitID) {
+		m.dialog.BringToFront(dialog.QuitID)
+	} else {
+		m.dialog.OpenDialog(dialog.NewQuit(m.com))
+	}
+	return func() tea.Msg { return nil }
+}
+
+// handleLearnSlashCommand handles the "/learn" slash command.
+func (m *UI) handleLearnSlashCommand(args []string) tea.Cmd {
+	if len(args) == 0 {
+		return util.ReportWarn("Please provide a URL, directory path, or description. Example: /learn https://example.com/docs")
+	}
+
+	source := strings.Join(args, " ")
+
+	// Compose the structured prompt that guides the agent.
+	prompt := fmt.Sprintf(
+		"I want you to learn a new skill and author a reusable SKILL.md file for it based on this source: %q.\n\n"+
+			"Please follow these instructions:\n"+
+			"1. Use your tools (e.g., reading directories, viewing files, or extracting web content) to gather all necessary information.\n"+
+			"2. Design a high-quality, reusable SKILL.md following the standard Phosphor and ecosystem skill guidelines.\n"+
+			"The skill file MUST adhere strictly to this template structure:\n\n"+
+			"```markdown\n"+
+			"---\n"+
+			"name: [kebab-case-folder-name-here]\n"+
+			"description: [Concise one-liner <= 60 chars: Use when X occurs to achieve Y]\n"+
+			"category: [coding | testing | operations | design]\n"+
+			"version: 1.0.0\n"+
+			"author: Phosphor Agent\n"+
+			"---\n\n"+
+			"## When to use\n"+
+			"[Describe the specific symptoms, triggers, or user intents that should trigger this skill. E.g., \"Use this skill when the user asks for assistance with database schema migrations or troubleshooting SQL connection pools.\"]\n\n"+
+			"## Step-by-step procedures\n"+
+			"1. [Step 1]\n"+
+			"2. [Step 2]\n"+
+			"3. [Step 3]\n\n"+
+			"## Examples\n"+
+			"* **Prompt:** \"[Example prompt triggering this skill]\"\n"+
+			"* **Expected Result:** [What the agent should produce/do]\n\n"+
+			"## Reference Assets\n"+
+			"[List any local scripts, templates, or files the agent should view or execute to perform this skill. If none exist, specify \"None.\"]\n"+
+			"```\n\n"+
+			"3. Write the completed skill file to `.agents/skills/<name>/SKILL.md` using your file-writing tool.\n"+
+			"4. Confirm in chat when the skill has been successfully authored and saved.",
+		source,
+	)
+
+	// Submit this prompt to the agent as a normal turn.
+	return m.sendMessage(prompt)
+}
+
+// handleSlashCommand processes slash commands from the textarea.
+func (m *UI) handleSlashCommand(value string) tea.Cmd {
+	// Check if the value starts with a slash.
+	if !strings.HasPrefix(value, "/") {
+		return nil
+	}
+
+	m.slashMode = false
+	m.closeCompletions()
+
+	// Extract command name and arguments.
+	parts := strings.Fields(value)
+	cmdName := parts[0][1:] // Remove leading "/"
+
+	if handler, ok := m.slashHandlers[cmdName]; ok {
+		return handler(parts[1:])
+	}
+
+	// Check if it's a registered slash command but not yet implemented.
+	for _, cmd := range commands.GetSlashCommands() {
+		if cmd.Name == cmdName {
+			return util.ReportWarn(fmt.Sprintf("Slash command /%s not yet implemented.", cmdName))
+		}
+	}
+	// Block unrecognized slash commands from being sent as messages.
+	return util.ReportWarn(fmt.Sprintf("Unrecognized slash command: /%s. Use the command palette for available commands.", cmdName))
 }
 
 func (m *UI) cancelAgent() tea.Cmd {

@@ -57,8 +57,8 @@ type quickStyleOpts struct {
 	successMostSubtle color.Color
 
 	// Section title and divider line colors.
-	sectionTitle color.Color
-	sectionLine  color.Color
+	sectionTitle     color.Color
+	sectionLine      color.Color
 	sectionSeparator string
 }
 
@@ -708,6 +708,10 @@ func quickStyle(o quickStyleOpts) Styles {
 	s.Editor.PromptBangIconBlurred = s.Editor.PromptBangIconFocused.Foreground(o.bgBase).Background(o.fgMoreSubtle)
 	s.Editor.PromptBangDotsFocused = lipgloss.NewStyle().MarginRight(1).Foreground(o.primary).SetString(":::")
 	s.Editor.PromptBangDotsBlurred = s.Editor.PromptBangDotsFocused.Foreground(o.fgMoreSubtle)
+	s.Editor.PromptSlashIconFocused = lipgloss.NewStyle().MarginRight(1).Foreground(o.onPrimary).Background(o.warningSubtle).Bold(true).SetString(" / ")
+	s.Editor.PromptSlashIconBlurred = s.Editor.PromptSlashIconFocused.Foreground(o.bgBase).Background(o.fgMoreSubtle)
+	s.Editor.PromptSlashDotsFocused = lipgloss.NewStyle().MarginRight(1).Foreground(o.warningSubtle).SetString("___")
+	s.Editor.PromptSlashDotsBlurred = s.Editor.PromptSlashDotsFocused.Foreground(o.fgMoreSubtle)
 
 	s.Radio.On = lipgloss.NewStyle().Foreground(o.fgSubtle).SetString(RadioOn)
 	s.Radio.Off = lipgloss.NewStyle().Foreground(o.fgSubtle).SetString(RadioOff)

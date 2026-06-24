@@ -138,7 +138,7 @@ func TestKeyMapFromConfig_AllBindings(t *testing.T) {
 		"quit", "help", "commands", "models", "suspend", "sessions", "tab", "toggle_yolo",
 		// Editor
 		"send_message", "open_editor", "newline", "add_image", "paste_image",
-		"mention_file", "add_file", "attachment_delete_mode", "attachment_escape",
+		"mention_file", "attachment_delete_mode", "attachment_escape",
 		"delete_all_attachments", "preview_attachment", "history_prev", "history_next",
 		"clear_prompt",
 		// Chat

@@ -861,7 +861,6 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 		}
 	}
 
-
 	// Create OTEL span for prompt with attachments.
 	var promptWithAttachmentsSpan trace.Span
 	if len(call.Attachments) > 0 {
@@ -1194,7 +1193,6 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 			},
 		},
 	})
-
 
 	if err != nil {
 		isHyper := largeModel.ModelCfg.Provider == hyper.Name

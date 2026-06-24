@@ -130,7 +130,7 @@ func (m *UI) drawSidebar(scr uv.Screen, area uv.Rectangle) {
 
 	// Clamp scroll offset to valid range.
 	contentLines := strings.Count(content, "\n") + 1
-	maxScroll := max(0, contentLines - height)
+	maxScroll := max(0, contentLines-height)
 	if m.sidebarScrollOffset < 0 {
 		m.sidebarScrollOffset = 0
 	}
@@ -142,7 +142,7 @@ func (m *UI) drawSidebar(scr uv.Screen, area uv.Rectangle) {
 	if m.sidebarScrollOffset > 0 {
 		visibleContent := strings.Split(content, "\n")
 		if m.sidebarScrollOffset >= len(visibleContent) {
-			m.sidebarScrollOffset = max(0, len(visibleContent) - 1)
+			m.sidebarScrollOffset = max(0, len(visibleContent)-1)
 			visibleContent = visibleContent[1:]
 		}
 		content = strings.Join(visibleContent[m.sidebarScrollOffset:], "\n")
@@ -181,7 +181,7 @@ func (m *UI) renderSidebarComponent(cfg config.SidebarComponentConfig, width int
 		sidebarLogo := logo.SmallRender(t, width, 3, logo.Opts{
 			AppTitle:          t.LogoConfig.AppTitle,
 			Hyper:             m.com.IsHyper(),
-			SidebarLogoPlain: t.LogoConfig.SidebarLogoType == "plain_text",
+			SidebarLogoPlain:  t.LogoConfig.SidebarLogoType == "plain_text",
 			SidebarLogoHidden: t.LogoConfig.SidebarLogoType == "hidden",
 			SidebarFigletFont: t.LogoConfig.SidebarFigletFont,
 		})

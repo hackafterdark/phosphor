@@ -106,3 +106,22 @@ func TestFilterPrefersPathSegmentExact(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "internal/ui/chat/mcp.go", first.Text())
 }
+func TestSelectCurrentWithSlashCommand(t *testing.T) {
+	t.Parallel()
+
+	c := New(lipgloss.NewStyle(), lipgloss.NewStyle(), lipgloss.NewStyle())
+	c.SetSlashCommands([]SlashCommandValue{
+		{Name: "help"},
+		{Name: "theme"},
+		{Name: "models"},
+	})
+
+	c.Filter("h")
+	msg := c.selectCurrent(false)
+
+	require.NotNil(t, msg)
+	selection, ok := msg.(SelectionMsg[SlashCommandValue])
+	require.True(t, ok)
+	require.Equal(t, "help", selection.Value.Name)
+	require.False(t, selection.KeepOpen)
+}

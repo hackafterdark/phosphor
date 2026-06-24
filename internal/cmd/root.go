@@ -118,7 +118,7 @@ phosphor --continue
 			}
 			sessionID = sess.ID
 		}
-		
+
 		com := common.NewCommon(ws, dbConn)
 		model := ui.New(com, sessionID, continueLast)
 

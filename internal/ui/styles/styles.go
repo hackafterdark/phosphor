@@ -129,6 +129,12 @@ type Styles struct {
 		PromptBangIconBlurred lipgloss.Style
 		PromptBangDotsFocused lipgloss.Style
 		PromptBangDotsBlurred lipgloss.Style
+
+		// Slash command mode prompt ("/" icon + "___" dots).
+		PromptSlashIconFocused lipgloss.Style
+		PromptSlashIconBlurred lipgloss.Style
+		PromptSlashDotsFocused lipgloss.Style
+		PromptSlashDotsBlurred lipgloss.Style
 	}
 
 	// Radio
@@ -157,10 +163,10 @@ type Styles struct {
 
 	// Logo configuration (app title, font settings).
 	LogoConfig struct {
-		AppTitle         string
-		FigletFont       string
-		FigletSolid      bool
-		SidebarLogoType  string // "figlet", "plain_text", or "hidden"
+		AppTitle          string
+		FigletFont        string
+		FigletSolid       bool
+		SidebarLogoType   string // "figlet", "plain_text", or "hidden"
 		SidebarFigletFont string
 	}
 
@@ -259,7 +265,7 @@ type Styles struct {
 		ToolCallFocused  lipgloss.Style
 		ToolCallCompact  lipgloss.Style
 		ToolCallBlurred  lipgloss.Style
-		SectionHeader      lipgloss.Style
+		SectionHeader    lipgloss.Style
 
 		// Thinking section styles
 		ThinkingBox            lipgloss.Style // Background for thinking content

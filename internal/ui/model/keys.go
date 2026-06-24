@@ -41,14 +41,11 @@ func (k KeyMap) Bindings() []KeyBinding {
 	add("Global", k.ToggleYolo, "toggle yolo")
 
 	// Editor bindings
-	add("Editor", k.Editor.AddFile, "add file")
-	add("Editor", k.Editor.SendMessage, "send")
 	add("Editor", k.Editor.OpenEditor, "open editor")
 	add("Editor", k.Editor.Newline, "newline")
 	add("Editor", k.Editor.AddImage, "add image")
 	add("Editor", k.Editor.PasteImage, "paste image from clipboard")
 	add("Editor", k.Editor.MentionFile, "mention file")
-	add("Editor", k.Editor.Commands, "commands")
 	add("Editor", k.Editor.AttachmentDeleteMode, "delete attachment at index i")
 	add("Editor", k.Editor.Escape, "cancel delete mode")
 	add("Editor", k.Editor.DeleteAllAttachments, "delete all attachments")
@@ -56,6 +53,7 @@ func (k KeyMap) Bindings() []KeyBinding {
 	add("Editor", k.Editor.HistoryPrev, "previous message")
 	add("Editor", k.Editor.HistoryNext, "next message")
 	add("Editor", k.Editor.ClearPrompt, "clear prompt")
+	add("Editor", k.Editor.SendMessage, "send")
 
 	// Chat bindings
 	add("Chat", k.Chat.NewSession, "new session")
@@ -104,14 +102,12 @@ func (k KeyMap) Bindings() []KeyBinding {
 
 type KeyMap struct {
 	Editor struct {
-		AddFile     key.Binding
 		SendMessage key.Binding
 		OpenEditor  key.Binding
 		Newline     key.Binding
 		AddImage    key.Binding
 		PasteImage  key.Binding
 		MentionFile key.Binding
-		Commands    key.Binding
 
 		// Attachments key maps
 		AttachmentDeleteMode key.Binding
@@ -209,10 +205,6 @@ func DefaultKeyMap() KeyMap {
 		),
 	}
 
-	km.Editor.AddFile = key.NewBinding(
-		key.WithKeys("/"),
-		key.WithHelp("/", "add file"),
-	)
 	km.Editor.SendMessage = key.NewBinding(
 		key.WithKeys("enter"),
 		key.WithHelp("enter", "send"),
@@ -239,10 +231,6 @@ func DefaultKeyMap() KeyMap {
 	km.Editor.MentionFile = key.NewBinding(
 		key.WithKeys("@"),
 		key.WithHelp("@", "mention file"),
-	)
-	km.Editor.Commands = key.NewBinding(
-		key.WithKeys("/"),
-		key.WithHelp("/", "commands"),
 	)
 	km.Editor.AttachmentDeleteMode = key.NewBinding(
 		key.WithKeys("ctrl+r"),
@@ -477,11 +465,6 @@ func KeyMapFromConfig(keybindings map[string]string) KeyMap {
 	if v, ok := keybindings["mention_file"]; ok {
 		if b := parseKeyBinding(v); b != nil {
 			km.Editor.MentionFile = *b
-		}
-	}
-	if v, ok := keybindings["add_file"]; ok {
-		if b := parseKeyBinding(v); b != nil {
-			km.Editor.AddFile = *b
 		}
 	}
 	if v, ok := keybindings["attachment_delete_mode"]; ok {

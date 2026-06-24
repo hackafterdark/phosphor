@@ -519,13 +519,13 @@ func (s *service) fromDBItem(item db.Message) (Message, error) {
 type partType string
 
 const (
-	reasoningType    partType = "reasoning"
-	textType         partType = "text"
-	imageURLType     partType = "image_url"
-	binaryType       partType = "binary"
-	toolCallType     partType = "tool_call"
-	toolResultType   partType = "tool_result"
-	finishType       partType = "finish"
+	reasoningType  partType = "reasoning"
+	textType       partType = "text"
+	imageURLType   partType = "image_url"
+	binaryType     partType = "binary"
+	toolCallType   partType = "tool_call"
+	toolResultType partType = "tool_result"
+	finishType     partType = "finish"
 )
 
 type partWrapper struct {

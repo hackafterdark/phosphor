@@ -252,7 +252,7 @@ type LandingConfig struct {
 // Components are displayed in the order they appear in the array.
 func DefaultLandingConfig() LandingConfig {
 	return LandingConfig{
-		MaxColumns: 2,
+		MaxColumns:  2,
 		MinColWidth: 40,
 		Gap:         4,
 		VerticalGap: 1,

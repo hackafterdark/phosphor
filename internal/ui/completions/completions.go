@@ -201,6 +201,38 @@ func (c *Completions) SetItems(files []FileCompletionValue, resources []Resource
 	c.updateSize()
 }
 
+// SetSlashCommands sets the completions with slash command items.
+func (c *Completions) SetSlashCommands(commands []SlashCommandValue) {
+	items := make([]list.FilterableItem, 0, len(commands))
+
+	for _, cmd := range commands {
+		item := NewCompletionItem(
+			cmd.Name,
+			cmd,
+			c.normalStyle,
+			c.focusedStyle,
+			c.matchStyle,
+		)
+		items = append(items, item)
+	}
+
+	c.open = true
+	c.query = ""
+	c.allItems = items
+	c.filtered = append([]list.FilterableItem(nil), items...)
+	c.list.SetItems(c.filtered...)
+	c.list.SetFilter("")
+	c.list.Focus()
+
+	c.width = maxWidth
+	c.height = ordered.Clamp(len(items), int(minHeight), int(maxHeight))
+	c.list.SetSize(c.width, c.height)
+	c.list.SelectFirst()
+	c.list.ScrollToSelected()
+
+	c.updateSize()
+}
+
 // Close closes the completions popup.
 func (c *Completions) Close() {
 	c.open = false
@@ -280,7 +312,15 @@ func (c *Completions) updateSize() {
 		if item == nil {
 			continue
 		}
-		s := item.(interface{ Text() string }).Text()
+		var s string
+		if ci, ok := item.(*CompletionItem); ok {
+			s = ci.text
+			if cmd, ok := ci.value.(SlashCommandValue); ok && cmd.Description != "" {
+				s = ci.text + "  " + cmd.Description
+			}
+		} else {
+			s = item.(interface{ Text() string }).Text()
+		}
 		width = max(width, ansi.StringWidth(s))
 	}
 	c.width = ordered.Clamp(width+2, int(minWidth), int(maxWidth))
@@ -382,6 +422,11 @@ func (c *Completions) selectCurrent(keepOpen bool) tea.Msg {
 		}
 	case FileCompletionValue:
 		return SelectionMsg[FileCompletionValue]{
+			Value:    item,
+			KeepOpen: keepOpen,
+		}
+	case SlashCommandValue:
+		return SelectionMsg[SlashCommandValue]{
 			Value:    item,
 			KeepOpen: keepOpen,
 		}

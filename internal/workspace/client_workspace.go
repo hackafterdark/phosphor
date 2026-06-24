@@ -180,6 +180,9 @@ func (w *ClientWorkspace) ListAllUserMessages(ctx context.Context) ([]message.Me
 // -- Agent --
 
 func (w *ClientWorkspace) AgentRun(ctx context.Context, sessionID, prompt string, attachments ...message.Attachment) error {
+	if strings.HasPrefix(strings.TrimSpace(prompt), "/") {
+		return fmt.Errorf("blocked: cannot send slash command %q to agent", prompt)
+	}
 	// The interactive TUI does not consume notify.RunComplete for
 	// completion detection (it observes message events directly),
 	// so passing an empty RunID is correct here: it skips the
