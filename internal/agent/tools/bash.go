@@ -8,12 +8,14 @@ import (
 	"fmt"
 	"html/template"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"time"
 
 	"charm.land/fantasy"
 	"github.com/hackafterdark/phosphor/internal/config"
+	"github.com/hackafterdark/phosphor/internal/filepathext"
 	"github.com/hackafterdark/phosphor/internal/fsext"
 	"github.com/hackafterdark/phosphor/internal/otel"
 	"github.com/hackafterdark/phosphor/internal/permission"
@@ -197,6 +199,55 @@ func blockFuncs() []shell.BlockFunc {
 	}
 }
 
+// I/O command keywords that may attempt to read/write files outside workspace
+var ioCommands = []string{
+	"cat", "type", "Get-Content", "read", "write",
+	"grep", "tail", "head", "sed", "awk",
+	"powershell", "cmd", "dir",
+}
+
+// pathRegex extracts file paths from commands
+var pathRegex = regexp.MustCompile(`['"]?([A-Za-z]:)?[/\\][^\s'"]+['"]?`)
+
+// validateCommandPaths checks if any file paths in the command are outside the workspace
+func validateCommandPaths(command string, absWorkingDir string) error {
+	// Check for I/O commands
+	hasIOCommand := false
+	for _, cmd := range ioCommands {
+		if strings.Contains(strings.ToLower(command), strings.ToLower(cmd)) {
+			hasIOCommand = true
+			break
+		}
+	}
+
+	if !hasIOCommand {
+		return nil // No I/O commands detected, skip path validation
+	}
+
+	// Extract paths from command
+	matches := pathRegex.FindAllString(command, -1)
+	for _, match := range matches {
+		// Clean up the path (remove quotes)
+		path := strings.Trim(match, "'\"")
+		if path == "" {
+			continue
+		}
+
+		// Resolve absolute path
+		absPath, err := filepath.Abs(path)
+		if err != nil {
+			continue // Skip paths that can't be resolved
+		}
+
+		// Check if path is inside workspace
+		if !filepathext.IsInside(absPath, absWorkingDir) {
+			return fmt.Errorf("Security violation: path %s is outside workspace", absPath)
+		}
+	}
+
+	return nil
+}
+
 func NewBashTool(permissions permission.Service, workingDir string, attribution *config.Attribution, modelID string) fantasy.AgentTool {
 	return fantasy.NewAgentTool(
 		BashToolName,
@@ -215,6 +266,24 @@ func NewBashTool(permissions permission.Service, workingDir string, attribution 
 
 			// Determine working directory
 			execWorkingDir := cmp.Or(params.WorkingDir, workingDir)
+
+			// Enforce workspace bounds on working directory
+			absWorkingDir, err := filepath.Abs(workingDir)
+			if err != nil {
+				return fantasy.ToolResponse{}, fmt.Errorf("error resolving working directory: %w", err)
+			}
+			absExecDir, err := filepath.Abs(execWorkingDir)
+			if err != nil {
+				return fantasy.ToolResponse{}, fmt.Errorf("error resolving target working directory: %w", err)
+			}
+			if !filepathext.IsInside(absExecDir, absWorkingDir) {
+				return fantasy.NewTextErrorResponse(fmt.Sprintf("Security violation: working directory %s is outside workspace", absExecDir)), nil
+			}
+
+			// Command Parser Guard: Validate file paths in I/O commands
+			if err := validateCommandPaths(params.Command, absWorkingDir); err != nil {
+				return fantasy.NewTextErrorResponse(err.Error()), nil
+			}
 
 			isSafeReadOnly := false
 			cmdLower := strings.ToLower(params.Command)
@@ -261,7 +330,7 @@ func NewBashTool(permissions permission.Service, workingDir string, attribution 
 				bgManager := shell.GetBackgroundShellManager()
 				bgManager.Cleanup()
 				// Use background context so it continues after tool returns
-				bgShell, err := bgManager.Start(context.Background(), execWorkingDir, blockFuncs(), params.Command, params.Description)
+				bgShell, err := bgManager.Start(context.Background(), execWorkingDir, absWorkingDir, blockFuncs(), params.Command, params.Description)
 				if err != nil {
 					return fantasy.ToolResponse{}, fmt.Errorf("error starting background shell: %w", err)
 				}
@@ -316,7 +385,7 @@ func NewBashTool(permissions permission.Service, workingDir string, attribution 
 			// Start with detached context so it can survive if moved to background
 			bgManager := shell.GetBackgroundShellManager()
 			bgManager.Cleanup()
-			bgShell, err := bgManager.Start(context.Background(), execWorkingDir, blockFuncs(), params.Command, params.Description)
+			bgShell, err := bgManager.Start(context.Background(), execWorkingDir, absWorkingDir, blockFuncs(), params.Command, params.Description)
 			if err != nil {
 				return fantasy.ToolResponse{}, fmt.Errorf("error starting shell: %w", err)
 			}

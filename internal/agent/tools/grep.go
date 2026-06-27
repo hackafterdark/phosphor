@@ -148,6 +148,20 @@ func NewGrepTool(workingDir string, config config.ToolGrep) fantasy.AgentTool {
 				return fantasy.NewTextErrorResponse(fmt.Sprintf("error resolving search path: %v", err)), nil
 			}
 
+			// Enforce workspace bounds
+			absWorkingDir, err := filepath.Abs(workingDir)
+			if err != nil {
+				return fantasy.NewTextErrorResponse(fmt.Sprintf("error resolving working directory: %v", err)), nil
+			}
+			absSearchPath, err := filepath.Abs(searchPath)
+			if err != nil {
+				return fantasy.NewTextErrorResponse(fmt.Sprintf("error resolving search path: %v", err)), nil
+			}
+			if !filepathext.IsInside(absSearchPath, absWorkingDir) {
+				return fantasy.NewTextErrorResponse(fmt.Sprintf("Security violation: path %s is outside workspace", absSearchPath)), nil
+			}
+			searchPath = absSearchPath
+
 			searchCtx, cancel := context.WithTimeout(ctx, config.GetTimeout())
 			defer cancel()
 

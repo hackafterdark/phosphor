@@ -121,7 +121,7 @@ func NewViewTool(
 			// Handle relative paths
 			filePath := filepathext.SmartJoin(workingDir, params.FilePath)
 
-			// Check if file is outside working directory and request permission if needed
+			// Enforce workspace bounds
 			absWorkingDir, err := filepath.Abs(workingDir)
 			if err != nil {
 				return fantasy.ToolResponse{}, fmt.Errorf("error resolving working directory: %w", err)
@@ -132,36 +132,10 @@ func NewViewTool(
 				return fantasy.ToolResponse{}, fmt.Errorf("error resolving file path: %w", err)
 			}
 
-			relPath, err := filepath.Rel(absWorkingDir, absFilePath)
-			isOutsideWorkDir := err != nil || strings.HasPrefix(relPath, "..")
-			isSkillFile := isInSkillsPath(absFilePath, skillsPaths)
-
-			sessionID := GetSessionFromContext(ctx)
-			if sessionID == "" {
-				return fantasy.ToolResponse{}, fmt.Errorf("session ID is required for accessing files outside working directory")
+			if !filepathext.IsInside(absFilePath, absWorkingDir) {
+				return fantasy.NewTextErrorResponse(fmt.Sprintf("Security violation: path %s is outside workspace", absFilePath)), nil
 			}
-
-			// Request permission for files outside working directory, unless it's a skill file.
-			if isOutsideWorkDir && !isSkillFile {
-				granted, permReqErr := permissions.Request(
-					ctx,
-					permission.CreatePermissionRequest{
-						SessionID:   sessionID,
-						Path:        absFilePath,
-						ToolCallID:  call.ID,
-						ToolName:    ViewToolName,
-						Action:      "read",
-						Description: fmt.Sprintf("Read file outside working directory: %s", absFilePath),
-						Params:      ViewPermissionsParams(params),
-					},
-				)
-				if permReqErr != nil {
-					return fantasy.ToolResponse{}, permReqErr
-				}
-				if !granted {
-					return NewPermissionDeniedResponse(), nil
-				}
-			}
+			filePath = absFilePath
 
 			// Check if file exists
 			fileInfo, err := os.Stat(filePath)
@@ -200,13 +174,9 @@ func NewViewTool(
 				return fantasy.NewTextErrorResponse(fmt.Sprintf("Path is a directory, not a file: %s", filePath)), nil
 			}
 
-			// Set default limit if not provided (no limit for SKILL.md files)
+			// Set default limit if not provided
 			if params.Limit <= 0 {
-				if isSkillFile {
-					params.Limit = 1000000 // Effectively no limit for skill files
-				} else {
-					params.Limit = DefaultReadLimit
-				}
+				params.Limit = DefaultReadLimit
 			}
 
 			isSupportedImage, mimeType := getImageMimeType(filePath)
@@ -237,11 +207,7 @@ func NewViewTool(
 			}
 
 			// Read the file content
-			maxContentSize := MaxViewSize
-			if isSkillFile {
-				maxContentSize = 0
-			}
-			content, hasMore, err := readTextFile(filePath, params.Offset, params.Limit, maxContentSize)
+			content, hasMore, err := readTextFile(filePath, params.Offset, params.Limit, MaxViewSize)
 			if err != nil {
 				var tooLarge contentTooLargeError
 				if errors.As(err, &tooLarge) {
@@ -265,19 +231,14 @@ func NewViewTool(
 			}
 			output += "\n</file>\n"
 			output += getDiagnostics(filePath, lspManager)
-			filetracker.RecordRead(ctx, sessionID, filePath)
+			sessionID := GetSessionFromContext(ctx)
+			if sessionID != "" {
+				filetracker.RecordRead(ctx, sessionID, filePath)
+			}
 
 			meta := ViewResponseMetadata{
 				FilePath: filePath,
 				Content:  content,
-			}
-			if isSkillFile {
-				if skill, err := skills.Parse(filePath); err == nil {
-					meta.ResourceType = ViewResourceSkill
-					meta.ResourceName = skill.Name
-					meta.ResourceDescription = skill.Description
-					skillTracker.MarkLoaded(skill.Name)
-				}
 			}
 
 			return fantasy.WithResponseMetadata(
@@ -404,47 +365,6 @@ func sniffImageMimeType(data []byte, fallback string) string {
 		return sniffed
 	}
 	return fallback
-}
-
-// isInSkillsPath checks if filePath is within any of the configured skills
-// directories. Returns true for files that can be read without permission
-// prompts and without size limits.
-//
-// Note that symlinks are resolved to prevent path traversal attacks via
-// symbolic links.
-func isInSkillsPath(filePath string, skillsPaths []string) bool {
-	if len(skillsPaths) == 0 {
-		return false
-	}
-
-	absFilePath, err := filepath.Abs(filePath)
-	if err != nil {
-		return false
-	}
-
-	evalFilePath, err := filepath.EvalSymlinks(absFilePath)
-	if err != nil {
-		return false
-	}
-
-	for _, skillsPath := range skillsPaths {
-		absSkillsPath, err := filepath.Abs(skillsPath)
-		if err != nil {
-			continue
-		}
-
-		evalSkillsPath, err := filepath.EvalSymlinks(absSkillsPath)
-		if err != nil {
-			continue
-		}
-
-		relPath, err := filepath.Rel(evalSkillsPath, evalFilePath)
-		if err == nil && !strings.HasPrefix(relPath, "..") {
-			return true
-		}
-	}
-
-	return false
 }
 
 // readBuiltinFile reads a file from the embedded builtin skills filesystem.

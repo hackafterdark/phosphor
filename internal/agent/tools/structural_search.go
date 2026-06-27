@@ -306,6 +306,20 @@ func executeStructuralSearch(ctx context.Context, workingDir string, params Stru
 		searchPath = resolved
 	}
 
+	// Enforce workspace bounds
+	absWorkingDir, err := filepath.Abs(workingDir)
+	if err != nil {
+		return fantasy.NewTextErrorResponse(fmt.Sprintf("error resolving working directory: %v", err)), nil
+	}
+	absSearchPath, err := filepath.Abs(searchPath)
+	if err != nil {
+		return fantasy.NewTextErrorResponse(fmt.Sprintf("error resolving search path: %v", err)), nil
+	}
+	if !filepathext.IsInside(absSearchPath, absWorkingDir) {
+		return fantasy.NewTextErrorResponse(fmt.Sprintf("Security violation: path %s is outside workspace", absSearchPath)), nil
+	}
+	searchPath = absSearchPath
+
 	// Determine language: use explicit param, or detect from first file
 	lang := params.Language
 	if lang == "" {

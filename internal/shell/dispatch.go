@@ -55,7 +55,7 @@ func scriptDispatchHandler(blockFuncs []BlockFunc) func(next interp.ExecHandlerF
 			// Resolve relative paths against the interpreter's cwd, not
 			// the process cwd — hook commands are authored with the hook
 			// Runner's cwd in mind and sub-shells can cd before an exec.
-			scriptPath := filepathext.SmartJoin(interp.HandlerCtx(ctx).Dir, args[0])
+			scriptPath := filepathext.UnsafeSmartJoin(interp.HandlerCtx(ctx).Dir, args[0])
 			probe, err := probeFile(scriptPath)
 			if err != nil {
 				return err

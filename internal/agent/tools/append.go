@@ -86,9 +86,8 @@ func NewAppendTool(
 			if err != nil {
 				return fantasy.ToolResponse{}, fmt.Errorf("error resolving file path: %w", err)
 			}
-			relPath, err := filepath.Rel(absWorkingDir, absFilePath)
-			if err != nil || relPath == ".." || strings.HasPrefix(relPath, ".."+string(os.PathSeparator)) {
-				return fantasy.NewTextErrorResponse("file_path must be within the working directory"), nil
+			if !filepathext.IsInside(absFilePath, absWorkingDir) {
+				return fantasy.NewTextErrorResponse(fmt.Sprintf("Security violation: path %s is outside workspace", absFilePath)), nil
 			}
 			filePath = absFilePath
 

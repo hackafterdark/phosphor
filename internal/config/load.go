@@ -50,6 +50,13 @@ func Load(workingDir, dataDir string, debug bool) (*ConfigStore, error) {
 
 	cfg.setDefaults(workingDir, dataDir)
 
+	// Resolve symlinks in the workspace root to prevent bypass through
+	// symlink traversal in bounds checking. If the workspace doesn't exist
+	// on disk (e.g. during tests), use it as-is.
+	if resolvedWorkingDir, err := filepath.EvalSymlinks(workingDir); err == nil {
+		workingDir = resolvedWorkingDir
+	}
+
 	store := &ConfigStore{
 		config:         cfg,
 		workingDir:     workingDir,
@@ -538,7 +545,7 @@ func (c *Config) setDefaults(workingDir, dataDir string) {
 			c.Options.DataDirectory = filepath.Join(workingDir, defaultDataDirectory)
 		}
 	}
-	c.Options.DataDirectory = filepath.Clean(filepathext.SmartJoin(workingDir, c.Options.DataDirectory))
+	c.Options.DataDirectory = filepath.Clean(filepathext.UnsafeSmartJoin(workingDir, c.Options.DataDirectory))
 	if c.Providers == nil {
 		c.Providers = csync.NewMap[string, ProviderConfig]()
 	}

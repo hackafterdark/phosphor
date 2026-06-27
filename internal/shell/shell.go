@@ -66,6 +66,7 @@ type BlockFunc func(args []string) bool
 type Shell struct {
 	env        []string
 	cwd        string
+	workspace  string // optional workspace root; if set, cd outside it is blocked
 	mu         sync.Mutex
 	logger     Logger
 	blockFuncs []BlockFunc
@@ -74,6 +75,7 @@ type Shell struct {
 // Options for creating a new shell
 type Options struct {
 	WorkingDir string
+	Workspace  string // optional workspace root; if set, cd outside it is blocked
 	Env        []string
 	Logger     Logger
 	BlockFuncs []BlockFunc
@@ -105,6 +107,7 @@ func NewShell(opts *Options) *Shell {
 
 	return &Shell{
 		cwd:        cwd,
+		workspace:  opts.Workspace,
 		env:        env,
 		logger:     logger,
 		blockFuncs: opts.BlockFuncs,
@@ -276,8 +279,18 @@ func (s *Shell) newInterp(stdin io.Reader, stdout, stderr io.Writer) (*interp.Ru
 }
 
 // updateShellFromRunner updates the shell from the interpreter after execution.
+// If a workspace root is configured and the new cwd falls outside it, the
+// working directory is reset to the original value to prevent escape.
 func (s *Shell) updateShellFromRunner(runner *interp.Runner) {
-	s.cwd = runner.Dir
+	newCwd := runner.Dir
+	if s.workspace != "" {
+		rel, err := filepath.Rel(strings.ToLower(s.workspace), strings.ToLower(newCwd))
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+			// Reset cwd to prevent escape from the workspace sandbox.
+			newCwd = s.cwd
+		}
+	}
+	s.cwd = newCwd
 	s.env = s.env[:0]
 	for name, vr := range runner.Vars {
 		if vr.Exported {

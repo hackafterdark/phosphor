@@ -1,7 +1,6 @@
 package tools
 
 import (
-	"cmp"
 	"context"
 	_ "embed"
 	"fmt"
@@ -88,8 +87,19 @@ func NewDownloadTool(permissions permission.Service, workingDir string, client *
 			}
 
 			filePath := filepathext.SmartJoin(workingDir, params.FilePath)
-			relPath, _ := filepath.Rel(workingDir, filePath)
-			relPath = filepath.ToSlash(cmp.Or(relPath, filePath))
+
+			absWorkingDir, err := filepath.Abs(workingDir)
+			if err != nil {
+				return fantasy.ToolResponse{}, fmt.Errorf("error resolving working directory: %w", err)
+			}
+			absFilePath, err := filepath.Abs(filePath)
+			if err != nil {
+				return fantasy.ToolResponse{}, fmt.Errorf("error resolving file path: %w", err)
+			}
+			if !filepathext.IsInside(absFilePath, absWorkingDir) {
+				return fantasy.NewTextErrorResponse(fmt.Sprintf("Security violation: path %s is outside workspace", absFilePath)), nil
+			}
+			filePath = absFilePath
 
 			sessionID := GetSessionFromContext(ctx)
 			if sessionID == "" {
@@ -164,7 +174,7 @@ func NewDownloadTool(permissions permission.Service, workingDir string, client *
 			}
 
 			contentType := resp.Header.Get("Content-Type")
-			responseMsg := fmt.Sprintf("Successfully downloaded %d bytes to %s", bytesWritten, relPath)
+			responseMsg := fmt.Sprintf("Successfully downloaded %d bytes to %s", bytesWritten, filePath)
 			if contentType != "" {
 				responseMsg += fmt.Sprintf(" (Content-Type: %s)", contentType)
 			}

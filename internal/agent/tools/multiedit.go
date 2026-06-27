@@ -87,13 +87,25 @@ func NewMultiEditTool(
 
 			params.FilePath = filepathext.SmartJoin(workingDir, params.FilePath)
 
+			absWorkingDir, err := filepath.Abs(workingDir)
+			if err != nil {
+				return fantasy.ToolResponse{}, fmt.Errorf("error resolving working directory: %w", err)
+			}
+			absFilePath, err := filepath.Abs(params.FilePath)
+			if err != nil {
+				return fantasy.ToolResponse{}, fmt.Errorf("error resolving file path: %w", err)
+			}
+			if !filepathext.IsInside(absFilePath, absWorkingDir) {
+				return fantasy.NewTextErrorResponse(fmt.Sprintf("Security violation: path %s is outside workspace", absFilePath)), nil
+			}
+			params.FilePath = absFilePath
+
 			// Validate all edits before applying any
 			if err := validateEdits(params.Edits); err != nil {
 				return fantasy.NewTextErrorResponse(err.Error()), nil
 			}
 
 			var response fantasy.ToolResponse
-			var err error
 
 			editCtx := editContext{ctx, permissions, files, filetracker, workingDir}
 			// Handle file creation case (first edit has empty old_string)

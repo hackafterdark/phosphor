@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -12,6 +13,7 @@ import (
 
 	"charm.land/fantasy"
 	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
+	"github.com/hackafterdark/phosphor/internal/filepathext"
 	"github.com/hackafterdark/phosphor/internal/lsp"
 	"github.com/hackafterdark/phosphor/internal/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -26,7 +28,7 @@ const DiagnosticsToolName = "lsp_diagnostics"
 //go:embed diagnostics.md
 var diagnosticsDescription string
 
-func NewDiagnosticsTool(lspManager *lsp.Manager) fantasy.AgentTool {
+func NewDiagnosticsTool(lspManager *lsp.Manager, workingDir string) fantasy.AgentTool {
 	return fantasy.NewAgentTool(
 		DiagnosticsToolName,
 		diagnosticsDescription,
@@ -41,6 +43,22 @@ func NewDiagnosticsTool(lspManager *lsp.Manager) fantasy.AgentTool {
 			if lspManager.Clients().Len() == 0 {
 				return fantasy.NewTextErrorResponse("no LSP clients available"), nil
 			}
+
+			// Enforce workspace bounds on FilePath if provided
+			if params.FilePath != "" {
+				absWorkingDir, err := filepath.Abs(workingDir)
+				if err != nil {
+					return fantasy.ToolResponse{}, fmt.Errorf("error resolving working directory: %w", err)
+				}
+				absFilePath, err := filepath.Abs(params.FilePath)
+				if err != nil {
+					return fantasy.ToolResponse{}, fmt.Errorf("error resolving file path: %w", err)
+				}
+				if !filepathext.IsInside(absFilePath, absWorkingDir) {
+					return fantasy.NewTextErrorResponse(fmt.Sprintf("Security violation: path %s is outside workspace", absFilePath)), nil
+				}
+			}
+
 			notifyLSPs(ctx, lspManager, params.FilePath)
 			output := getDiagnostics(params.FilePath, lspManager)
 			return fantasy.NewTextResponse(output), nil

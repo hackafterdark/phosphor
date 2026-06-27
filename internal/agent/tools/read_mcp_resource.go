@@ -58,7 +58,7 @@ func NewReadMCPResourceTool(cfg *config.ConfigStore, permissions permission.Serv
 				return fantasy.ToolResponse{}, fmt.Errorf("session ID is required for reading MCP resources")
 			}
 
-			relPath := filepathext.SmartJoin(cfg.WorkingDir(), cmp.Or(params.URI, "mcp-resource"))
+			relPath := filepathext.UnsafeSmartJoin(cfg.WorkingDir(), cmp.Or(params.URI, "mcp-resource"))
 			p, err := permissions.Request(
 				ctx,
 				permission.CreatePermissionRequest{

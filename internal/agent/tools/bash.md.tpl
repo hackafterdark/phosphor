@@ -21,10 +21,13 @@ Common shell builtins and core utils available on Windows.
 - Chain with ';' or '&&', avoid newlines except in quoted strings
 - Each command runs in independent shell (no state persistence between calls)
 - Prefer absolute paths over 'cd' (use 'cd' only if user explicitly requests)
+- **SANDBOX**: You are running inside a workspace sandbox. Any attempt to access files or directories outside the workspace root will be blocked by the system. The `working_dir` parameter is also constrained to the workspace. Do not try to escape.
 {{- if .RgAvailable }}
 - Ripgrep (`rg`) is available; prefer it over `grep` for faster, more intuitive searching
 {{- end }}
 </usage_notes>
+
+**SECURITY WARNING**: All bash commands are monitored by a path-validation guard. You are restricted to the workspace directory. Any attempt to use native system utilities (powershell, cat, Get-Content, etc.) to access files outside this directory will be blocked and logged as a security violation.
 
 <background_execution>
 - Set run_in_background=true to run commands in a separate background shell

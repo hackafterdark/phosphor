@@ -52,7 +52,7 @@ func NewListMCPResourcesTool(cfg *config.ConfigStore, permissions permission.Ser
 				return fantasy.ToolResponse{}, fmt.Errorf("session ID is required for listing MCP resources")
 			}
 
-			relPath := filepathext.SmartJoin(cfg.WorkingDir(), params.MCPName)
+			relPath := filepathext.UnsafeSmartJoin(cfg.WorkingDir(), params.MCPName)
 			p, err := permissions.Request(
 				ctx,
 				permission.CreatePermissionRequest{

@@ -1,18 +1,37 @@
 package filepathext
 
 import (
+	"errors"
 	"path/filepath"
 	"runtime"
 	"strings"
 )
 
 // SmartJoin joins two paths, treating the second path as absolute if it is an
-// absolute path.
+// absolute path. It does not validate against a workspace — use ValidatePath
+// separately for that. Use UnsafeSmartJoin for trusted extensions (e.g. MCP
+// servers) that legitimately cross workspace bounds.
 func SmartJoin(one, two string) string {
 	if SmartIsAbs(two) {
 		return two
 	}
 	return filepath.Join(one, two)
+}
+
+// UnsafeSmartJoin is an alias for SmartJoin, provided for clarity when the
+// caller intends to bypass workspace validation. Only use this for trusted
+// extensions (e.g. MCP servers) that legitimately need cross-workspace access.
+func UnsafeSmartJoin(one, two string) string {
+	return SmartJoin(one, two)
+}
+
+// ValidatePath checks whether absPath is inside absWorkspace and returns an
+// error if it is not. Both paths must be absolute before calling this function.
+func ValidatePath(absPath, absWorkspace string) error {
+	if !IsInside(absPath, absWorkspace) {
+		return errors.New("path is outside workspace")
+	}
+	return nil
 }
 
 // SmartIsAbs checks if a path is absolute, considering both OS-specific and

@@ -72,6 +72,18 @@ func NewWriteTool(
 			}
 
 			filePath := filepathext.SmartJoin(workingDir, params.FilePath)
+			absWorkingDir, err := filepath.Abs(workingDir)
+			if err != nil {
+				return fantasy.ToolResponse{}, fmt.Errorf("error resolving working directory: %w", err)
+			}
+			absFilePath, err := filepath.Abs(filePath)
+			if err != nil {
+				return fantasy.ToolResponse{}, fmt.Errorf("error resolving file path: %w", err)
+			}
+			if !filepathext.IsInside(absFilePath, absWorkingDir) {
+				return fantasy.NewTextErrorResponse(fmt.Sprintf("Security violation: path %s is outside workspace", absFilePath)), nil
+			}
+			filePath = absFilePath
 
 			fileInfo, err := os.Stat(filePath)
 			if err == nil {

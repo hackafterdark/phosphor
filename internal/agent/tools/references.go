@@ -16,6 +16,7 @@ import (
 
 	"charm.land/fantasy"
 	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
+	"github.com/hackafterdark/phosphor/internal/filepathext"
 	"github.com/hackafterdark/phosphor/internal/lsp"
 	"github.com/hackafterdark/phosphor/internal/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -35,7 +36,7 @@ const ReferencesToolName = "lsp_references"
 //go:embed references.md
 var referencesDescription string
 
-func NewReferencesTool(lspManager *lsp.Manager) fantasy.AgentTool {
+func NewReferencesTool(lspManager *lsp.Manager, workingDir string) fantasy.AgentTool {
 	return fantasy.NewAgentTool(
 		ReferencesToolName,
 		referencesDescription,
@@ -55,9 +56,22 @@ func NewReferencesTool(lspManager *lsp.Manager) fantasy.AgentTool {
 				return fantasy.NewTextErrorResponse("no LSP clients available"), nil
 			}
 
-			workingDir := cmp.Or(params.Path, ".")
+			searchPath := cmp.Or(params.Path, workingDir)
 
-			matches, _, err := searchFiles(ctx, regexp.QuoteMeta(params.Symbol), workingDir, "", 100)
+			// Enforce workspace bounds on search path
+			absWorkingDir, err := filepath.Abs(workingDir)
+			if err != nil {
+				return fantasy.ToolResponse{}, fmt.Errorf("error resolving working directory: %w", err)
+			}
+			absSearchPath, err := filepath.Abs(searchPath)
+			if err != nil {
+				return fantasy.ToolResponse{}, fmt.Errorf("error resolving search path: %w", err)
+			}
+			if !filepathext.IsInside(absSearchPath, absWorkingDir) {
+				return fantasy.NewTextErrorResponse(fmt.Sprintf("Security violation: path %s is outside workspace", absSearchPath)), nil
+			}
+
+			matches, _, err := searchFiles(ctx, regexp.QuoteMeta(params.Symbol), absSearchPath, "", 100)
 			if err != nil {
 				return fantasy.NewTextErrorResponse(fmt.Sprintf("failed to search for symbol: %s", err)), nil
 			}
