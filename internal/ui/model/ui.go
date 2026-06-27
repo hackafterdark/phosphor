@@ -3878,6 +3878,7 @@ func cancelTimerCmd() tea.Cmd {
 func (m *UI) registerSlashCommands() {
 	m.slashHandlers = map[string]slashCommandHandler{
 		"goal":  m.handleGoalSlashCommand,
+		"name":  m.handleNameSlashCommand,
 		"menu":  m.handleMenuSlashCommand,
 		"stats": m.handleStatsSlashCommand,
 		"learn": m.handleLearnSlashCommand,
@@ -3923,6 +3924,29 @@ func (m *UI) handleGoalSlashCommand(args []string) tea.Cmd {
 			m.com.Workspace.GoalSet(context.Background(), m.session.ID, objective)
 			return nil
 		}
+	}
+}
+
+// handleNameSlashCommand handles the "/name" slash command.
+func (m *UI) handleNameSlashCommand(args []string) tea.Cmd {
+	if !m.hasSession() {
+		return util.ReportWarn("Start a session first.")
+	}
+	if len(args) == 0 {
+		return func() tea.Msg { return util.NewInfoMsg(fmt.Sprintf("Session name: %q", m.session.Title)) }
+	}
+
+	title := strings.Join(args, " ")
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return util.ReportWarn("Please provide a session name.")
+	}
+
+	return func() tea.Msg {
+		if err := m.com.Workspace.RenameSession(context.Background(), m.session.ID, title); err != nil {
+			return util.ReportError(err)()
+		}
+		return util.NewInfoMsg(fmt.Sprintf("Session renamed to %q", title))
 	}
 }
 

@@ -31,6 +31,11 @@ var SlashCommands = []SlashCommand{
 		Name:        "quit",
 		Description: "Quit the application",
 	},
+	{
+		Name:        "name",
+		Description: "Name or rename the current session",
+		Arguments:   []string{"<title>"},
+	},
 }
 
 // GetSlashCommands returns all registered slash commands.

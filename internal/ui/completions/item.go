@@ -184,7 +184,7 @@ func renderItem(
 	} else {
 		// Render dual-column: "name  description"
 		nameWidth := ansi.StringWidth(text)
-		
+
 		if nameWidth+2 >= innerWidth {
 			// Name takes up all or almost all space. Just render truncated name.
 			truncatedName := ansi.Truncate(text, innerWidth, "…")

@@ -678,6 +678,26 @@ func (c *Client) DeleteSession(ctx context.Context, id string, sessionID string)
 	return nil
 }
 
+// RenameSession renames a session in a workspace.
+func (c *Client) RenameSession(ctx context.Context, id string, sessionID string, title string) error {
+	rsp, err := c.post(ctx,
+		fmt.Sprintf("/workspaces/%s/sessions/%s/rename", id, sessionID),
+		nil,
+		jsonBody(struct {
+			Title string `json:"title"`
+		}{Title: title}),
+		http.Header{"Content-Type": []string{"application/json"}},
+	)
+	if err != nil {
+		return fmt.Errorf("failed to rename session: %w", err)
+	}
+	defer rsp.Body.Close()
+	if rsp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed to rename session: status code %d", rsp.StatusCode)
+	}
+	return nil
+}
+
 // ListUserMessages retrieves user-role messages for a session as proto types.
 func (c *Client) ListUserMessages(ctx context.Context, id string, sessionID string) ([]proto.Message, error) {
 	rsp, err := c.get(ctx, fmt.Sprintf("/workspaces/%s/sessions/%s/messages/user", id, sessionID), nil, nil)
