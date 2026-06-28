@@ -635,6 +635,22 @@ type Tools struct {
 	Ls   ToolLs   `json:"ls,omitzero"`
 	Grep ToolGrep `json:"grep,omitzero"`
 	Bash ToolBash `json:"bash,omitzero"`
+	// WebFetch configures the web_fetch and web_search tools.
+	WebFetch ToolWebFetch `json:"web_fetch,omitzero"`
+}
+
+// ToolWebFetch holds configuration for the web_fetch and web_search tools.
+type ToolWebFetch struct {
+	// IPAllowList is a list of IP addresses or CIDR ranges that are allowed
+	// to be reached by the web_fetch and web_search tools. When set, the
+	// tools will bypass the IP-block policy for these destinations.
+	// Example: "192.168.0.0/24", "10.0.0.0/8", "127.0.0.1"
+	IPAllowList []string `json:"ip_allow_list,omitempty" jsonschema:"description=Allowlist of IP addresses or CIDR ranges that the web tools may reach. Overrides the default IP-block policy."`
+
+	// AllowRawIPs, when true, allows the web_fetch and web_search tools to
+	// reach raw IP addresses (e.g. 192.168.1.1) without FQDN. When false
+	// (the default), only FQDN destinations are allowed.
+	AllowRawIPs bool `json:"allow_raw_ips,omitempty" jsonschema:"description=Allow the web tools to reach raw IP addresses. Default false (FQDN required)."`
 }
 
 // ToolBash holds configuration for the bash tool's security posture.

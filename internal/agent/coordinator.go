@@ -152,6 +152,12 @@ type coordinator struct {
 
 	prompt     *prompt.Prompt
 	largeModel Model
+
+	// tuiAllowPrompt is invoked when a host is not in any allow list.
+	// The tool (e.g. web_fetch) calls it to display a TUI prompt: "WebFetch is
+	// requesting access to [host]. Allow this domain?" and returns (allowed, nil)
+	// or (denied, nil).
+	tuiAllowPrompt func(ctx context.Context, host string) (bool, error)
 }
 
 func NewCoordinator(
@@ -203,6 +209,26 @@ func NewCoordinator(
 		skillTracker: skillTracker,
 	}
 	c.goalRuntime = goal.NewRuntime(goalService, c, notify)
+
+	// Wire the TUI allow-prompt callback. The tool (e.g. web_fetch) invokes
+	// this when a host is not in any allow list; the TUI shows
+	// "WebFetch is requesting access to [host]. Allow this domain?" and the
+	// user responds allow/deny. The result is written to the in-memory allow
+	// list so we don't re-prompt on the next request.
+	c.tuiAllowPrompt = func(ctx context.Context, host string) (bool, error) {
+		if c.permissions.SkipRequests() {
+			return true, nil
+		}
+		granted, err := c.permissions.Request(ctx, permission.CreatePermissionRequest{
+			ToolName:   "web_fetch",
+			ToolCallID: fmt.Sprintf("tui:allow:%s", host),
+			Params:     fmt.Sprintf("WebFetch is requesting access to %s. Allow this domain?", host),
+		})
+		if err != nil {
+			return false, fmt.Errorf("web_fetch TUI allow prompt failed: %w", err)
+		}
+		return granted, nil
+	}
 
 	agentCfg, ok := cfg.Config().Agents[config.AgentCoder]
 	if !ok {

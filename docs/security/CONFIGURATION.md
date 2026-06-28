@@ -24,6 +24,7 @@ This guide covers every security control that can be managed via the
 - [Observability Security](#observability-security)
 - [Telemetry opt-out](#telemetry-opt-out)
 - [Tool Limits and Timeouts](#tool-limits-and-timeouts)
+- [Network Egress Hardening](#network-egress-hardening)
 - [Hooks as Security Gateways](#hooks-as-security-gateways)
 
 ---
@@ -370,6 +371,109 @@ blast radius:
 
 ---
 
+## Network Egress Hardening
+
+Phosphor's web-fetch and web-search tools operate under an **Adaptive Trust**
+network firewall. Every outgoing HTTP request is intercepted by a
+`securityTransport` (a custom `http.RoundTripper`) before execution, validated
+against a layered trust hierarchy, and logged as an OTel span.
+
+### Trust Hierarchy
+
+When the transport intercepts a request, it checks in this order:
+
+1. **In-memory allow list** — session-local, populated by the user prompt.
+2. **Workspace-level allow list** — `.phosphor/allowed_domains.json` or
+   `.local/.phosphor/allowed_domains.json`.
+3. **Global-level allow list** —
+   `~/.phosphor/allowed_domains.json` or
+   `$XDG_CONFIG_HOME/phosphor/allowed_domains.json`.
+4. **Fallback to user prompt** — the TUI shows
+   *"WebFetch is requesting access to `[host]`. Allow this domain?"*
+   - **Allow** → host added to in-memory allow list and request resumes.
+   - **Deny** → request blocked; host added to a temporary deny list for the
+     current session.
+
+### Configuration: `cfg.Tools.WebFetch`
+
+These fields let you override the IP-block policy:
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `IPAllowList` | `[]string` | `[]` | CIDR or literal IPs allowed to be reached |
+| `AllowRawIPs` | `bool` | `false` | Opt-in for raw IP access (default: FQDN required) |
+
+```json
+{
+  "$schema": "https://github.com/hackafterdark/phosphor/blob/main/schema.json",
+  "tools": {
+    "web_fetch": {
+      "ip_allow_list": [
+        "192.168.0.0/24",
+        "10.0.0.0/8",
+        "127.0.0.1"
+      ],
+      "allow_raw_ips": true
+    }
+  }
+}
+```
+
+**How it works** when `securityTransport` intercepts a raw IP request:
+
+| Source | Behavior |
+|---|---|
+| 127.0.0.1 / ::1 (localhost) | Always allowed, no config needed. |
+| `IPAllowList` | Literal match or CIDR match via `matchCIDR`. |
+| `AllowRawIPs = true` | Allowed (if no CIDR match). |
+| No match | TUI prompt: *"WebFetch is requesting access to `[host]`. Allow this domain?"* |
+
+### Security Properties
+
+| Property | Description |
+|---|---|
+| Fail-closed | No network requests succeed until the agent confirms the domain is trusted. |
+| IP-block policy | Raw IP addresses are rejected — FQDNs required. |
+| Opt-in overrides | `AllowRawIPs` + `IPAllowList` (CIDR) allow raw IPs for local/network development. |
+| Layered trust | Workspace + global allow lists + session allow list + user prompt. |
+| OTel observability | Every allow/deny/event is captured as an OTel span with structured attributes. |
+| Cacheable | User approvals persist across requests (in-memory cache), but are session-local. |
+| Shared transport | Both `web_fetch` and `web_search` share the same `*http.Client` → same `securityTransport`. |
+
+### Allow-list File Formats
+
+Both allow-list files are plain JSON arrays of domain strings. Case-insensitive
+matching via `strings.EqualFold`.
+
+**Global allow list** (`~/.phosphor/allowed_domains.json`)
+
+```json
+[
+  "github.com",
+  "npmjs.com",
+  "pkg.go.dev"
+]
+```
+
+**Workspace allow list** (project-local)
+
+```json
+[
+  "api.internal.dev",
+  "staging.example.com",
+  "docs.company.local"
+]
+```
+
+### Files Modified
+
+- `internal/agent/tools/web_fetch.go` — security transport, allow lists, TUI prompt wiring.
+- `internal/agent/tools/web_search.go` — sanitization, OTel tagging, random delay, nil-client panic.
+- `internal/agent/coordinator.go` — `tuiAllowPrompt` field and wiring.
+- `internal/agent/agentic_fetch_tool.go` — call site updated to pass `c.tuiAllowPrompt`.
+
+---
+
 ## Hooks as Security Gateways
 
 Phosphor hooks run user-defined shell commands before tool execution. They
@@ -421,6 +525,7 @@ rewrite tool inputs. See [HOOKS.md](./HOOKS.md) for the full hook protocol.
 | LS depth limit | `tools.ls.max_depth` | Int | Unlimited |
 | LS item limit | `tools.ls.max_items` | Int | 1000 |
 | Grep timeout | `tools.grep.timeout` | Duration | 5s |
+| Network egress hardening | `tools.web_fetch.ip_allow_list` + `allow_raw_ips` | Array, Bool | False (FQDN required) |
 | Hook security gates | `hooks.<event>` | Array | None |
 | OTel sampling rate | `observability.sampling_rate` | Float | 1.0 |
 | OTel endpoint | `observability.endpoint` | String | Empty (disabled) |

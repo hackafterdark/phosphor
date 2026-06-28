@@ -4,7 +4,7 @@ Comprehensive regression tests ensuring security hardening controls remain effec
 
 ## Architecture Alignment
 
-Tests map to the five-layer defense architecture documented in [WORKSPACE_HARDENING.md](./WORKSPACE_HARDENING.md) and [ENVIRONMENT_HARDENING.md](./ENVIRONMENT_HARDENING.md):
+Tests map to the six-layer defense architecture documented in [WORKSPACE_HARDENING.md](./WORKSPACE_HARDENING.md), [ENVIRONMENT_HARDENING.md](./ENVIRONMENT_HARDENING.md), and [NETWORK_EGRESS_HARDENING.md](./NETWORK_EGRESS_HARDENING.md):
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -17,6 +17,13 @@ Tests map to the five-layer defense architecture documented in [WORKSPACE_HARDEN
 ├─────────────────────────────────────────────────────────────┤
 │  Layer 5: Startup Symlink Resolution                        │
 │  → TestPathObfuscation_SymlinkTraversal                     │
+├─────────────────────────────────────────────────────────────┤
+│  Layer 6: Network Egress Hardening                          │
+│  → TestWebFetchHardeningIPBlock                             │
+│  → TestWebFetchHardeningCIDRAllow                           │
+│  → TestWebFetchHardeningLocalhostAlwaysAllowed              │
+│  → TestWebFetchHardeningUserPromptVerified                  │
+│  → TestWebFetchHardeningUserPromptDenyVerified              │
 ├─────────────────────────────────────────────────────────────┤
 │  Layer 4: Shell CWD Lockdown                                │
 │  → TestCompositionalChains_WorkingDirEscapeInChain          │
@@ -112,6 +119,18 @@ Validates that IsInside and SmartJoin handle complex path resolutions robustly.
 | `TestPathObfuscation_EncodedPaths` | URL-encoded paths handled (percent-encoding does not bypass checks) |
 | `TestPathObfuscation_SymlinkTraversal` | Symlinks pointing outside workspace resolved by EvalSymlinks and blocked |
 | `TestPathObfuscation_AbsolutePathVariants` | Absolute paths on all platforms blocked: Windows (`C:\Windows\...`), Linux (`/etc/passwd`), macOS (`/Users/...`) |
+
+### `internal/agent/tools/web_fetch_test.go`
+
+Validates network egress hardening: the `securityTransport` interceptor, IP-block policy, CIDR allow list, localhost exceptions, and TUI permission prompt.
+
+| Test | What It Verifies |
+|------|------------------|
+| `TestWebFetchHardeningIPBlock` | Raw IP addresses (e.g. `192.168.1.1`) rejected — FQDN required |
+| `TestWebFetchHardeningCIDRAllow` | CIDR allow list (`192.168.1.0/24`) respected — IP falls in range allowed |
+| `TestWebFetchHardeningLocalhostAlwaysAllowed` | `127.0.0.1` / `::1` always allowed — no config needed |
+| `TestWebFetchHardeningUserPromptVerified` | Unknown host triggers TUI prompt — user granted access |
+| `TestWebFetchHardeningUserPromptDenyVerified` | Unknown host triggers TUI prompt — user denied access → request blocked |
 
 ### `internal/agent/tools/memory_poisoning_test.go`
 
