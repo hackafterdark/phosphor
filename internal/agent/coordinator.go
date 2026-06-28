@@ -737,7 +737,7 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, isSubA
 	allTools = append(
 		allTools,
 		tools.NewUpdateGoalTool(c.goalService),
-		tools.NewBashTool(c.permissions, c.cfg.WorkingDir(), c.cfg.Config().Options.Attribution, modelID),
+		tools.NewBashTool(c.permissions, c.cfg.WorkingDir(), c.cfg.Config().Tools.Bash, c.cfg.Config().Options.Attribution, modelID),
 		tools.NewPhosphorInfoTool(c.cfg, c.lspManager, c.allSkills, c.activeSkills, c.skillTracker),
 		tools.NewPhosphorLogsTool(logFile),
 		tools.NewJobOutputTool(),

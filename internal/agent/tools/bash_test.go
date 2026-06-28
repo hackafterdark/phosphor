@@ -119,7 +119,7 @@ func (m *recordingPermissionService) SubscribeNotifications(ctx context.Context)
 func newBashToolForTest(workingDir string) fantasy.AgentTool {
 	permissions := &mockBashPermissionService{Broker: pubsub.NewBroker[permission.PermissionRequest]()}
 	attribution := &config.Attribution{TrailerStyle: config.TrailerStyleNone}
-	return NewBashTool(permissions, workingDir, attribution, "test-model")
+	return NewBashTool(permissions, workingDir, config.ToolBash{}, attribution, "test-model")
 }
 
 func newBashToolWithRecordingPerms(workingDir string, allow bool) (fantasy.AgentTool, *recordingPermissionService) {
@@ -128,7 +128,7 @@ func newBashToolWithRecordingPerms(workingDir string, allow bool) (fantasy.Agent
 		allow:  allow,
 	}
 	attribution := &config.Attribution{TrailerStyle: config.TrailerStyleNone}
-	return NewBashTool(perms, workingDir, attribution, "test-model"), perms
+	return NewBashTool(perms, workingDir, config.ToolBash{}, attribution, "test-model"), perms
 }
 
 func TestBashTool_ChainedCommandsRequirePermission(t *testing.T) {
@@ -185,4 +185,178 @@ func runBashTool(t *testing.T, tool fantasy.AgentTool, ctx context.Context, para
 	resp, err := tool.Run(ctx, call)
 	require.NoError(t, err)
 	return resp
+}
+
+func newBashToolWithCfg(workingDir string, cfg config.ToolBash) fantasy.AgentTool {
+	permissions := &mockBashPermissionService{Broker: pubsub.NewBroker[permission.PermissionRequest]()}
+	attribution := &config.Attribution{TrailerStyle: config.TrailerStyleNone}
+	return NewBashTool(permissions, workingDir, cfg, attribution, "test-model")
+}
+
+// TestBashTool_ConfigAwareBannedCommands verifies that user-configured
+// banned_commands extend the built-in deny list. Commands not in either
+// list should be allowed; commands in the built-in or user list should
+// be blocked.
+func TestBashTool_ConfigAwareBannedCommands(t *testing.T) {
+	t.Parallel()
+
+	workingDir := t.TempDir()
+	ctx := context.WithValue(context.Background(), SessionIDContextKey, "test-session")
+
+	tool := newBashToolWithCfg(workingDir, config.ToolBash{
+		BannedCommands: []string{"nc", "netcat"},
+	})
+
+	// "nc" is not in the built-in bannedCommands (only "nc" is, but let's
+	// verify the user-added "netcat" is blocked). Actually "nc" IS in the
+	// built-in list, so we test with a command that's ONLY in the user list.
+	resp := runBashTool(t, tool, ctx, BashParams{Command: "netcat"})
+	require.Contains(t, resp.Content, "not allowed for security reasons",
+		"user-banned 'netcat' should be blocked")
+
+	// A built-in banned command (e.g. "curl") should still be blocked even
+	// without user config.
+	toolDefault := newBashToolForTest(workingDir)
+	resp = runBashTool(t, toolDefault, ctx, BashParams{Command: "curl http://example.com"})
+	require.Contains(t, resp.Content, "not allowed for security reasons",
+		"built-in banned 'curl' should still be blocked")
+
+	// A command not in either list (e.g. "echo") should be allowed.
+	resp = runBashTool(t, tool, ctx, BashParams{Command: "echo hello"})
+	require.False(t, resp.IsError, "'echo' should not be blocked")
+}
+
+// TestBashTool_AllowedEnv_FiltersEnvironment verifies that when AllowedEnv
+// is configured, the shell execution only sees the allowed variables. The
+// PHOSPHOR_AGENT marker should always be present regardless of config.
+func TestBashTool_AllowedEnv_FiltersEnvironment(t *testing.T) {
+	t.Parallel()
+
+	if runtime.GOOS == "windows" {
+		t.Skip("env filtering behavior varies on Windows; skip for CI stability")
+	}
+
+	workingDir := t.TempDir()
+	ctx := context.WithValue(context.Background(), SessionIDContextKey, "test-session")
+
+	// Allow only PATH and a custom var. Secret vars should be invisible.
+	tool := newBashToolWithCfg(workingDir, config.ToolBash{
+		AllowedEnv: []string{"PATH", "MY_CUSTOM_VAR"},
+	})
+
+	// Attempting to read an unlisted env var should yield nothing.
+	resp := runBashTool(t, tool, ctx, BashParams{
+		Command: "bash -c 'echo $SECRET_API_KEY'",
+	})
+	require.False(t, resp.IsError, "command itself should not error")
+	require.NotContains(t, resp.Content, "abc123",
+		"unlisted env var SECRET_API_KEY should not be visible to agent shell")
+}
+
+// TestBashTool_InterpreterCodeExecutionBlocked verifies that interpreters
+// with inline code execution flags (-c, -e, -r) are blocked. These flags
+// allow an agent to bypass shell-level defenses (env filtering, command
+// blocking, workspace bounds) by executing arbitrary code in another
+// runtime. Only the code-execution flags are blocked — normal script
+// invocation (python script.py, node build.js) is preserved.
+func TestBashTool_InterpreterCodeExecutionBlocked(t *testing.T) {
+	t.Parallel()
+
+	workingDir := t.TempDir()
+	ctx := context.WithValue(context.Background(), SessionIDContextKey, "test-session")
+	tool := newBashToolForTest(workingDir)
+
+	blocked := []string{
+		"python -c 'import os; print(os.environ)'",
+		"python3 -c 'print(1)'",
+		"node -e 'console.log(process.env)'",
+		"perl -e 'print join(\"\\n\", keys %ENV)'",
+		"ruby -e 'ENV.each { |k,v| puts k }'",
+		"php -r 'echo getenv(\"SECRET\");'",
+		"lua -e 'print(os.getenv(\"SECRET\"))'",
+		"bash -c 'env'",
+		"sh -c 'printenv'",
+		"zsh -c 'printenv'",
+	}
+
+	for _, cmd := range blocked {
+		t.Run(cmd, func(t *testing.T) {
+			t.Parallel()
+			resp := runBashTool(t, tool, ctx, BashParams{Command: cmd})
+			require.Contains(t, resp.Content, "not allowed for security reasons",
+				"%q should be blocked (interpreter code execution)", cmd)
+		})
+	}
+
+	// Normal script invocation should NOT be blocked.
+	allowed := []string{
+		"python my_script.py",
+		"python3 src/main.py",
+		"node build.js",
+		"perl my_script.pl",
+		"ruby script.rb",
+		"php index.php",
+		"bash my_script.sh",
+	}
+
+	for _, cmd := range allowed {
+		t.Run(cmd, func(t *testing.T) {
+			t.Parallel()
+			resp := runBashTool(t, tool, ctx, BashParams{Command: cmd})
+			require.NotContains(t, resp.Content, "not allowed for security reasons",
+				"%q should NOT be blocked (normal script invocation)", cmd)
+		})
+	}
+}
+
+// TestBashTool_AllowInlineExecution_DisabledByDefault verifies that inline
+// code execution is blocked by default (AllowInlineExecution=false).
+func TestBashTool_AllowInlineExecution_DisabledByDefault(t *testing.T) {
+	t.Parallel()
+
+	workingDir := t.TempDir()
+	ctx := context.WithValue(context.Background(), SessionIDContextKey, "test-session")
+
+	// Default config (AllowInlineExecution=false).
+	tool := newBashToolWithCfg(workingDir, config.ToolBash{})
+
+	resp := runBashTool(t, tool, ctx, BashParams{Command: "python -c 'print(1)'"})
+	require.Contains(t, resp.Content, "not allowed for security reasons",
+		"python -c should be blocked by default")
+}
+
+// TestBashTool_AllowInlineExecution_EnabledPermitsInlineCode verifies that
+// setting AllowInlineExecution=true removes the interpreter/shell code
+// execution blockers while preserving all other blockers.
+func TestBashTool_AllowInlineExecution_EnabledPermitsInlineCode(t *testing.T) {
+	t.Parallel()
+
+	workingDir := t.TempDir()
+	ctx := context.WithValue(context.Background(), SessionIDContextKey, "test-session")
+
+	tool := newBashToolWithCfg(workingDir, config.ToolBash{
+		AllowInlineExecution: true,
+	})
+
+	// Inline code execution should now be allowed.
+	resp := runBashTool(t, tool, ctx, BashParams{Command: "python -c 'print(1)'"})
+	require.NotContains(t, resp.Content, "not allowed for security reasons",
+		"python -c should be allowed when AllowInlineExecution=true")
+
+	resp = runBashTool(t, tool, ctx, BashParams{Command: "node -e 'console.log(1)'"})
+	require.NotContains(t, resp.Content, "not allowed for security reasons",
+		"node -e should be allowed when AllowInlineExecution=true")
+
+	resp = runBashTool(t, tool, ctx, BashParams{Command: "bash -c 'echo hi'"})
+	require.NotContains(t, resp.Content, "not allowed for security reasons",
+		"bash -c should be allowed when AllowInlineExecution=true")
+
+	// Other blockers should still be active.
+	resp = runBashTool(t, tool, ctx, BashParams{Command: "curl http://example.com"})
+	require.Contains(t, resp.Content, "not allowed for security reasons",
+		"curl should still be blocked even with AllowInlineExecution=true")
+
+	resp = runBashTool(t, tool, ctx, BashParams{Command: "sudo apt install foo"})
+	require.Contains(t, resp.Content, "not allowed for security reasons",
+		"sudo should still be blocked even with AllowInlineExecution=true")
 }

@@ -295,7 +295,9 @@ func builtinHandler() func(next interp.ExecHandlerFunc) interp.ExecHandlerFunc {
 
 // blockHandler returns middleware that rejects commands matched by any of
 // the provided [BlockFunc]s before they reach the underlying exec path.
-// A nil or empty blockFuncs slice is a no-op.
+// A nil or empty blockFuncs slice is a no-op. When a command is blocked,
+// an info log entry is emitted with the full argv so operators can debug
+// accidentally-overbroad deny rules.
 func blockHandler(blockFuncs []BlockFunc) func(next interp.ExecHandlerFunc) interp.ExecHandlerFunc {
 	return func(next interp.ExecHandlerFunc) interp.ExecHandlerFunc {
 		return func(ctx context.Context, args []string) error {
@@ -304,6 +306,10 @@ func blockHandler(blockFuncs []BlockFunc) func(next interp.ExecHandlerFunc) inte
 			}
 			for _, blockFunc := range blockFuncs {
 				if blockFunc(args) {
+					slog.InfoContext(ctx, "Command blocked by security policy",
+						"command", args[0],
+						"args", args,
+					)
 					return fmt.Errorf("command is not allowed for security reasons: %q", args[0])
 				}
 			}

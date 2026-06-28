@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -22,6 +23,8 @@ import (
 	"sync"
 
 	"github.com/charmbracelet/x/exp/slice"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	"mvdan.cc/sh/v3/interp"
 	"mvdan.cc/sh/v3/syntax"
 )
@@ -44,6 +47,7 @@ const (
 func PhosphorEnvMarkers() []string {
 	return []string{
 		"PHOSPHOR=1",
+		"PHOSPHOR_AGENT=true",
 		"AGENT=phosphor",
 		"AI_AGENT=phosphor",
 	}
@@ -77,6 +81,11 @@ type Options struct {
 	WorkingDir string
 	Workspace  string // optional workspace root; if set, cd outside it is blocked
 	Env        []string
+	// AllowedEnv is an allowlist of environment variable names to keep when
+	// filtering os.Environ(). When nil/empty a safe default is used. This
+	// field is ignored if Env is non-nil (the caller is providing a fully
+	// constructed environment).
+	AllowedEnv []string
 	Logger     Logger
 	BlockFuncs []BlockFunc
 }
@@ -94,7 +103,11 @@ func NewShell(opts *Options) *Shell {
 
 	env := opts.Env
 	if env == nil {
-		env = os.Environ()
+		allowlist := buildAllowlist(opts.AllowedEnv)
+		if len(allowlist) == 0 {
+			allowlist = buildAllowlist(SafeDefaultEnv())
+		}
+		env = filterEnv(os.Environ(), allowlist)
 	}
 
 	// Allow tools to detect execution by Phosphor.
@@ -250,6 +263,35 @@ func SelfExecBlocker() BlockFunc {
 			return true
 		}
 
+		return false
+	}
+}
+
+// InlineExecutionWarnFunc returns a BlockFunc that never blocks but emits a
+// Warn-level log entry and an OpenTelemetry span event whenever an interpreter
+// or shell is invoked with an inline code execution flag (-c, -e, -r). It is
+// used when the user has explicitly opted into allowing inline execution via
+// tools.bash.allow_inline_execution. The warning appears in both slog logs and
+// OpenTelemetry traces — the provided ctx carries the tool-call span so the
+// log record and span event are attached for alerting and searchability.
+func InlineExecutionWarnFunc(ctx context.Context) BlockFunc {
+	return func(args []string) bool {
+		if len(args) == 0 {
+			return false
+		}
+		slog.WarnContext(ctx,
+			"Interpreter shell code execution allowed by config",
+			"command", args[0],
+			"args", args,
+		)
+		if span := trace.SpanFromContext(ctx); span != nil {
+			span.AddEvent("inline_execution_allowed",
+				trace.WithAttributes(
+					attribute.String("interpreter.command", args[0]),
+					attribute.StringSlice("interpreter.args", args),
+				),
+			)
+		}
 		return false
 	}
 }

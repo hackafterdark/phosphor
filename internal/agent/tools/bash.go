@@ -164,9 +164,10 @@ func bashDescription(attribution *config.Attribution, modelID string) string {
 	return out.String()
 }
 
-func blockFuncs() []shell.BlockFunc {
-	return []shell.BlockFunc{
-		shell.CommandsBlocker(bannedCommands),
+func blockFuncs(ctx context.Context, cfg config.ToolBash) []shell.BlockFunc {
+	cmds := append(bannedCommands, cfg.BannedCommands...)
+	funcs := []shell.BlockFunc{
+		shell.CommandsBlocker(cmds),
 
 		// System package managers
 		shell.ArgumentsBlocker("apk", []string{"add"}, nil),
@@ -197,6 +198,44 @@ func blockFuncs() []shell.BlockFunc {
 		// `go test -exec` can run arbitrary commands
 		shell.ArgumentsBlocker("go", []string{"test"}, []string{"-exec"}),
 	}
+
+	// Interpreters and shells with inline code execution flags bypass every
+	// shell-level defense (env filtering, command blocking, workspace bounds)
+	// by executing arbitrary code in another runtime. These are only added
+	// when AllowInlineExecution is false (the default). Normal script
+	// invocation (python script.py, node build.js) is unaffected either way.
+	if !cfg.AllowInlineExecution {
+		funcs = append(funcs,
+			shell.ArgumentsBlocker("python", nil, []string{"-c"}),
+			shell.ArgumentsBlocker("python3", nil, []string{"-c"}),
+			shell.ArgumentsBlocker("python2", nil, []string{"-c"}),
+			shell.ArgumentsBlocker("node", nil, []string{"-e"}),
+			shell.ArgumentsBlocker("perl", nil, []string{"-e"}),
+			shell.ArgumentsBlocker("ruby", nil, []string{"-e"}),
+			shell.ArgumentsBlocker("php", nil, []string{"-r"}),
+			shell.ArgumentsBlocker("lua", nil, []string{"-e"}),
+
+			// Shell sub-command execution. `bash -c '...'` spins up a new
+			// shell that inherits our filtered env but could be used to
+			// chain commands past the block list if the inner shell
+			// resolves binaries differently. Blocking the -c flag forces
+			// the agent to use our shell interpreter instead.
+			shell.ArgumentsBlocker("bash", nil, []string{"-c"}),
+			shell.ArgumentsBlocker("sh", nil, []string{"-c"}),
+			shell.ArgumentsBlocker("zsh", nil, []string{"-c"}),
+			shell.ArgumentsBlocker("ksh", nil, []string{"-c"}),
+			shell.ArgumentsBlocker("dash", nil, []string{"-c"}),
+		)
+	} else {
+		// When inline execution is permitted, attach a warn-level logging
+		// BlockFunc so every interpreter/shell invocation emits a visible
+		// audit record. The otel span for the bash tool call already
+		// captures the full command; this adds a dedicated slog.Warn log
+		// entry for alerting and log-based search.
+		funcs = append(funcs, shell.InlineExecutionWarnFunc(ctx))
+	}
+
+	return funcs
 }
 
 // I/O command keywords that may attempt to read/write files outside workspace
@@ -248,7 +287,7 @@ func validateCommandPaths(command string, absWorkingDir string) error {
 	return nil
 }
 
-func NewBashTool(permissions permission.Service, workingDir string, attribution *config.Attribution, modelID string) fantasy.AgentTool {
+func NewBashTool(permissions permission.Service, workingDir string, bashCfg config.ToolBash, attribution *config.Attribution, modelID string) fantasy.AgentTool {
 	return fantasy.NewAgentTool(
 		BashToolName,
 		string(bashDescription(attribution, modelID)),
@@ -260,6 +299,9 @@ func NewBashTool(permissions permission.Service, workingDir string, attribution 
 				attribute.String("gen_ai.tool.call.id", call.ID),
 				attribute.String("gen_ai.tool.call.arguments", call.Input),
 			)
+			if bashCfg.AllowInlineExecution {
+				span.SetAttributes(attribute.Bool("phosphor.security.inline_execution_allowed", true))
+			}
 			if params.Command == "" {
 				return fantasy.NewTextErrorResponse("missing command"), nil
 			}
@@ -330,7 +372,7 @@ func NewBashTool(permissions permission.Service, workingDir string, attribution 
 				bgManager := shell.GetBackgroundShellManager()
 				bgManager.Cleanup()
 				// Use background context so it continues after tool returns
-				bgShell, err := bgManager.Start(context.Background(), execWorkingDir, absWorkingDir, blockFuncs(), params.Command, params.Description)
+				bgShell, err := bgManager.Start(ctx, execWorkingDir, absWorkingDir, blockFuncs(ctx, bashCfg), params.Command, params.Description)
 				if err != nil {
 					return fantasy.ToolResponse{}, fmt.Errorf("error starting background shell: %w", err)
 				}
@@ -385,7 +427,7 @@ func NewBashTool(permissions permission.Service, workingDir string, attribution 
 			// Start with detached context so it can survive if moved to background
 			bgManager := shell.GetBackgroundShellManager()
 			bgManager.Cleanup()
-			bgShell, err := bgManager.Start(context.Background(), execWorkingDir, absWorkingDir, blockFuncs(), params.Command, params.Description)
+			bgShell, err := bgManager.Start(ctx, execWorkingDir, absWorkingDir, blockFuncs(ctx, bashCfg), params.Command, params.Description)
 			if err != nil {
 				return fantasy.ToolResponse{}, fmt.Errorf("error starting shell: %w", err)
 			}

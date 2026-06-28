@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -429,3 +430,31 @@ func TestSplitArgsFlags(t *testing.T) {
 		})
 	}
 }
+
+
+// TestInlineExecutionWarnFunc_NeverBlocks verifies that InlineExecutionWarnFunc
+// always returns false (never blocks) but emits a Warn-level log entry.
+func TestInlineExecutionWarnFunc_NeverBlocks(t *testing.T) {
+	t.Parallel()
+
+	blocker := InlineExecutionWarnFunc(context.Background())
+
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{"python -c", []string{"python", "-c", "print(1)"}},
+		{"node -e", []string{"node", "-e", "console.log(1)"}},
+		{"bash -c", []string{"bash", "-c", "echo hi"}},
+		{"empty", []string{}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			require.False(t, blocker(tt.args),
+				"InlineExecutionWarnFunc should never block, got block=true for %v", tt.args)
+		})
+	}
+}
+

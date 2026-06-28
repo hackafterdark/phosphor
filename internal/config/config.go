@@ -634,6 +634,31 @@ type Agent struct {
 type Tools struct {
 	Ls   ToolLs   `json:"ls,omitzero"`
 	Grep ToolGrep `json:"grep,omitzero"`
+	Bash ToolBash `json:"bash,omitzero"`
+}
+
+// ToolBash holds configuration for the bash tool's security posture.
+type ToolBash struct {
+	// AllowedEnv is an allowlist of environment variable names the agent's
+	// shell may see. When nil or empty, a safe default is used (PATH, HOME,
+	// TERM, etc.) that covers typical development needs while excluding
+	// secrets and sensitive host state. Matching is case-insensitive on
+	// Windows where the environment is case-insensitive.
+	AllowedEnv []string `json:"allowed_env,omitempty" jsonschema:"description=Allowlist of environment variable names the bash tool may see. When empty, a safe default is used."`
+
+	// BannedCommands is a list of additional command names to block beyond
+	// the built-in defaults. Entries are matched against argv[0] (the
+	// command name). Supports cross-platform entries such as "set" for
+	// Windows or "launchctl" for macOS.
+	BannedCommands []string `json:"banned_commands,omitempty" jsonschema:"description=Additional command names to block beyond the built-in defaults."`
+
+	// AllowInlineExecution, when true, permits interpreters and shells to
+	// be invoked with inline code execution flags (-c, -e, -r). When false
+	// (the default), commands like `python -c`, `node -e`, `perl -e`,
+	// `bash -c`, etc. are blocked because they bypass shell-level security
+	// controls by executing arbitrary code in another runtime. Normal script
+	// invocation (python script.py, node build.js) is unaffected.
+	AllowInlineExecution bool `json:"allow_inline_execution,omitempty" jsonschema:"description=Allow interpreters and shells to be invoked with inline code execution flags (-c, -e, -r). Default false (blocked)."`
 }
 
 type ToolLs struct {
