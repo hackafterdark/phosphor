@@ -294,12 +294,29 @@ func (e *EditToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *
 
 	diff := toolOutputDiffContent(sty, file, meta.OldContent, meta.NewContent, width, opts.ExpandedContent)
 
+	var warningBlock string
+	if len(meta.NewDiagnostics) > 0 {
+		var sb strings.Builder
+		sb.WriteString(sty.Tool.WarnTag.Render("ACTION REQUIRED"))
+		sb.WriteString(" " + sty.Tool.WarnMessage.Render(fmt.Sprintf("This edit introduced %d new diagnostic error(s):", len(meta.NewDiagnostics))))
+		for _, diag := range meta.NewDiagnostics {
+			sb.WriteString("\n  " + sty.Tool.WarnMessage.Render("• "+diag))
+		}
+		warningBlock = sty.Tool.Body.Render(sb.String())
+	}
+
 	// On error (e.g. denied permission), show error above the diff.
 	if opts.Result.IsError {
 		errLine := toolErrorContent(sty, opts.Result, width)
+		if warningBlock != "" {
+			return strings.Join([]string{header, "", errLine, "", warningBlock, "", diff}, "\n")
+		}
 		return strings.Join([]string{header, "", errLine, "", diff}, "\n")
 	}
 
+	if warningBlock != "" {
+		return strings.Join([]string{header, "", warningBlock, "", diff}, "\n")
+	}
 	return joinToolParts(header, diff)
 }
 
@@ -368,12 +385,29 @@ func (m *MultiEditToolRenderContext) RenderTool(sty *styles.Styles, width int, o
 	// Render diff with optional failed edits note.
 	diff := toolOutputMultiEditDiffContent(sty, file, meta, len(params.Edits), width, opts.ExpandedContent)
 
+	var warningBlock string
+	if len(meta.NewDiagnostics) > 0 {
+		var sb strings.Builder
+		sb.WriteString(sty.Tool.WarnTag.Render("ACTION REQUIRED"))
+		sb.WriteString(" " + sty.Tool.WarnMessage.Render(fmt.Sprintf("This edit introduced %d new diagnostic error(s):", len(meta.NewDiagnostics))))
+		for _, diag := range meta.NewDiagnostics {
+			sb.WriteString("\n  " + sty.Tool.WarnMessage.Render("• "+diag))
+		}
+		warningBlock = sty.Tool.Body.Render(sb.String())
+	}
+
 	// On error (e.g. denied permission), show error above the diff.
 	if opts.Result.IsError {
 		errLine := toolErrorContent(sty, opts.Result, width)
+		if warningBlock != "" {
+			return strings.Join([]string{header, "", errLine, "", warningBlock, "", diff}, "\n")
+		}
 		return strings.Join([]string{header, "", errLine, "", diff}, "\n")
 	}
 
+	if warningBlock != "" {
+		return strings.Join([]string{header, "", warningBlock, "", diff}, "\n")
+	}
 	return joinToolParts(header, diff)
 }
 

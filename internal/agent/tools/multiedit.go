@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	_ "embed"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -45,12 +46,13 @@ type FailedEdit struct {
 }
 
 type MultiEditResponseMetadata struct {
-	Additions    int          `json:"additions"`
-	Removals     int          `json:"removals"`
-	OldContent   string       `json:"old_content,omitempty"`
-	NewContent   string       `json:"new_content,omitempty"`
-	EditsApplied int          `json:"edits_applied"`
-	EditsFailed  []FailedEdit `json:"edits_failed,omitempty"`
+	Additions      int          `json:"additions"`
+	Removals       int          `json:"removals"`
+	OldContent     string       `json:"old_content,omitempty"`
+	NewContent     string       `json:"new_content,omitempty"`
+	EditsApplied   int          `json:"edits_applied"`
+	EditsFailed    []FailedEdit `json:"edits_failed,omitempty"`
+	NewDiagnostics []string     `json:"new_diagnostics,omitempty"`
 }
 
 const MultiEditToolName = "multiedit"
@@ -105,6 +107,9 @@ func NewMultiEditTool(
 				return fantasy.NewTextErrorResponse(err.Error()), nil
 			}
 
+			preDiags := getDiagnosticsList(params.FilePath, lspManager)
+			preErrors := countSeverity(preDiags, "Error")
+
 			var response fantasy.ToolResponse
 
 			editCtx := editContext{
@@ -134,9 +139,34 @@ func NewMultiEditTool(
 			// Notify LSP clients about the change
 			notifyLSPs(ctx, lspManager, params.FilePath)
 
+			postDiags := getDiagnosticsList(params.FilePath, lspManager)
+			postErrors := countSeverity(postDiags, "Error")
+
+			var newDiags []string
+			preMap := make(map[string]bool)
+			for _, d := range preDiags {
+				preMap[d] = true
+			}
+			for _, d := range postDiags {
+				if !preMap[d] {
+					newDiags = append(newDiags, d)
+				}
+			}
+
+			var meta MultiEditResponseMetadata
+			if response.Metadata != "" {
+				_ = json.Unmarshal([]byte(response.Metadata), &meta)
+			}
+			meta.NewDiagnostics = newDiags
+			metaBytes, _ := json.Marshal(meta)
+			response.Metadata = string(metaBytes)
+
 			// Wait for LSP diagnostics and add them to the response
 			text := fmt.Sprintf("<result>\n%s\n</result>\n", response.Content)
 			text += getDiagnostics(params.FilePath, lspManager)
+			if postErrors > preErrors {
+				text = fmt.Sprintf("WARNING: ACTION REQUIRED: Your last edit introduced %d new error(s). Please prioritize fixing these newly introduced diagnostics.\n\n%s", postErrors-preErrors, text)
+			}
 			response.Content = text
 			return response, nil
 		},
@@ -235,6 +265,14 @@ func processMultiEditWithCreation(edit editContext, params MultiEditParams, call
 			EditsFailed:  failedEdits,
 		})
 		return resp, nil
+	}
+
+	// Validate secrets and syntax
+	if err := checkSecrets(currentContent); err != nil {
+		return fantasy.NewTextErrorResponse(err.Error()), nil
+	}
+	if err := verifySyntax(currentContent, params.FilePath); err != nil {
+		return fantasy.NewTextErrorResponse(fmt.Sprintf("Syntax error validation failed: %v. Your edit was rejected to prevent committing broken code. Please correct the edit.", err)), nil
 	}
 
 	// Write the file
@@ -428,6 +466,14 @@ func processMultiEditExistingFile(edit editContext, params MultiEditParams, call
 
 	if isCrlf {
 		finalContentToWrite, _ = fsext.ToWindowsLineEndings(finalContentToWrite)
+	}
+
+	// Validate secrets and syntax
+	if err := checkSecrets(finalContentToWrite); err != nil {
+		return fantasy.NewTextErrorResponse(err.Error()), nil
+	}
+	if err := verifySyntax(finalContentToWrite, params.FilePath); err != nil {
+		return fantasy.NewTextErrorResponse(fmt.Sprintf("Syntax error validation failed: %v. Your edit was rejected to prevent committing broken code. Please correct the edit.", err)), nil
 	}
 
 	// Write the updated content

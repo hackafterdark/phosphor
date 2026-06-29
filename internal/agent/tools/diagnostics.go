@@ -157,6 +157,29 @@ func notifyLSPs(
 	wg.Wait()
 }
 
+func getDiagnosticsList(filePath string, manager *lsp.Manager) []string {
+	if manager == nil {
+		return nil
+	}
+
+	var fileDiagnostics []string
+	for lspName, client := range manager.Clients().Seq2() {
+		for location, diags := range client.GetDiagnostics() {
+			path, err := location.Path()
+			if err != nil {
+				continue
+			}
+			if path == filePath {
+				for _, diag := range diags {
+					formattedDiag := formatDiagnostic(path, diag, lspName)
+					fileDiagnostics = append(fileDiagnostics, formattedDiag)
+				}
+			}
+		}
+	}
+	return fileDiagnostics
+}
+
 func getDiagnostics(filePath string, manager *lsp.Manager) string {
 	if manager == nil {
 		return ""

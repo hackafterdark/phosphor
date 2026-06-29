@@ -431,7 +431,6 @@ func TestSplitArgsFlags(t *testing.T) {
 	}
 }
 
-
 // TestInlineExecutionWarnFunc_NeverBlocks verifies that InlineExecutionWarnFunc
 // always returns false (never blocks) but emits a Warn-level log entry.
 func TestInlineExecutionWarnFunc_NeverBlocks(t *testing.T) {
@@ -457,4 +456,3 @@ func TestInlineExecutionWarnFunc_NeverBlocks(t *testing.T) {
 		})
 	}
 }
-

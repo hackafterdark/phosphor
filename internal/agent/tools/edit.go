@@ -3,10 +3,12 @@ package tools
 import (
 	"context"
 	_ "embed"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -37,10 +39,11 @@ type EditPermissionsParams struct {
 }
 
 type EditResponseMetadata struct {
-	Additions  int    `json:"additions"`
-	Removals   int    `json:"removals"`
-	OldContent string `json:"old_content,omitempty"`
-	NewContent string `json:"new_content,omitempty"`
+	Additions      int      `json:"additions"`
+	Removals       int      `json:"removals"`
+	OldContent     string   `json:"old_content,omitempty"`
+	NewContent     string   `json:"new_content,omitempty"`
+	NewDiagnostics []string `json:"new_diagnostics,omitempty"`
 }
 
 const EditToolName = "edit"
@@ -147,6 +150,9 @@ func NewEditTool(
 				fuzzyCache:  cache,
 			}
 
+			preDiags := getDiagnosticsList(params.FilePath, lspManager)
+			preErrors := countSeverity(preDiags, "Error")
+
 			if params.OldString == "" {
 				response, err = createNewFile(editCtx, params.FilePath, params.NewString, call)
 			} else if params.NewString == "" {
@@ -165,9 +171,33 @@ func NewEditTool(
 			}
 
 			notifyLSPs(ctx, lspManager, params.FilePath)
+			postDiags := getDiagnosticsList(params.FilePath, lspManager)
+			postErrors := countSeverity(postDiags, "Error")
+
+			var newDiags []string
+			preMap := make(map[string]bool)
+			for _, d := range preDiags {
+				preMap[d] = true
+			}
+			for _, d := range postDiags {
+				if !preMap[d] {
+					newDiags = append(newDiags, d)
+				}
+			}
+
+			var meta EditResponseMetadata
+			if response.Metadata != "" {
+				_ = json.Unmarshal([]byte(response.Metadata), &meta)
+			}
+			meta.NewDiagnostics = newDiags
+			metaBytes, _ := json.Marshal(meta)
+			response.Metadata = string(metaBytes)
 
 			text := fmt.Sprintf("<result>\n%s\n</result>\n", response.Content)
 			text += getDiagnostics(params.FilePath, lspManager)
+			if postErrors > preErrors {
+				text = fmt.Sprintf("WARNING: ACTION REQUIRED: Your last edit introduced %d new error(s). Please prioritize fixing these newly introduced diagnostics.\n\n%s", postErrors-preErrors, text)
+			}
 			response.Content = text
 			return response, nil
 		},
@@ -175,6 +205,13 @@ func NewEditTool(
 }
 
 func createNewFile(edit editContext, filePath, content string, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+	if err := checkSecrets(content); err != nil {
+		return fantasy.NewTextErrorResponse(err.Error()), nil
+	}
+	if err := verifySyntax(content, filePath); err != nil {
+		return fantasy.NewTextErrorResponse(fmt.Sprintf("Syntax error validation failed: %v. Your edit was rejected to prevent committing broken code. Please correct the edit.", err)), nil
+	}
+
 	fileInfo, err := os.Stat(filePath)
 	if err == nil {
 		if fileInfo.IsDir() {
@@ -425,6 +462,10 @@ func deleteContent(edit editContext, filePath, oldString string, replaceAll bool
 }
 
 func replaceContent(edit editContext, filePath, oldString, newString string, replaceAll bool, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+	if err := checkSecrets(newString); err != nil {
+		return fantasy.NewTextErrorResponse(err.Error()), nil
+	}
+
 	fileInfo, err := os.Stat(filePath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -468,6 +509,11 @@ func replaceContent(edit editContext, filePath, oldString, newString string, rep
 	if oldContent == newContent {
 		return fantasy.NewTextErrorResponse("new content is the same as old content. No changes made."), nil
 	}
+
+	if err := verifySyntax(newContent, filePath); err != nil {
+		return fantasy.NewTextErrorResponse(fmt.Sprintf("Syntax error validation failed: %v. Your edit was rejected to prevent committing broken code. Please correct the edit.", err)), nil
+	}
+
 	_, additions, removals := diff.GenerateDiff(
 		oldContent,
 		newContent,
@@ -535,6 +581,9 @@ func replaceContent(edit editContext, filePath, oldString, newString string, rep
 				return fantasy.NewTextErrorResponse(err.Error()), nil
 			}
 			return makeNotFoundError(initialContent, oldString), nil
+		}
+		if err := verifySyntax(newContent, filePath); err != nil {
+			return fantasy.NewTextErrorResponse(fmt.Sprintf("Syntax error validation failed: %v. Your edit was rejected to prevent committing broken code. Please correct the edit.", err)), nil
 		}
 		finalContentToWrite = newContent
 	}
@@ -895,4 +944,23 @@ func makeNotFoundError(fileContent, oldString string) fantasy.ToolResponse {
 	}
 
 	return fantasy.NewTextErrorResponse(sb.String())
+}
+
+var (
+	awsSecretRegex   = regexp.MustCompile(`(?i)aws_(?:secret_)?access_key\s*[:=]\s*['"][A-Za-z0-9/\+=]{40}['"]`)
+	privateKeyRegex  = regexp.MustCompile(`-----BEGIN [A-Z ]+ PRIVATE KEY-----`)
+	genericApiKeyReg = regexp.MustCompile(`(?i)api_key\s*[:=]\s*['"][A-Za-z0-9_\-]{20,}['"]`)
+)
+
+func checkSecrets(content string) error {
+	if awsSecretRegex.MatchString(content) {
+		return fmt.Errorf("Security violation: potential AWS secret access key leak detected")
+	}
+	if privateKeyRegex.MatchString(content) {
+		return fmt.Errorf("Security violation: potential private key leak detected")
+	}
+	if genericApiKeyReg.MatchString(content) {
+		return fmt.Errorf("Security violation: potential API key leak detected")
+	}
+	return nil
 }
