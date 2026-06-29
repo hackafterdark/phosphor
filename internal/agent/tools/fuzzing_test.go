@@ -51,23 +51,23 @@ func TestFuzzing_IsInsideHandlesEmptyAndSpecialPaths(t *testing.T) {
 	require.NoError(t, err)
 
 	specialPaths := []string{
-		"",                           // Empty string
-		"\x00",                       // Null byte
-		"\x00\x00",                   // Multiple null bytes
-		"\\",                         // Just a backslash
-		"/",                          // Just a forward slash
-		"\\\\",                       // Multiple backslashes
-		"////",                       // Multiple forward slashes
-		"../",                        // Parent with trailing slash
-		"./",                         // Current with trailing slash
-		"....",                       // Four dots (not a valid traversal)
-		strings.Repeat(".", 100),     // Many dots
-		strings.Repeat("\x00", 50),   // Many null bytes
-		"a\x00b",                     // Null byte in middle
-		"hello world",                // Space in path
-		"hello\tworld",               // Tab in path
-		"hello\nworld",               // Newline in path
-		"hello\rworld",               // Carriage return in path
+		"",                         // Empty string
+		"\x00",                     // Null byte
+		"\x00\x00",                 // Multiple null bytes
+		"\\",                       // Just a backslash
+		"/",                        // Just a forward slash
+		"\\\\",                     // Multiple backslashes
+		"////",                     // Multiple forward slashes
+		"../",                      // Parent with trailing slash
+		"./",                       // Current with trailing slash
+		"....",                     // Four dots (not a valid traversal)
+		strings.Repeat(".", 100),   // Many dots
+		strings.Repeat("\x00", 50), // Many null bytes
+		"a\x00b",                   // Null byte in middle
+		"hello world",              // Space in path
+		"hello\tworld",             // Tab in path
+		"hello\nworld",             // Newline in path
+		"hello\rworld",             // Carriage return in path
 	}
 
 	for _, path := range specialPaths {

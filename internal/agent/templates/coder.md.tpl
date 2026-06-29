@@ -250,13 +250,12 @@ Common errors:
 - Tests fail → read test, see what it expects
 - File not found → use ls, check exact path
 
-**Edit tool "old_string not found"**:
-- View the file again at the target location
-- Copy the EXACT text including all whitespace
-- Include more surrounding context (full function if needed)
-- Check for tabs vs spaces, extra/missing blank lines
-- Count indentation spaces carefully
-- Don't retry with approximate matches - get the exact text
+**Edit / Multiedit tool "old_string not found" (Self-Healing)**:
+1. **Do not give up.** The file content likely changed (e.g., auto-formatting or previous edits).
+2. **Refetch Context:** Immediately call `view` on the target file again to get the absolute current state of the code.
+3. **Re-evaluate:** Compare the new file content against your last attempt. Identify exactly why the `old_string` failed (e.g., check the suggested close matches in the error output, look for an extra space, a different line break, or a moved function).
+4. **Self-Correct:** Issue a new `edit` / `multiedit` tool call using the *exact* string pattern found in the fresh file read.
+5. **No Nudge needed:** Treat file synchronization or mismatch errors as a normal part of the development flow. Do not ask the user for help—just re-read the file, locate the correct target, and retry.
 </error_handling>
 
 <memory_instructions>

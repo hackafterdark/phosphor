@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"charm.land/fantasy"
 	"github.com/hackafterdark/phosphor/internal/diff"
@@ -66,6 +65,7 @@ func NewMultiEditTool(
 	filetracker filetracker.Service,
 	workingDir string,
 ) fantasy.AgentTool {
+	cache := newFuzzyCache()
 	return fantasy.NewAgentTool(
 		MultiEditToolName,
 		multieditDescription,
@@ -107,7 +107,15 @@ func NewMultiEditTool(
 
 			var response fantasy.ToolResponse
 
-			editCtx := editContext{ctx, permissions, files, filetracker, workingDir}
+			editCtx := editContext{
+				ctx:         ctx,
+				permissions: permissions,
+				files:       files,
+				filetracker: filetracker,
+				workingDir:  workingDir,
+				lspManager:  lspManager,
+				fuzzyCache:  cache,
+			}
 			// Handle file creation case (first edit has empty old_string)
 			if len(params.Edits) > 0 && params.Edits[0].OldString == "" {
 				response, err = processMultiEditWithCreation(editCtx, params, call)
@@ -171,13 +179,13 @@ func processMultiEditWithCreation(edit editContext, params MultiEditParams, call
 	// Apply remaining edits to the content, tracking failures
 	var failedEdits []FailedEdit
 	for i := 1; i < len(params.Edits); i++ {
-		edit := params.Edits[i]
-		newContent, err := applyEditToContent(currentContent, edit)
+		op := params.Edits[i]
+		newContent, err := applyEditToContent(edit.fuzzyCache, params.FilePath, currentContent, op)
 		if err != nil {
 			failedEdits = append(failedEdits, FailedEdit{
 				Index: i + 1,
 				Error: err.Error(),
-				Edit:  edit,
+				Edit:  op,
 			})
 			continue
 		}
@@ -293,35 +301,25 @@ func processMultiEditExistingFile(edit editContext, params MultiEditParams, call
 		return fantasy.NewTextErrorResponse("you must read the file before editing it. Use the View tool first"), nil
 	}
 
-	// Check if file was modified since last read.
-	modTime := fileInfo.ModTime().Truncate(time.Second)
-	if modTime.After(lastRead) {
-		return fantasy.NewTextErrorResponse(
-			fmt.Sprintf(
-				"file %s has been modified since it was last read (mod time: %s, last read: %s)",
-				params.FilePath, modTime.Format(time.RFC3339), lastRead.Format(time.RFC3339),
-			),
-		), nil
-	}
-
-	// Read current file content
-	content, err := os.ReadFile(params.FilePath)
+	// Read initial file content
+	initialBytes, err := os.ReadFile(params.FilePath)
 	if err != nil {
 		return fantasy.ToolResponse{}, fmt.Errorf("failed to read file: %w", err)
 	}
+	initialContent := string(initialBytes)
 
-	oldContent, isCrlf := fsext.ToUnixLineEndings(string(content))
+	oldContent, isCrlf := fsext.ToUnixLineEndings(initialContent)
 	currentContent := oldContent
 
 	// Apply all edits sequentially, tracking failures
 	var failedEdits []FailedEdit
-	for i, edit := range params.Edits {
-		newContent, err := applyEditToContent(currentContent, edit)
+	for i, op := range params.Edits {
+		newContent, err := applyEditToContent(edit.fuzzyCache, params.FilePath, currentContent, op)
 		if err != nil {
 			failedEdits = append(failedEdits, FailedEdit{
 				Index: i + 1,
 				Error: err.Error(),
-				Edit:  edit,
+				Edit:  op,
 			})
 			continue
 		}
@@ -382,14 +380,63 @@ func processMultiEditExistingFile(edit editContext, params MultiEditParams, call
 		return resp, nil
 	}
 
+	// Atomic Read-Modify-Write Loop
+	var finalContentToWrite string
+	success := false
+	for attempt := 0; attempt < 5; attempt++ {
+		currentDiskBytes, err := os.ReadFile(params.FilePath)
+		if err != nil {
+			return fantasy.ToolResponse{}, fmt.Errorf("failed to read file during atomic write check: %w", err)
+		}
+		currentDiskContent := string(currentDiskBytes)
+
+		if currentDiskContent == initialContent {
+			finalContentToWrite = currentContent
+			success = true
+			break
+		}
+
+		// File has been modified concurrently! Perform silent refresh.
+		slog.Info("Retrying edit: file state updated from disk, re-calculating fuzzy match", "file", params.FilePath, "attempt", attempt+1)
+		if edit.fuzzyCache != nil {
+			edit.fuzzyCache.Invalidate(params.FilePath)
+		}
+		initialContent = currentDiskContent
+		oldContent, isCrlf = fsext.ToUnixLineEndings(initialContent)
+		currentContent = oldContent
+
+		// Re-apply all edits sequentially
+		failedEdits = nil
+		for i, op := range params.Edits {
+			newContent, err := applyEditToContent(edit.fuzzyCache, params.FilePath, currentContent, op)
+			if err != nil {
+				failedEdits = append(failedEdits, FailedEdit{
+					Index: i + 1,
+					Error: err.Error(),
+					Edit:  op,
+				})
+				continue
+			}
+			currentContent = newContent
+		}
+		finalContentToWrite = currentContent
+	}
+
+	if !success {
+		return fantasy.ToolResponse{}, fmt.Errorf("Edit failed after 5 retries due to persistent concurrent file modifications. Please retry.")
+	}
+
 	if isCrlf {
-		currentContent, _ = fsext.ToWindowsLineEndings(currentContent)
+		finalContentToWrite, _ = fsext.ToWindowsLineEndings(finalContentToWrite)
 	}
 
 	// Write the updated content
-	err = os.WriteFile(params.FilePath, []byte(currentContent), 0o644)
+	err = os.WriteFile(params.FilePath, []byte(finalContentToWrite), 0o644)
 	if err != nil {
 		return fantasy.ToolResponse{}, fmt.Errorf("failed to write file: %w", err)
+	}
+	if edit.fuzzyCache != nil {
+		edit.fuzzyCache.Invalidate(params.FilePath)
 	}
 
 	// Update file history
@@ -409,7 +456,7 @@ func processMultiEditExistingFile(edit editContext, params MultiEditParams, call
 	}
 
 	// Store the new version
-	_, err = edit.files.CreateVersion(edit.ctx, sessionID, params.FilePath, currentContent)
+	_, err = edit.files.CreateVersion(edit.ctx, sessionID, params.FilePath, finalContentToWrite)
 	if err != nil {
 		slog.Error("Error creating file history version", "error", err)
 	}
@@ -427,7 +474,7 @@ func processMultiEditExistingFile(edit editContext, params MultiEditParams, call
 		fantasy.NewTextResponse(message),
 		MultiEditResponseMetadata{
 			OldContent:   oldContent,
-			NewContent:   currentContent,
+			NewContent:   finalContentToWrite,
 			Additions:    additions,
 			Removals:     removals,
 			EditsApplied: editsApplied,
@@ -436,7 +483,7 @@ func processMultiEditExistingFile(edit editContext, params MultiEditParams, call
 	), nil
 }
 
-func applyEditToContent(content string, edit MultiEditOperation) (string, error) {
+func applyEditToContent(cache *fuzzyCache, filePath, content string, edit MultiEditOperation) (string, error) {
 	if edit.OldString == "" && edit.NewString == "" {
 		return content, nil
 	}
@@ -445,28 +492,20 @@ func applyEditToContent(content string, edit MultiEditOperation) (string, error)
 		return "", fmt.Errorf("old_string cannot be empty for content replacement")
 	}
 
-	var newContent string
-	var replacementCount int
-
-	if edit.ReplaceAll {
-		newContent = strings.ReplaceAll(content, edit.OldString, edit.NewString)
-		replacementCount = strings.Count(content, edit.OldString)
-		if replacementCount == 0 {
-			return "", fmt.Errorf("old_string not found in content. Make sure it matches exactly, including whitespace and line breaks")
+	newContent, err := applyEditWithFuzzy(cache, filePath, content, edit.OldString, edit.NewString, edit.ReplaceAll)
+	if err != nil {
+		candidates := findCloseMatches(content, edit.OldString)
+		if len(candidates) > 0 {
+			var sb strings.Builder
+			sb.WriteString("old_string not found in content. Did you mean one of these close matches?\n")
+			for _, c := range candidates {
+				sb.WriteString(fmt.Sprintf("\n--- Match at lines %d-%d (similarity: %.0f%%) ---\n", c.lineStart, c.lineEnd, c.similarity*100))
+				sb.WriteString(c.text)
+				sb.WriteString("\n------------------------------------\n")
+			}
+			return "", fmt.Errorf("%s", sb.String())
 		}
-	} else {
-		index := strings.Index(content, edit.OldString)
-		if index == -1 {
-			return "", fmt.Errorf("old_string not found in content. Make sure it matches exactly, including whitespace and line breaks")
-		}
-
-		lastIndex := strings.LastIndex(content, edit.OldString)
-		if index != lastIndex {
-			return "", fmt.Errorf("old_string appears multiple times in the content. Please provide more context to ensure a unique match, or set replace_all to true")
-		}
-
-		newContent = content[:index] + edit.NewString + content[index+len(edit.OldString):]
-		replacementCount = 1
+		return "", fmt.Errorf("old_string not found in content. Make sure it matches exactly, including whitespace and line breaks")
 	}
 
 	return newContent, nil
