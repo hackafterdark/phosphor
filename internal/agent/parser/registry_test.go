@@ -283,10 +283,7 @@ func TestFindJSFunctions(t *testing.T) {
 		t.Errorf("AST contains ERROR node:\n%s", ast)
 	}
 
-	astStr := formatNode(tree.RootNode(), code, "")
-	os.WriteFile("debug_js_ast.txt", []byte(astStr), 0o644)
-
-	// Verify structural_search query 'find_structs' execution.
+	// Verify structural_search query "find_structs" execution.
 	structMatches, err := Query(tree.RootNode(), code, "javascript", "find_structs")
 	if err != nil {
 		t.Fatalf("find_structs query failed: %v", err)

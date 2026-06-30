@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"fmt"
 	"html/template"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -402,7 +403,7 @@ func executeStructuralSearch(ctx context.Context, workingDir string, params Stru
 		// Read file
 		code, err := os.ReadFile(file)
 		if err != nil {
-			os.WriteFile("F:/hackafterdark/phosphor/debug_readerr.txt", []byte("read error: "+err.Error()), 0o644)
+			slog.Debug("Failed to read file for structural search", "file", file, "error", err)
 			continue
 		}
 
@@ -413,11 +414,9 @@ func executeStructuralSearch(ctx context.Context, workingDir string, params Stru
 		// Run query
 		matches, err := parser.Query(root, code, fileLang, params.TemplateName)
 		if err != nil {
-			os.WriteFile("F:/hackafterdark/phosphor/debug_queryerr.txt", []byte("query error: "+err.Error()), 0o644)
+			slog.Debug("Query failed for file", "file", file, "lang", fileLang, "error", err)
 			continue
 		}
-
-		os.WriteFile("F:/hackafterdark/phosphor/debug_matches.txt", []byte(fmt.Sprintf("file=%s lang=%s matches=%d", file, fileLang, len(matches))), 0o644)
 
 		filesSearched++
 
@@ -485,7 +484,6 @@ func NewStructuralSearchTool(workingDir string) fantasy.AgentTool {
 		"structural_search",
 		structuralSearchDescription(),
 		func(ctx context.Context, params StructuralSearchParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
-			os.WriteFile("C:/tmp/phosphor_debug.txt", []byte("handler called\n"+fmt.Sprintf("call.Input=%q\nparams=%+v\n", call.Input, params)), 0o644)
 			ctx, span := otel.StartSpan(ctx, "execute_tool structural_search")
 			defer span.End()
 			span.SetAttributes(
