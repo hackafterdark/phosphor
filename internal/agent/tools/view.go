@@ -47,9 +47,10 @@ func viewDescription() string {
 }
 
 type ViewParams struct {
-	FilePath string `json:"file_path" description:"The path to the file to read"`
-	Offset   int    `json:"offset,omitempty" description:"The line number to start reading from (0-based)"`
-	Limit    int    `json:"limit,omitempty" description:"The number of lines to read (defaults to 200)"`
+	FilePath  string `json:"file_path" description:"The path to the file to read"`
+	Offset    int    `json:"offset,omitempty" description:"The line number to start reading from (0-based)"`
+	Limit     int    `json:"limit,omitempty" description:"The number of lines to read (defaults to 200)"`
+	Summarize bool   `json:"summarize,omitempty" description:"If true and tree-sitter is available, returns a file outline containing only public function/struct signatures instead of the full content"`
 }
 
 type ViewPermissionsParams struct {
@@ -204,6 +205,32 @@ func NewViewTool(
 				mimeType = sniffImageMimeType(imageData, mimeType)
 
 				return fantasy.NewImageResponse(imageData, mimeType), nil
+			}
+
+			if params.Summarize {
+				fileBytes, readErr := os.ReadFile(filePath)
+				if readErr != nil {
+					return fantasy.ToolResponse{}, fmt.Errorf("error reading file: %w", readErr)
+				}
+				var outline string
+				var outlineErr error
+				if isSitterAvailable() {
+					outline, outlineErr = generateOutline(fileBytes, filePath)
+				} else {
+					outline, outlineErr = generateOutlineFallback(fileBytes, filePath)
+					outline = "[Tree-sitter unavailable, showing regex-based outline fallback]\n" + outline
+				}
+				if outlineErr != nil {
+					return fantasy.ToolResponse{}, fmt.Errorf("failed to generate outline: %w", outlineErr)
+				}
+				output := "<file_outline>\n" + outline + "\n</file_outline>\n"
+				return fantasy.WithResponseMetadata(
+					fantasy.NewTextResponse(output),
+					ViewResponseMetadata{
+						FilePath: filePath,
+						Content:  outline,
+					},
+				), nil
 			}
 
 			// Read the file content

@@ -46,8 +46,8 @@ func TestWebFetchHardeningCIDRAllow(t *testing.T) {
 	cfg := &config.Config{
 		Tools: config.Tools{
 			WebFetch: config.ToolWebFetch{
-				IPAllowList:   []string{"192.168.1.0/24"},
-				AllowRawIPs:   true,
+				IPAllowList: []string{"192.168.1.0/24"},
+				AllowRawIPs: true,
 			},
 		},
 	}

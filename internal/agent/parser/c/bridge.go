@@ -2,7 +2,7 @@
 package lang_c
 
 /*
-#cgo CFLAGS: -IF:/hackafterdark/phosphor/grammars/include -IF:/hackafterdark/phosphor/grammars
+#cgo CFLAGS: -I${SRCDIR}/../../../../grammars/include -I${SRCDIR}/../../../../grammars
 
 #include "tree_sitter/parser.h"
 

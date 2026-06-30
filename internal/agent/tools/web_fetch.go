@@ -13,12 +13,12 @@ import (
 	"time"
 
 	"charm.land/fantasy"
+	_ "embed"
 	"github.com/hackafterdark/phosphor/internal/config"
 	"github.com/hackafterdark/phosphor/internal/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"html/template"
-	_ "embed"
 )
 
 //go:embed web_fetch.md.tpl

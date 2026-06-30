@@ -159,7 +159,7 @@ func TestEnvironmentHardening_SandboxMarkersWithExplicitEnv(t *testing.T) {
 
 	shell := NewShell(&Options{
 		WorkingDir: tmpDir,
-		Env: []string{"CUSTOM_VAR=hello"},
+		Env:        []string{"CUSTOM_VAR=hello"},
 	})
 
 	markers := []string{"PHOSPHOR=1", "PHOSPHOR_AGENT=true", "AGENT=phosphor", "AI_AGENT=phosphor"}

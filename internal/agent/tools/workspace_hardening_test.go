@@ -115,7 +115,7 @@ func TestWorkspaceHardening_MultiEditToolBlocksOutsidePaths(t *testing.T) {
 			t.Parallel()
 			input, err := json.Marshal(MultiEditParams{
 				FilePath: tt.path,
-				Edits: []MultiEditOperation{{OldString: "", NewString: "pwned"}},
+				Edits:    []MultiEditOperation{{OldString: "", NewString: "pwned"}},
 			})
 			require.NoError(t, err)
 
@@ -277,7 +277,7 @@ func TestWorkspaceHardening_GlobToolBlocksOutsidePaths(t *testing.T) {
 	tool := NewGlobTool(workingDir)
 
 	tests := []struct {
-		name string
+		name    string
 		path    string
 		pattern string
 	}{
@@ -314,7 +314,7 @@ func TestWorkspaceHardening_GrepToolBlocksOutsidePaths(t *testing.T) {
 
 	tests := []struct {
 		name string
-		path  string
+		path string
 	}{
 		{"parent directory escape", "../etc"},
 		{"absolute path outside workspace", os.TempDir()},
@@ -349,7 +349,7 @@ func TestWorkspaceHardening_StructuralSearchToolBlocksOutsidePaths(t *testing.T)
 
 	tests := []struct {
 		name string
-		path  string
+		path string
 	}{
 		{"parent directory escape", "../etc"},
 		{"absolute path outside workspace", os.TempDir()},

@@ -74,10 +74,11 @@ type EditPermissionsParams = tools.EditPermissionsParams
 
 // EditResponseMetadata represents the metadata for an edit tool response.
 type EditResponseMetadata struct {
-	Additions  int    `json:"additions"`
-	Removals   int    `json:"removals"`
-	OldContent string `json:"old_content,omitempty"`
-	NewContent string `json:"new_content,omitempty"`
+	Additions      int      `json:"additions"`
+	Removals       int      `json:"removals"`
+	OldContent     string   `json:"old_content,omitempty"`
+	NewContent     string   `json:"new_content,omitempty"`
+	NewDiagnostics []string `json:"new_diagnostics,omitempty"`
 }
 
 const FetchToolName = "fetch"
@@ -174,11 +175,12 @@ type MultiEditPermissionsParams = tools.MultiEditPermissionsParams
 
 // MultiEditResponseMetadata represents the metadata for a multi-edit tool response.
 type MultiEditResponseMetadata struct {
-	Additions    int    `json:"additions"`
-	Removals     int    `json:"removals"`
-	OldContent   string `json:"old_content,omitempty"`
-	NewContent   string `json:"new_content,omitempty"`
-	EditsApplied int    `json:"edits_applied"`
+	Additions      int      `json:"additions"`
+	Removals       int      `json:"removals"`
+	OldContent     string   `json:"old_content,omitempty"`
+	NewContent     string   `json:"new_content,omitempty"`
+	EditsApplied   int      `json:"edits_applied"`
+	NewDiagnostics []string `json:"new_diagnostics,omitempty"`
 }
 
 const SourcegraphToolName = "sourcegraph"
@@ -201,9 +203,10 @@ const ViewToolName = "view"
 
 // ViewParams represents the parameters for the view tool.
 type ViewParams struct {
-	FilePath string `json:"file_path"`
-	Offset   int    `json:"offset"`
-	Limit    int    `json:"limit"`
+	FilePath  string `json:"file_path"`
+	Offset    int    `json:"offset"`
+	Limit     int    `json:"limit"`
+	Summarize bool   `json:"summarize,omitempty"`
 }
 
 // ViewPermissionsParams represents the permission parameters for the view tool.
@@ -213,6 +216,14 @@ type ViewPermissionsParams = tools.ViewPermissionsParams
 type ViewResponseMetadata struct {
 	FilePath string `json:"file_path"`
 	Content  string `json:"content"`
+}
+
+const ViewNodeToolName = "view_node"
+
+// ViewNodeParams represents the parameters for the view_node tool.
+type ViewNodeParams struct {
+	FilePath string `json:"file_path"`
+	NodeName string `json:"node_name"`
 }
 
 const WriteToolName = "write"
