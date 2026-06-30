@@ -87,6 +87,12 @@ type SelectedModel struct {
 	ProviderOptions map[string]any `json:"provider_options,omitempty" jsonschema:"description=Additional provider-specific options for the model"`
 }
 
+// Tool call format values for [ProviderConfig.ToolCallFormat].
+const (
+	ToolCallFormatNative = "native"
+	ToolCallFormatXML    = "xml"
+)
+
 type ProviderConfig struct {
 	// The provider's id.
 	ID string `json:"id,omitempty" jsonschema:"description=Unique identifier for the provider,example=openai"`
@@ -107,6 +113,14 @@ type ProviderConfig struct {
 
 	// Custom system prompt prefix.
 	SystemPromptPrefix string `json:"system_prompt_prefix,omitempty" jsonschema:"description=Custom prefix to add to system prompts for this provider"`
+
+	// ToolCallFormat controls how tool calls are elicited from models on
+	// this provider. "native" (default) relies on the provider's native
+	// function-calling API. "xml" injects a system-prompt instruction
+	// telling the model to emit tool calls as <tool_call>...</tool_call>
+	// text, for self-hosted stacks (e.g. vLLM/llama.cpp) whose server-side
+	// parser expects that format.
+	ToolCallFormat string `json:"tool_call_format,omitempty" jsonschema:"description=How tool calls are elicited: native uses the provider's function-calling API; xml injects a <tool_call> text instruction for self-hosted parsers,enum=native,enum=xml,default=native"`
 
 	// Extra headers to send with each request to the provider. Values
 	// run through shell expansion at config-load time, so $VAR and

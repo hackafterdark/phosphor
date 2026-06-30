@@ -32,6 +32,7 @@ type Prompt struct {
 type PromptDat struct {
 	Provider                  string
 	Model                     string
+	PromptToolCalls           bool
 	Config                    config.Config
 	WorkingDir                string
 	IsGitRepo                 bool
@@ -175,6 +176,12 @@ func (p *Prompt) promptData(ctx context.Context, provider, model string, store *
 	platform := cmp.Or(p.platform, runtime.GOOS)
 
 	cfg := store.Config()
+	promptToolCalls := false
+	if cfg.Providers != nil {
+		if pc, ok := cfg.Providers.Get(provider); ok {
+			promptToolCalls = pc.ToolCallFormat == config.ToolCallFormatXML
+		}
+	}
 	contextFiles := loadContextFiles(cfg.Options.ContextPaths, store)
 	globalContextFiles := loadContextFiles(cfg.Options.GlobalContextPaths, store)
 
@@ -216,6 +223,7 @@ func (p *Prompt) promptData(ctx context.Context, provider, model string, store *
 	data := PromptDat{
 		Provider:                  provider,
 		Model:                     model,
+		PromptToolCalls:           promptToolCalls,
 		Config:                    *cfg,
 		WorkingDir:                filepath.ToSlash(workingDir),
 		IsGitRepo:                 isGit,
