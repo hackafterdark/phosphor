@@ -38,7 +38,10 @@ var langs = []struct {
 }
 
 func main() {
-	base := "F:/hackafterdark/phosphor/internal/agent/parser/"
+	base, err := os.Getwd()
+	if err != nil {
+		panic(err)
+	}
 	for _, lang := range langs {
 		dir := filepath.Join(base, lang.name)
 		os.MkdirAll(dir, 0o755)
@@ -47,7 +50,7 @@ func main() {
 		sb.WriteString(fmt.Sprintf("// Package %s provides tree-sitter bindings for %s.\n", lang.goPackage, lang.name))
 		sb.WriteString(fmt.Sprintf("package %s\n\n", lang.goPackage))
 		sb.WriteString("/*\n")
-		sb.WriteString("#cgo CFLAGS: -IF:/hackafterdark/phosphor/grammars/include -IF:/hackafterdark/phosphor/grammars\n\n")
+		sb.WriteString("#cgo CFLAGS: -I${SRCDIR}/../../../../grammars/include -I${SRCDIR}/../../../../grammars\n\n")
 		sb.WriteString("#include \"tree_sitter/parser.h\"\n\n")
 		sb.WriteString(fmt.Sprintf("#include \"%s/src/parser.c\"\n", lang.name))
 		if lang.hasScanner {

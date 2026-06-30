@@ -174,12 +174,8 @@ When `securityTransport` intercepts a request to a raw IP:
 
 ## References
 
-- [Phosphor AGENTS.md](F:/hackafterdark/phosphor/AGENTS.md)
-- [Phosphor docs](F:/hackafterdark/phosphor/docs/)
-- [Phosphor code](F:/hackafterdark/phosphor/)
-
-## Generated with Phosphor
-
-💘 Generated with Phosphor
+- [Phosphor AGENTS.md](https://github.com/hackafterdark/phosphor/blob/main/AGENTS.md)
+- [Phosphor docs](https://github.com/hackafterdark/phosphor/tree/main/docs)
+- [Phosphor code](https://github.com/hackafterdark/phosphor)
 
 ---
