@@ -20,7 +20,7 @@ Additional goals and areas of focus include:
 
 ## Core Philosophy
 
-Phosphor is built as a workbench for agentic experimentation. You can read our full mission and architectural approach here: docs/CORE_PHILOSOPHY.md.
+Phosphor is built as a workbench for agentic experimentation. You can read our full mission and architectural approach here: [CORE_PHILOSOPHY](docs/CORE_PHILOSOPHY.md).
 
 ## Project State
 
