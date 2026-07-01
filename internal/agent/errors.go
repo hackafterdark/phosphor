@@ -1,3 +1,4 @@
+// Package agent defines sentinel errors used throughout the agent subsystem.
 package agent
 
 import "errors"

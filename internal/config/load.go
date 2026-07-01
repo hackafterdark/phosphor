@@ -963,6 +963,28 @@ func loadFromBytes(configs [][]byte) (*Config, error) {
 	if err := json.Unmarshal(data, &config); err != nil {
 		return nil, err
 	}
+
+	// For compatibility and user convenience: check if "agent" is present at the root level of the JSON data.
+	if gjson.GetBytes(data, "agent").Exists() {
+		if config.Options == nil {
+			config.Options = &Options{}
+		}
+		var agentCfg AgentConfig
+		agentRaw := gjson.GetBytes(data, "agent").Raw
+		if err := json.Unmarshal([]byte(agentRaw), &agentCfg); err == nil {
+			// If options.agent was specified, let its fields override the root agent config fields.
+			if config.Options.Agent != nil {
+				if gjson.GetBytes(data, "options.agent.enable_reflection").Exists() {
+					agentCfg.EnableReflection = config.Options.Agent.EnableReflection
+				}
+				if gjson.GetBytes(data, "options.agent.max_turns").Exists() {
+					agentCfg.MaxTurns = config.Options.Agent.MaxTurns
+				}
+			}
+			config.Options.Agent = &agentCfg
+		}
+	}
+
 	return &config, nil
 }
 

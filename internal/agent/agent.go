@@ -147,6 +147,7 @@ type SessionAgent interface {
 	SetModels(large Model, small Model)
 	SetTools(tools []fantasy.AgentTool)
 	SetSystemPrompt(systemPrompt string)
+	SetReflection(enabled bool, maxTurns int)
 	Cancel(sessionID string)
 	CancelAll()
 	IsSessionBusy(sessionID string) bool
@@ -183,9 +184,8 @@ type sessionAgent struct {
 	runComplete          pubsub.Publisher[notify.RunComplete]
 
 	// Reflection loop state.
-	reflectionEnabled  bool
-	maxReflectionTurns int
-	reflectionTurns    int
+	reflectionEnabled  *csync.Value[bool]
+	maxReflectionTurns *csync.Value[int]
 
 	messageQueue   *csync.Map[string, []SessionAgentCall]
 	activeRequests *csync.Map[string, context.CancelFunc]
@@ -263,8 +263,8 @@ func NewSessionAgent(
 		isYolo:               opts.IsYolo,
 		notify:               opts.Notify,
 		runComplete:          opts.RunComplete,
-		reflectionEnabled:    opts.ReflectionEnabled,
-		maxReflectionTurns:   opts.MaxReflectionTurns,
+		reflectionEnabled:    csync.NewValue(opts.ReflectionEnabled),
+		maxReflectionTurns:   csync.NewValue(opts.MaxReflectionTurns),
 		messageQueue:         csync.NewMap[string, []SessionAgentCall](),
 		activeRequests:       csync.NewMap[string, context.CancelFunc](),
 		dispatchMu:           csync.NewMap[string, *sync.Mutex](),
@@ -576,6 +576,7 @@ func ValidateCall(call SessionAgentCall) error {
 }
 
 func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *fantasy.AgentResult, retErr error) {
+	var reflectionTurns int
 	slog.Info("SessionAgent.Run called", "session_id", call.SessionID, "temp", call.Temperature, "rep_pen", call.RepetitionPenalty)
 	if err := ValidateCall(call); err != nil {
 		return nil, err
@@ -1259,11 +1260,11 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 			}
 			currentSession = updatedSession
 			// Check for reflection tags in the assistant response.
-			if a.reflectionEnabled && currentAssistant != nil {
+			if a.reflectionEnabled.Get() && currentAssistant != nil {
 				text := currentAssistant.Content().String()
 				if strings.Contains(text, "<reflection>") {
-					a.reflectionTurns++
-					slog.Debug("Reflection detected", "turn", a.reflectionTurns)
+					reflectionTurns++
+					slog.Debug("Reflection detected", "turn", reflectionTurns)
 				}
 			}
 			return a.messages.Update(genCtx, *currentAssistant)
@@ -1303,8 +1304,8 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 			},
 			func(steps []fantasy.StepResult) bool {
 				// Stop if max reflection turns have been exceeded.
-				if a.reflectionEnabled && a.maxReflectionTurns > 0 && a.reflectionTurns >= a.maxReflectionTurns {
-					slog.Debug("Max reflection turns reached", "turns", a.reflectionTurns)
+				if a.reflectionEnabled.Get() && a.maxReflectionTurns.Get() > 0 && reflectionTurns >= a.maxReflectionTurns.Get() {
+					slog.Debug("Max reflection turns reached", "turns", reflectionTurns)
 					return true
 				}
 				return false
@@ -1313,10 +1314,10 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 	})
 
 	// After Stream returns, check if reflection is needed.
-	if err == nil && a.reflectionEnabled && a.reflectionTurns > 0 {
-		slog.Debug("Reflection detected, adding correction message", "turns", a.reflectionTurns)
+	if err == nil && a.reflectionEnabled.Get() && reflectionTurns > 0 {
+		slog.Debug("Reflection detected, adding correction message", "turns", reflectionTurns)
 		// Add a system message with correction instructions to the conversation.
-		correctionMsg := fmt.Sprintf("Self-critique detected %d violation(s). Please review and correct your output according to the critical_rules.", a.reflectionTurns)
+		correctionMsg := fmt.Sprintf("Self-critique detected %d violation(s). Please review and correct your output according to the critical_rules.", reflectionTurns)
 		history = append(history, fantasy.NewSystemMessage(correctionMsg))
 		// Re-run the agent with the correction message.
 		return a.Run(ctx, call)
@@ -2452,6 +2453,11 @@ func (a *sessionAgent) SetTools(tools []fantasy.AgentTool) {
 
 func (a *sessionAgent) SetSystemPrompt(systemPrompt string) {
 	a.systemPrompt.Set(systemPrompt)
+}
+
+func (a *sessionAgent) SetReflection(enabled bool, maxTurns int) {
+	a.reflectionEnabled.Set(enabled)
+	a.maxReflectionTurns.Set(maxTurns)
 }
 
 func (a *sessionAgent) Model() Model {

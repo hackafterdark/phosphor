@@ -791,21 +791,9 @@ func (c *coordinator) buildAgent(ctx context.Context, prompt *prompt.Prompt, age
 	})
 
 	c.readyWg.Go(func() error {
-		systemPrompt, err := prompt.Build(ctx, large.Model.Provider(), large.Model.Model(), c.cfg)
+		systemPrompt, err := c.rebuildSystemPrompt(ctx, large, isSubAgent)
 		if err != nil {
 			return err
-		}
-		if !isSubAgent {
-			caps := parser.GetCapabilities()
-			if len(caps) > 0 {
-				var sb strings.Builder
-				sb.WriteString(systemPrompt)
-				sb.WriteString("\n\nYou have the following custom AST search capabilities available in the structural_search tool:\n")
-				for _, cap := range caps {
-					sb.WriteString(fmt.Sprintf("- ID: %s, Language: %s: %s\n", cap.ID, cap.Language, cap.Description))
-				}
-				systemPrompt = sb.String()
-			}
 		}
 		result.SetSystemPrompt(systemPrompt)
 		return nil
@@ -1338,6 +1326,30 @@ func (c *coordinator) CancelAll() {
 	c.currentAgent.CancelAll()
 }
 
+func (c *coordinator) rebuildSystemPrompt(ctx context.Context, largeModel Model, isSubAgent bool) (string, error) {
+	if c.prompt == nil {
+		return "", errors.New("prompt builder not initialized")
+	}
+	systemPrompt, err := c.prompt.Build(ctx, largeModel.Model.Provider(), largeModel.Model.Model(), c.cfg)
+	if err != nil {
+		return "", err
+	}
+
+	if !isSubAgent {
+		caps := parser.GetCapabilities()
+		if len(caps) > 0 {
+			var sb strings.Builder
+			sb.WriteString(systemPrompt)
+			sb.WriteString("\n\nYou have the following custom AST search capabilities available in the structural_search tool:\n")
+			for _, cap := range caps {
+				sb.WriteString(fmt.Sprintf("- ID: %s, Language: %s: %s\n", cap.ID, cap.Language, cap.Description))
+			}
+			systemPrompt = sb.String()
+		}
+	}
+	return systemPrompt, nil
+}
+
 func (c *coordinator) reloadQueriesAndPrompt(ctx context.Context) {
 	if err := parser.ReloadQueries(c.cfg.WorkingDir()); err != nil {
 		slog.Error("Failed to reload queries during sync", "error", err)
@@ -1347,21 +1359,10 @@ func (c *coordinator) reloadQueriesAndPrompt(ctx context.Context) {
 		return
 	}
 
-	systemPrompt, err := c.prompt.Build(ctx, c.largeModel.Model.Provider(), c.largeModel.Model.Model(), c.cfg)
+	systemPrompt, err := c.rebuildSystemPrompt(ctx, c.largeModel, false)
 	if err != nil {
 		slog.Error("Failed to build system prompt during reload", "error", err)
 		return
-	}
-
-	caps := parser.GetCapabilities()
-	if len(caps) > 0 {
-		var sb strings.Builder
-		sb.WriteString(systemPrompt)
-		sb.WriteString("\n\nYou have the following custom AST search capabilities available in the structural_search tool:\n")
-		for _, cap := range caps {
-			sb.WriteString(fmt.Sprintf("- ID: %s, Language: %s: %s\n", cap.ID, cap.Language, cap.Description))
-		}
-		systemPrompt = sb.String()
 	}
 
 	if c.currentAgent != nil {
@@ -1395,6 +1396,7 @@ func (c *coordinator) UpdateModels(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	c.largeModel = large
 	c.currentAgent.SetModels(large, small)
 
 	agentCfg, ok := c.cfg.Config().Agents[config.AgentCoder]
@@ -1407,6 +1409,23 @@ func (c *coordinator) UpdateModels(ctx context.Context) error {
 		return err
 	}
 	c.currentAgent.SetTools(tools)
+
+	systemPrompt, err := c.rebuildSystemPrompt(ctx, large, false)
+	if err != nil {
+		return err
+	}
+	c.currentAgent.SetSystemPrompt(systemPrompt)
+
+	var (
+		reflectionEnabled  bool
+		maxReflectionTurns int
+	)
+	if c.cfg.Config().Options.Agent != nil {
+		reflectionEnabled = c.cfg.Config().Options.Agent.EnableReflection
+		maxReflectionTurns = c.cfg.Config().Options.Agent.MaxTurns
+	}
+	c.currentAgent.SetReflection(reflectionEnabled, maxReflectionTurns)
+
 	return nil
 }
 

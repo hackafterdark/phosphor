@@ -149,11 +149,15 @@ var bannedCommands = []string{
 
 func bashDescription(attribution *config.Attribution, modelID string) string {
 	bannedCommandsStr := strings.Join(bannedCommands, ", ")
+	var attr config.Attribution
+	if attribution != nil {
+		attr = *attribution
+	}
 	var out bytes.Buffer
 	if err := bashDescriptionTpl.Execute(&out, bashDescriptionData{
 		BannedCommands:  bannedCommandsStr,
 		MaxOutputLength: MaxOutputLength,
-		Attribution:     *attribution,
+		Attribution:     attr,
 		ModelID:         modelID,
 		RgAvailable:     getRg() != "",
 		GhAvailable:     ghAvailable,

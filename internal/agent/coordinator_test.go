@@ -9,6 +9,7 @@ import (
 	"charm.land/fantasy"
 	"charm.land/fantasy/providers/anthropic"
 	"charm.land/fantasy/providers/bedrock"
+	"github.com/hackafterdark/phosphor/internal/agent/prompt"
 	"github.com/hackafterdark/phosphor/internal/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -29,10 +30,11 @@ func (m *mockSessionAgent) BeginAccepted(sessionID string) *AcceptedRun {
 	return &AcceptedRun{sessionID: sessionID}
 }
 
-func (m *mockSessionAgent) Model() Model                        { return m.model }
-func (m *mockSessionAgent) SetModels(large, small Model)        {}
-func (m *mockSessionAgent) SetTools(tools []fantasy.AgentTool)  {}
-func (m *mockSessionAgent) SetSystemPrompt(systemPrompt string) {}
+func (m *mockSessionAgent) Model() Model                             { return m.model }
+func (m *mockSessionAgent) SetModels(large, small Model)             {}
+func (m *mockSessionAgent) SetTools(tools []fantasy.AgentTool)       {}
+func (m *mockSessionAgent) SetSystemPrompt(systemPrompt string)      {}
+func (m *mockSessionAgent) SetReflection(enabled bool, maxTurns int) {}
 func (m *mockSessionAgent) Cancel(sessionID string) {
 	m.cancelled = append(m.cancelled, sessionID)
 }
@@ -632,4 +634,100 @@ func TestGetProviderOptionsReasoningEffort(t *testing.T) {
 			assert.Equal(t, anthropic.Effort("max"), *parsed.Effort)
 		})
 	}
+}
+
+type testMockAgent struct {
+	mockSessionAgent
+	reflectionEnabled  bool
+	maxReflectionTurns int
+	systemPrompt       string
+}
+
+func (t *testMockAgent) SetReflection(enabled bool, maxTurns int) {
+	t.reflectionEnabled = enabled
+	t.maxReflectionTurns = maxTurns
+}
+
+func (t *testMockAgent) SetSystemPrompt(prompt string) {
+	t.systemPrompt = prompt
+}
+
+func TestCoordinator_UpdateModels_UpdatesSystemPromptAndReflection(t *testing.T) {
+	// Create a temp directory for config
+	tmpDir := t.TempDir()
+	cfg, err := config.Init(tmpDir, "", false)
+	require.NoError(t, err)
+
+	// Configure the coder agent and default models in config
+	cfg.Config().Agents = map[string]config.Agent{
+		"coder": {
+			Model: "mock-model",
+		},
+	}
+	cfg.Config().Models = map[config.SelectedModelType]config.SelectedModel{
+		config.SelectedModelTypeLarge: {
+			Provider: "mock",
+			Model:    "mock-model",
+		},
+		config.SelectedModelTypeSmall: {
+			Provider: "mock",
+			Model:    "mock-model",
+		},
+	}
+	cfg.Config().Providers.Set("mock", config.ProviderConfig{
+		ID:   "mock",
+		Type: "openai",
+		Models: []catwalk.Model{
+			{
+				ID: "mock-model",
+			},
+		},
+	})
+	cfg.Config().Options = &config.Options{
+		Agent: &config.AgentConfig{
+			EnableReflection: false,
+			MaxTurns:         5,
+		},
+	}
+
+	// Create mock agent
+	mockAgent := &testMockAgent{
+		mockSessionAgent: mockSessionAgent{
+			model: Model{
+				ModelCfg: config.SelectedModel{
+					Provider: "mock",
+					Model:    "mock-model",
+				},
+			},
+		},
+	}
+
+	// Create coordinator
+	c := &coordinator{
+		cfg:          cfg,
+		currentAgent: mockAgent,
+		agents:       map[string]SessionAgent{"coder": mockAgent},
+	}
+
+	// Initialize a dummy prompt
+	c.prompt, err = coderPrompt(prompt.WithWorkingDir(tmpDir))
+	require.NoError(t, err)
+
+	// Initial call to UpdateModels (reflection disabled)
+	err = c.UpdateModels(t.Context())
+	require.NoError(t, err)
+
+	assert.False(t, mockAgent.reflectionEnabled)
+	assert.Equal(t, 5, mockAgent.maxReflectionTurns)
+
+	// Now toggle EnableReflection in config
+	cfg.Config().Options.Agent.EnableReflection = true
+	cfg.Config().Options.Agent.MaxTurns = 10
+
+	// Call UpdateModels again
+	err = c.UpdateModels(t.Context())
+	require.NoError(t, err)
+
+	assert.True(t, mockAgent.reflectionEnabled)
+	assert.Equal(t, 10, mockAgent.maxReflectionTurns)
 }
