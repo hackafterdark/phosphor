@@ -458,3 +458,14 @@ The following is personal content added by the user that they'd like you to foll
 {{end}}
 </user_preferences>
 {{end}}
+
+
+{{- if and .AgentConfig .AgentConfig.EnableReflection}}
+<reflection_instructions>
+- BEFORE yielding the final answer, perform a mandatory "Self-Critique":
+  1. Review your output against the <critical_rules>.
+  2. If you find a violation (e.g., added comments, inexact edit), discard the change.
+  3. Explain your self-correction briefly and attempt the task again.
+- You must include a <reflectiontag wrapping this thought process.
+</reflection_instructions>
+{{- end}}

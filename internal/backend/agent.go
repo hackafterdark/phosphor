@@ -97,12 +97,14 @@ func (b *Backend) runAgent(ws *Workspace, msg proto.AgentMessage, accept *agent.
 		return
 	}
 
-	ws.AgentNotifications().Publish(pubsub.CreatedEvent, notify.Notification{
-		SessionID: msg.SessionID,
-		RunID:     msg.RunID,
-		Type:      notify.TypeAgentError,
-		Message:   err.Error(),
-	})
+	if an := ws.AgentNotifications(); an != nil {
+		an.Publish(pubsub.CreatedEvent, notify.Notification{
+			SessionID: msg.SessionID,
+			RunID:     msg.RunID,
+			Type:      notify.TypeAgentError,
+			Message:   err.Error(),
+		})
+	}
 
 	// Reliable terminal fallback. Only needed when a RunID waiter
 	// exists and the coordinator has not already emitted the run's

@@ -338,25 +338,25 @@ func (c *coordinator) run(ctx context.Context, accept *AcceptedRun, sessionID st
 	runID := RunIDFromContext(ctx)
 	run := func() (*fantasy.AgentResult, error) {
 		return c.currentAgent.Run(ctx, SessionAgentCall{
-			SessionID:        sessionID,
-			RunID:            runID,
-			Prompt:           prompt,
-			Attachments:      attachments,
-			MaxOutputTokens:  maxTokens,
-			ProviderOptions:  mergedOptions,
-			Temperature:      temp,
-			TopP:             topP,
-			TopK:             topK,
-			FrequencyPenalty: freqPenalty,
-			PresencePenalty:  presPenalty,
-			Seed:             model.ModelCfg.Seed,
-			MinP:             model.ModelCfg.MinP,
+			SessionID:         sessionID,
+			RunID:             runID,
+			Prompt:            prompt,
+			Attachments:       attachments,
+			MaxOutputTokens:   maxTokens,
+			ProviderOptions:   mergedOptions,
+			Temperature:       temp,
+			TopP:              topP,
+			TopK:              topK,
+			FrequencyPenalty:  freqPenalty,
+			PresencePenalty:   presPenalty,
+			Seed:              model.ModelCfg.Seed,
+			MinP:              model.ModelCfg.MinP,
 			RepetitionPenalty: model.ModelCfg.RepetitionPenalty,
-			Stop:             model.ModelCfg.Stop,
-			TopLogProbs:      model.ModelCfg.TopLogProbs,
+			Stop:              model.ModelCfg.Stop,
+			TopLogProbs:       model.ModelCfg.TopLogProbs,
 			MaxThinkingTokens: model.ModelCfg.MaxThinkingTokens,
-			OnComplete:       onComplete,
-			Accepted:         accept,
+			OnComplete:        onComplete,
+			Accepted:          accept,
 		})
 	}
 	beforeLoaded := c.skillTracker.LoadedNames()
@@ -763,6 +763,15 @@ func (c *coordinator) buildAgent(ctx context.Context, prompt *prompt.Prompt, age
 	}
 
 	largeProviderCfg, _ := c.cfg.Config().Providers.Get(large.ModelCfg.Provider)
+	var (
+		reflectionEnabled  bool
+		maxReflectionTurns int
+	)
+	if c.cfg.Config().Options.Agent != nil {
+		reflectionEnabled = c.cfg.Config().Options.Agent.EnableReflection
+		maxReflectionTurns = c.cfg.Config().Options.Agent.MaxTurns
+	}
+
 	result := NewSessionAgent(SessionAgentOptions{
 		LargeModel:           large,
 		SmallModel:           small,
@@ -777,6 +786,8 @@ func (c *coordinator) buildAgent(ctx context.Context, prompt *prompt.Prompt, age
 		Tools:                nil,
 		Notify:               c.notify,
 		RunComplete:          c.runComplete,
+		ReflectionEnabled:    reflectionEnabled,
+		MaxReflectionTurns:   maxReflectionTurns,
 	})
 
 	c.readyWg.Go(func() error {

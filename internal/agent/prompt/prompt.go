@@ -34,6 +34,7 @@ type PromptDat struct {
 	Model                     string
 	PromptToolCalls           bool
 	Config                    config.Config
+	AgentConfig               *config.AgentConfig
 	WorkingDir                string
 	IsGitRepo                 bool
 	Platform                  string
@@ -220,11 +221,16 @@ func (p *Prompt) promptData(ctx context.Context, provider, model string, store *
 	}
 
 	isGit := isGitRepo(store.WorkingDir())
+	agentCfg := cfg.Options.Agent
+	if agentCfg == nil {
+		agentCfg = &config.AgentConfig{}
+	}
 	data := PromptDat{
 		Provider:                  provider,
 		Model:                     model,
 		PromptToolCalls:           promptToolCalls,
 		Config:                    *cfg,
+		AgentConfig:               agentCfg,
 		WorkingDir:                filepath.ToSlash(workingDir),
 		IsGitRepo:                 isGit,
 		Platform:                  platform,
