@@ -29,6 +29,9 @@ var defaultStyle []byte
 //go:embed templates/workflow.md.tpl
 var defaultWorkflow []byte
 
+//go:embed templates/decision_making.md.tpl
+var defaultDecisionMaking []byte
+
 // Prompt represents a template-based prompt generator.
 type Prompt struct {
 	name                      string
@@ -57,6 +60,7 @@ type PromptDat struct {
 	CriticalRules             string
 	CommunicationStyle        string
 	Workflow                  string
+	DecisionMaking            string
 }
 
 type ContextFile struct {
@@ -166,10 +170,15 @@ func (p *Prompt) Build(ctx context.Context, provider, model string, store *confi
 	if err != nil {
 		return "", err
 	}
+	decisionMakingRendered, err := p.renderProfileTemplate(profileName, "decision_making.md.tpl", workingDir, defaultDecisionMaking, d)
+	if err != nil {
+		return "", err
+	}
 
 	d.CriticalRules = rulesRendered
 	d.CommunicationStyle = styleRendered
 	d.Workflow = workflowRendered
+	d.DecisionMaking = decisionMakingRendered
 
 	t, err := template.New(p.name).Parse(p.template)
 	if err != nil {

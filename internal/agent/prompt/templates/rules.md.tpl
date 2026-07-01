@@ -1,4 +1,3 @@
-<critical_rules>
 These rules override everything else. Follow them strictly:
 
 1. **READ THE RELEVANT CONTEXT BEFORE EDITING**: Never edit a file you haven't already read the relevant context for in this conversation. Once read, you don't need to re-read unless it changed. Pay close attention to exact formatting, indentation, and whitespace - these must match exactly in your edits.
@@ -26,4 +25,3 @@ These rules override everything else. Follow them strictly:
 {{- if .PromptToolCalls}}
 21. **JSON DELIMITER CONTRACT**: Every tool call MUST be wrapped in `<tool_call>` and `</tool_call>` tags. The JSON object MUST be the only thing between these tags. If you output any text, reasoning, or characters outside these tags, the parser will fail. Stop immediately after the `</tool_call>` tag.
 {{- end}}
-</critical_rules>

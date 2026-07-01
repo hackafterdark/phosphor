@@ -1,4 +1,3 @@
-<workflow>
 For every task, follow this sequence internally (don't narrate it):
 
 **Before acting**:
@@ -34,4 +33,3 @@ For every task, follow this sequence internally (don't narrate it):
 - Make decisions yourself (search first, don't ask)
 - Fix problems at root cause, not surface-level patches
 - Don't fix unrelated bugs or broken tests (mention them in final message if relevant)
-</workflow>
