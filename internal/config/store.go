@@ -14,6 +14,7 @@ import (
 	"charm.land/catwalk/pkg/catwalk"
 	hyperp "github.com/hackafterdark/phosphor/internal/agent/hyper"
 	"github.com/hackafterdark/phosphor/internal/env"
+	"github.com/hackafterdark/phosphor/internal/log"
 	"github.com/hackafterdark/phosphor/internal/lock"
 	"github.com/hackafterdark/phosphor/internal/oauth"
 	"github.com/hackafterdark/phosphor/internal/oauth/copilot"
@@ -802,6 +803,12 @@ func (s *ConfigStore) reloadFromDiskLocked(ctx context.Context) error {
 	s.knownProviders = providers
 	s.overrides = overrides
 	s.workspacePath = workspacePath
+
+	// Re-initialize logging if config changed.
+	logFile := filepath.Join(cfg.Options.DataDirectory, "logs", "phosphor.log")
+	logCfg := cfg.Logging.ToLogConfig()
+	log.Reset()
+	log.SetupWithConfig(logFile, logCfg, false) // debug flag not available during reload
 
 	// Mirror startup flow: setup models and agents against NEW config
 	var setupErr error

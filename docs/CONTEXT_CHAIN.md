@@ -74,8 +74,8 @@ llmCtx = context.WithValue(callContext, LLM span, ...)
 
 ### `ctx` — Caller-supplied context
 
-**Origin:** The context parameter passed to [`coordinator.Run()`](internal/agent/coordinator.go:217), which
-ultimately flows into [`sessionAgent.Run()`](internal/agent/agent.go:552).
+**Origin:** The context parameter passed to [`coordinator.Run()`](internal/agent/coordinator.go), which
+ultimately flows into [`sessionAgent.Run()`](internal/agent/agent.go).
 
 **Purpose:** The root context for a single agent turn. Provided by the caller
 (coordinator, server, CLI). Used for:
@@ -93,7 +93,7 @@ or `genCtx` instead, which have proper lifecycle management.
 
 ### `agentCtx` — OTel-instrumented agent context
 
-**Origin:** Created at [`agent.go:559`](internal/agent/agent.go:559):
+**Origin:** Created at [`agent.go`](internal/agent/agent.go):
 
 ```go
 agentCtx, agentTurnSpan := otel.StartInvokeAgentSpan(ctx, "Phosphor", call.SessionID)
@@ -115,8 +115,8 @@ is because `genCtx` is created as `context.WithCancel(agentCtx)`, not
 
 ### `genCtx` — Cancellable generation context
 
-**Origin:** Created at [`agent.go:635`](internal/agent/agent.go:635) (accepted path)
-or [`agent.go:779`](internal/agent/agent.go:779) (non-accepted path):
+**Origin:** Created at [`agent.go`](internal/agent/agent.go) (accepted path)
+or [`agent.go`](internal/agent/agent.go) (non-accepted path):
 
 ```go
 genCtx, cancel = context.WithCancel(agentCtx)
@@ -158,10 +158,16 @@ tools are called).
 
 ### `llmCtx` — LLM API call context
 
-**Origin:** Created inside `PrepareStep` at [`agent.go:875`](internal/agent/agent.go:875):
+**Origin:** Created inside `PrepareStep` at [`agent.go`](internal/agent/agent.go):
 
 ```go
-llmCtx, llmSpan = otel.StartLLMSpan(callContext, provider, model)
+llmAttrs := otel.GenAIAttributes{
+    OperationName: "chat",
+    ProviderName:  provider,
+    RequestModel:  model,
+    // Sampling params from model config...
+}
+llmCtx, llmSpan = otel.StartLLMSpan(callContext, provider, model, llmAttrs)
 callContext = llmCtx
 ```
 

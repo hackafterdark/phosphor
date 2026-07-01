@@ -5,9 +5,13 @@ package otel
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
+	oinference "github.com/Arize-ai/openinference/go/openinference-semantic-conventions"
+	"charm.land/fantasy"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -37,7 +41,12 @@ type agentTurnSpanKey string
 // AgentTurnSpan is the context key value for the agent turn span.
 const AgentTurnSpan agentTurnSpanKey = "agent_turn_span"
 
-var tracer trace.Tracer
+var (
+	tracer            trace.Tracer
+	captureInputMsgs  bool
+	captureOutputMsgs bool
+	openInference     bool
+)
 
 func init() {
 	tracer = otel.Tracer(TracerName)
@@ -48,6 +57,12 @@ func init() {
 // When cfg.Endpoint is empty, a no-op tracer is used and the returned
 // shutdown function is a no-op.
 func Init(ctx context.Context, cfg config.Observability) (func(context.Context) error, error) {
+	// Store capture flags for use by span-creation helpers. These default to
+	// false; only enable when the user explicitly opts in via phosphor.json.
+	captureInputMsgs = cfg.CaptureInputMessages
+	captureOutputMsgs = cfg.CaptureOutputMessages
+	openInference = cfg.OpenInference
+
 	if cfg.Endpoint == "" {
 		return func(ctx context.Context) error { return nil }, nil
 	}
@@ -133,6 +148,228 @@ func Init(ctx context.Context, cfg config.Observability) (func(context.Context) 
 // Tracer returns the global Phosphor tracer.
 func Tracer() trace.Tracer {
 	return tracer
+}
+
+// ShouldCaptureInputMessages reports whether gen_ai.input.messages should be
+// recorded on LLM spans. This is controlled by the observability.capture_input_messages
+// config key and defaults to false.
+func ShouldCaptureInputMessages() bool {
+	return captureInputMsgs
+}
+
+// ShouldCaptureOutputMessages reports whether gen_ai.output.messages should be
+// recorded on LLM spans. This is controlled by the observability.capture_output_messages
+// config key and defaults to false.
+func ShouldCaptureOutputMessages() bool {
+	return captureOutputMsgs
+}
+
+// ShouldUseOpenInference reports whether OpenInference (llm.*) attributes should
+// be recorded alongside the standard gen_ai.* attributes. Controlled by the
+// observability.open_inference config key, defaults to false.
+func ShouldUseOpenInference() bool {
+	return openInference
+}
+
+// FlattenMessages converts a slice of fantasy messages into flattened
+// OpenInference attribute key-value pairs using the official oinference
+// indexer helpers. Each message becomes indexed under the given prefix:
+// prefix.{i}.message.role and prefix.{i}.message.content.
+// Reasoning parts are excluded since they are internal model state. Content is
+// the concatenated text of all non-reasoning parts in a message.
+// Consecutive user messages with identical content are deduplicated to avoid
+// rendering artifacts in observability backends like Arize Phoenix.
+func FlattenMessages(prefix string, msgs []fantasy.Message) []attribute.KeyValue {
+	if len(msgs) == 0 {
+		return nil
+	}
+
+	// extractContent pulls the text content from a message, skipping reasoning
+	// parts. Returns a formatted string suitable for the .content attribute.
+	extractContent := func(msg fantasy.Message) string {
+		var parts []string
+		for _, p := range msg.Content {
+			switch v := p.(type) {
+			case fantasy.TextPart:
+				if v.Text != "" {
+					parts = append(parts, v.Text)
+				}
+			case fantasy.ReasoningPart:
+				// Skip reasoning parts — they are internal model state.
+			case fantasy.FilePart:
+				if v.Filename != "" {
+					parts = append(parts, fmt.Sprintf("[file: %s]", v.Filename))
+				}
+			case fantasy.ToolCallPart:
+				parts = append(parts, fmt.Sprintf("[tool_call: %s %s]", v.ToolName, v.Input))
+			case fantasy.ToolResultPart:
+				if v.Output != nil {
+					switch out := v.Output.(type) {
+					case fantasy.ToolResultOutputContentText:
+						parts = append(parts, out.Text)
+					case fantasy.ToolResultOutputContentError:
+						parts = append(parts, fmt.Sprintf("[error: %s]", out.Error.Error()))
+					case fantasy.ToolResultOutputContentMedia:
+						parts = append(parts, fmt.Sprintf("[media: %s]", out.Data))
+					}
+				}
+			}
+		}
+		return strings.Join(parts, "\n")
+	}
+
+	// Pre-compute content for all messages and filter consecutive duplicate
+	// user messages (same role + same content).
+	type filteredMsg struct {
+		role     string
+		content  string
+		hasContent bool
+	}
+	filtered := make([]filteredMsg, 0, len(msgs))
+	var lastUserContent string
+	for _, msg := range msgs {
+		c := extractContent(msg)
+		if msg.Role == fantasy.MessageRoleUser && c == lastUserContent && c != "" {
+			continue // Skip consecutive duplicate user message.
+		}
+		if msg.Role == fantasy.MessageRoleUser {
+			lastUserContent = c
+		} else {
+			lastUserContent = ""
+		}
+		filtered = append(filtered, filteredMsg{
+			role:       string(msg.Role),
+			content:    c,
+			hasContent: c != "",
+		})
+	}
+
+	if len(filtered) == 0 {
+		return nil
+	}
+
+	out := make([]attribute.KeyValue, 0, len(filtered)*2)
+	for i, fm := range filtered {
+		// Use oinference indexer helpers to construct the flattened keys.
+		var roleKey, contentKey string
+		if strings.HasPrefix(prefix, oinference.LLMInputMessages) {
+			roleKey = oinference.LLMInputMessageRoleKey(i)
+			contentKey = oinference.LLMInputMessageContentKey(i)
+		} else {
+			roleKey = oinference.LLMOutputMessageRoleKey(i)
+			contentKey = oinference.LLMOutputMessageContentKey(i)
+		}
+		out = append(out, attribute.String(roleKey, fm.role))
+		if fm.hasContent {
+			out = append(out, attribute.String(contentKey, fm.content))
+		}
+	}
+	return out
+}
+
+// buildOpenInferenceAttrKeys builds OpenInference (llm.*) attributes from
+// GenAIAttributes. Only includes attributes that have corresponding data.
+func buildOpenInferenceAttrKeys(attrs GenAIAttributes) []attribute.KeyValue {
+	if !openInference {
+		return nil
+	}
+	var out []attribute.KeyValue
+	out = append(out, attribute.String(oinference.OpenInferenceSpanKind, oinference.SpanKindLLM))
+	if attrs.RequestModel != "" {
+		out = append(out, attribute.String(oinference.LLMModelName, attrs.RequestModel))
+	}
+	if attrs.UsageInputTokens != nil {
+		out = append(out, attribute.Int64(oinference.LLMTokenCountPrompt, *attrs.UsageInputTokens))
+	}
+	if attrs.UsageOutputTokens != nil {
+		out = append(out, attribute.Int64(oinference.LLMTokenCountCompletion, *attrs.UsageOutputTokens))
+	}
+	if len(attrs.InputMessages) > 0 {
+		out = append(out, FlattenMessages(oinference.LLMInputMessages, attrs.InputMessages)...)
+	}
+	if len(attrs.OutputMessages) > 0 {
+		out = append(out, FlattenMessages(oinference.LLMOutputMessages, attrs.OutputMessages)...)
+	}
+	return out
+}
+
+// SerializeMessages converts fantasy messages into the OTel gen_ai.input.messages
+// / gen_ai.output.messages format: an array of {role, parts: [{type, content}]}.
+// Reasoning parts are excluded since they are internal model state.
+func SerializeMessages(msgs []fantasy.Message) string {
+	if len(msgs) == 0 {
+		return ""
+	}
+	type messagePart struct {
+		Type    string `json:"type"`
+		Content any    `json:"content,omitempty"`
+	}
+	type otelMessage struct {
+		Role  string    `json:"role"`
+		Parts []messagePart `json:"parts"`
+	}
+
+	otelMsgs := make([]otelMessage, 0, len(msgs))
+	for _, msg := range msgs {
+		var parts []messagePart
+		for _, p := range msg.Content {
+			switch v := p.(type) {
+			case fantasy.TextPart:
+				if v.Text != "" {
+					parts = append(parts, messagePart{Type: "text", Content: v.Text})
+				}
+			case fantasy.ReasoningPart:
+				// Skip reasoning parts — they are internal model state.
+			case fantasy.FilePart:
+				parts = append(parts, messagePart{
+					Type: "file",
+					Content: any(map[string]any{
+						"filename":   v.Filename,
+						"media_type": v.MediaType,
+					}),
+				})
+			case fantasy.ToolCallPart:
+				parts = append(parts, messagePart{
+					Type: "tool-call",
+					Content: any(map[string]any{
+						"tool_call_id": v.ToolCallID,
+						"name":         v.ToolName,
+						"arguments":    v.Input,
+					}),
+				})
+			case fantasy.ToolResultPart:
+				content := any(map[string]any{
+					"tool_call_id": v.ToolCallID,
+				})
+				if v.Output != nil {
+					switch out := v.Output.(type) {
+					case fantasy.ToolResultOutputContentText:
+						content = any(map[string]any{"text": out.Text, "tool_call_id": v.ToolCallID})
+					case fantasy.ToolResultOutputContentError:
+						content = any(map[string]any{"error": out.Error.Error(), "tool_call_id": v.ToolCallID})
+					case fantasy.ToolResultOutputContentMedia:
+						content = any(map[string]any{"media": out.Data, "media_type": out.MediaType, "tool_call_id": v.ToolCallID})
+					}
+				}
+				parts = append(parts, messagePart{Type: "tool-result", Content: content})
+			}
+		}
+		if len(parts) > 0 {
+			otelMsgs = append(otelMsgs, otelMessage{
+				Role:  string(msg.Role),
+				Parts: parts,
+			})
+		}
+	}
+
+	if len(otelMsgs) == 0 {
+		return ""
+	}
+	data, err := json.Marshal(otelMsgs)
+	if err != nil {
+		return ""
+	}
+	return string(data)
 }
 
 // StartSpan is a convenience wrapper around tracer.Start.
@@ -231,16 +468,16 @@ func StartInvokeAgentSpan(ctx context.Context, agentName, conversationID string,
 
 // StartLLMSpan creates an LLM call span following the OTel GenAI semantic
 // conventions. The span represents a single model API call (e.g. chat completion)
-// and is marked CLIENT since it calls an external API.
-func StartLLMSpan(ctx context.Context, provider, model string, opts ...trace.SpanStartOption) (context.Context, trace.Span) {
+// and is marked CLIENT since it calls an external API. Sampling parameters are
+// optional and included only when non-nil/non-empty.
+func StartLLMSpan(ctx context.Context, provider, model string, attrs GenAIAttributes, opts ...trace.SpanStartOption) (context.Context, trace.Span) {
 	// Ensure the span is nested under the agent turn span if present.
 	ctx = ensureParentSpan(ctx)
-	attrs := []attribute.KeyValue{
-		attribute.String(string(genAIAttrKeys.OperationName), "chat"),
-		attribute.String(string(genAIAttrKeys.ProviderName), provider),
-		attribute.String(string(genAIAttrKeys.RequestModel), model),
+	allAttrs := buildGenAIAttrKeys(attrs)
+	if openInference {
+		allAttrs = append(allAttrs, buildOpenInferenceAttrKeys(attrs)...)
 	}
-	spanOpts := append(opts, trace.WithSpanKind(trace.SpanKindClient), trace.WithAttributes(attrs...))
+	spanOpts := append(opts, trace.WithSpanKind(trace.SpanKindClient), trace.WithAttributes(allAttrs...))
 	return tracer.Start(ctx, "chat "+model, spanOpts...)
 }
 
@@ -296,8 +533,6 @@ var genAIAttrKeys = struct {
 	FinishReason       attribute.Key
 	ErrorMessage       attribute.Key
 	ErrorType          attribute.Key
-	InputMessages      attribute.Key
-	OutputMessages     attribute.Key
 	SystemInstructions attribute.Key
 	ToolDefinitions    attribute.Key
 	UsageInputTokens   attribute.Key
@@ -311,6 +546,10 @@ var genAIAttrKeys = struct {
 	RequestMaxTokens   attribute.Key
 	RequestFreqPenalty attribute.Key
 	RequestPresencePen attribute.Key
+	RequestSeed        attribute.Key
+	RequestStopSequences attribute.Key
+	RequestReasoningLevel attribute.Key
+	RequestRepetitionPen  attribute.Key
 }{
 	OperationName:      "gen_ai.operation.name",
 	ProviderName:       "gen_ai.provider.name",
@@ -333,8 +572,6 @@ var genAIAttrKeys = struct {
 	FinishReason:       "gen_ai.response.finish_reason",
 	ErrorMessage:       "gen_ai.error.message",
 	ErrorType:          "error.type",
-	InputMessages:      "gen_ai.input.messages",
-	OutputMessages:     "gen_ai.output.messages",
 	SystemInstructions: "gen_ai.system.instructions",
 	ToolDefinitions:    "gen_ai.tool.definitions",
 	UsageInputTokens:   "gen_ai.usage.input_tokens",
@@ -348,6 +585,10 @@ var genAIAttrKeys = struct {
 	RequestMaxTokens:   "gen_ai.request.max_tokens",
 	RequestFreqPenalty: "gen_ai.request.frequency_penalty",
 	RequestPresencePen: "gen_ai.request.presence_penalty",
+	RequestSeed:        "gen_ai.request.seed",
+	RequestStopSequences: "gen_ai.request.stop_sequences",
+	RequestReasoningLevel: "gen_ai.request.reasoning.level",
+	RequestRepetitionPen:  "gen_ai.request.repetition_penalty",
 }
 
 // GenAIAttributes holds optional GenAI semantic convention attributes for spans.
@@ -373,8 +614,8 @@ type GenAIAttributes struct {
 	FinishReason       string
 	ErrorMessage       string
 	ErrorType          string
-	InputMessages      string
-	OutputMessages     string
+	InputMessages      []fantasy.Message
+	OutputMessages     []fantasy.Message
 	SystemInstructions string
 	ToolDefinitions    string
 	RequestTemperature *float64
@@ -383,6 +624,10 @@ type GenAIAttributes struct {
 	RequestMaxTokens   *int64
 	RequestFreqPenalty *float64
 	RequestPresencePen *float64
+	RequestSeed        *int64
+	RequestStopSequences []string
+	RequestReasoningLevel *string
+	RequestRepetitionPen  *float64
 	UsageInputTokens   *int64
 	UsageOutputTokens  *int64
 	UsageReasoning     *int64
@@ -457,12 +702,6 @@ func buildGenAIAttrKeys(attrs GenAIAttributes) []attribute.KeyValue {
 	if attrs.ErrorType != "" {
 		out = append(out, attribute.String(string(genAIAttrKeys.ErrorType), attrs.ErrorType))
 	}
-	if attrs.InputMessages != "" {
-		out = append(out, attribute.String(string(genAIAttrKeys.InputMessages), attrs.InputMessages))
-	}
-	if attrs.OutputMessages != "" {
-		out = append(out, attribute.String(string(genAIAttrKeys.OutputMessages), attrs.OutputMessages))
-	}
 	if attrs.SystemInstructions != "" {
 		out = append(out, attribute.String(string(genAIAttrKeys.SystemInstructions), attrs.SystemInstructions))
 	}
@@ -486,6 +725,18 @@ func buildGenAIAttrKeys(attrs GenAIAttributes) []attribute.KeyValue {
 	}
 	if attrs.RequestPresencePen != nil {
 		out = append(out, attribute.Float64(string(genAIAttrKeys.RequestPresencePen), *attrs.RequestPresencePen))
+	}
+	if attrs.RequestSeed != nil {
+		out = append(out, attribute.Int64(string(genAIAttrKeys.RequestSeed), *attrs.RequestSeed))
+	}
+	if len(attrs.RequestStopSequences) > 0 {
+		out = append(out, attribute.StringSlice(string(genAIAttrKeys.RequestStopSequences), attrs.RequestStopSequences))
+	}
+	if attrs.RequestReasoningLevel != nil {
+		out = append(out, attribute.String(string(genAIAttrKeys.RequestReasoningLevel), *attrs.RequestReasoningLevel))
+	}
+	if attrs.RequestRepetitionPen != nil {
+		out = append(out, attribute.Float64(string(genAIAttrKeys.RequestRepetitionPen), *attrs.RequestRepetitionPen))
 	}
 	if attrs.UsageInputTokens != nil {
 		out = append(out, attribute.Int64(string(genAIAttrKeys.UsageInputTokens), *attrs.UsageInputTokens))

@@ -388,9 +388,9 @@ func TestReloadFromDisk_UsesNewConfigValues(t *testing.T) {
 // TestSetConfigField_AutoReloads verifies that SetConfigField automatically
 // reloads config into memory after writing, so subsequent reads see the new value.
 func TestSetConfigField_AutoReloads(t *testing.T) {
-	t.Parallel()
-
 	dir := t.TempDir()
+	t.Setenv("PHOSPHOR_GLOBAL_CONFIG", dir)
+	t.Setenv("PHOSPHOR_GLOBAL_DATA", dir)
 	configPath := filepath.Join(dir, "phosphor.json")
 
 	// Create initial config file with debug = false
@@ -423,9 +423,9 @@ func TestSetConfigField_AutoReloads(t *testing.T) {
 // TestRemoveConfigField_AutoReloads verifies that RemoveConfigField automatically
 // reloads config into memory after writing.
 func TestRemoveConfigField_AutoReloads(t *testing.T) {
-	t.Parallel()
-
 	dir := t.TempDir()
+	t.Setenv("PHOSPHOR_GLOBAL_CONFIG", dir)
+	t.Setenv("PHOSPHOR_GLOBAL_DATA", dir)
 	configPath := filepath.Join(dir, "phosphor.json")
 
 	// Create initial config file with a custom option
@@ -480,9 +480,9 @@ func TestSetConfigField_AutoReloadSkipsWhenNoWorkingDir(t *testing.T) {
 // TestAutoReloadDisabledDuringReload verifies that auto-reload is suppressed
 // during ReloadFromDisk to prevent re-entrant/nested reload calls.
 func TestAutoReloadDisabledDuringReload(t *testing.T) {
-	t.Parallel()
-
 	dir := t.TempDir()
+	t.Setenv("PHOSPHOR_GLOBAL_CONFIG", dir)
+	t.Setenv("PHOSPHOR_GLOBAL_DATA", dir)
 	configPath := filepath.Join(dir, "phosphor.json")
 
 	// Create initial config with a provider that will trigger config modification during reload
@@ -518,9 +518,9 @@ func TestAutoReloadDisabledDuringReload(t *testing.T) {
 // multiple fields in a single disk write and triggers only one auto-reload,
 // avoiding intermediate states where only some fields are persisted.
 func TestSetConfigFields_AutoReloadsAtomically(t *testing.T) {
-	t.Parallel()
-
 	dir := t.TempDir()
+	t.Setenv("PHOSPHOR_GLOBAL_CONFIG", dir)
+	t.Setenv("PHOSPHOR_GLOBAL_DATA", dir)
 	configPath := filepath.Join(dir, "phosphor.json")
 
 	// Create initial config file.
@@ -731,9 +731,9 @@ func TestRefreshOAuthToken_UsesDiskTokenWhenDifferent(t *testing.T) {
 // s.mu mutex. This does not exercise the cross-process flock; testing
 // that would require spawning a separate OS process.
 func TestConfigStore_SetConfigFields_concurrentInProcess(t *testing.T) {
-	t.Parallel()
-
 	dir := t.TempDir()
+	t.Setenv("PHOSPHOR_GLOBAL_CONFIG", dir)
+	t.Setenv("PHOSPHOR_GLOBAL_DATA", dir)
 	configPath := filepath.Join(dir, "phosphor.json")
 	require.NoError(t, os.MkdirAll(filepath.Dir(configPath), 0o755))
 	require.NoError(t, os.WriteFile(configPath, []byte("{}"), 0o600))

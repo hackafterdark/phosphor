@@ -47,6 +47,7 @@ import (
 	"github.com/hackafterdark/phosphor/internal/goal"
 	"github.com/hackafterdark/phosphor/internal/message"
 	"github.com/hackafterdark/phosphor/internal/otel"
+	oinference "github.com/Arize-ai/openinference/go/openinference-semantic-conventions"
 	"github.com/hackafterdark/phosphor/internal/pubsub"
 	"github.com/hackafterdark/phosphor/internal/session"
 	"github.com/hackafterdark/phosphor/internal/stringext"
@@ -93,6 +94,20 @@ type SessionAgentCall struct {
 	TopK             *int64
 	FrequencyPenalty *float64
 	PresencePenalty  *float64
+
+	// Seed is the random seed for deterministic sampling.
+	Seed *int64
+	// MinP filters tokens below minimum probability relative to most likely.
+	MinP *float64
+	// RepetitionPenalty penalizes tokens based on prompt+output frequency.
+	RepetitionPenalty *float64
+	// Stop sequences that halt generation when produced.
+	Stop []string
+	// TopLogProbs returns log probabilities of top N tokens per position.
+	TopLogProbs *int64
+	// MaxThinkingTokens sets max tokens for thinking/reasoning output.
+	MaxThinkingTokens *int64
+
 	NonInteractive   bool
 	// OnComplete, when non-nil, replaces the default RunComplete
 	// publish path: the inner Run hands the terminal payload to this
@@ -552,6 +567,7 @@ func ValidateCall(call SessionAgentCall) error {
 }
 
 func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *fantasy.AgentResult, retErr error) {
+	slog.Info("SessionAgent.Run called", "session_id", call.SessionID, "temp", call.Temperature, "rep_pen", call.RepetitionPenalty)
 	if err := ValidateCall(call); err != nil {
 		return nil, err
 	}
@@ -560,7 +576,26 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 	// executions). Tool call spans created later will become children of this.
 	agentCtx, agentTurnSpan := otel.StartInvokeAgentSpan(ctx, "Phosphor", call.SessionID)
 	agentCtx = context.WithValue(agentCtx, otel.AgentTurnSpan, agentTurnSpan)
+	// Optionally record the first user message as the root span's input.value
+	// attribute so observability backends (e.g. Phoenix) can populate the
+	// "first input" column in the Sessions table view.
+	if otel.ShouldCaptureInputMessages() {
+		agentTurnSpan.SetAttributes(attribute.String("input.value", call.Prompt))
+	}
+	// currentAssistant is declared here so the deferred RunComplete publish
+	// below can capture the pointer that PrepareStep will later (re)assign
+	// for each streaming step. The final assistant message of the turn is
+	// the value reachable through this pointer when the defer runs.
+	var currentAssistant *message.Message
 	defer func() {
+		// Optionally record the final assistant response as the root span's
+		// output.value attribute so observability backends can populate the
+		// "last output" column in the Sessions table view.
+		if otel.ShouldCaptureOutputMessages() && currentAssistant != nil {
+			if text := currentAssistant.Content().String(); text != "" {
+				agentTurnSpan.SetAttributes(attribute.String("output.value", text))
+			}
+		}
 		if retErr != nil {
 			otel.RecordError(agentTurnSpan, retErr)
 		}
@@ -790,12 +825,6 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 	// RunComplete (each queued user prompt is its own turn and
 	// publishes exactly one terminal event).
 	var skipRunComplete bool
-	// currentAssistant is declared here so the deferred RunComplete
-	// publish below can capture the pointer that PrepareStep will
-	// later (re)assign for each streaming step. The final assistant
-	// message of the turn is the value reachable through this
-	// pointer when the defer runs.
-	var currentAssistant *message.Message
 	// Drain any debounced message updates before returning. message.Service
 	// already flushes synchronously on terminal updates, but a defer here
 	// guarantees the contract at every Run exit (success, error, panic
@@ -845,6 +874,17 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 	}()
 
 	history, files := a.preparePrompt(ctx, msgs, largeModel.CatwalkCfg.SupportsImages, call.Attachments...)
+
+	// The user message was already persisted to the session above
+	// (createUserMessage at line 755) and is passed separately as
+	// Prompt. Remove the last user message from history to avoid
+	// sending it twice to the model.
+	if len(history) > 0 {
+		lastIdx := len(history) - 1
+		if history[lastIdx].Role == fantasy.MessageRoleUser {
+			history = history[:lastIdx]
+		}
+	}
 
 	// Log attachment info for debugging.
 	if len(call.Attachments) > 0 {
@@ -906,7 +946,26 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 			// This span represents a single model API call (chat completion).
 			if agentSpan, ok := callContext.Value(otel.AgentTurnSpan).(trace.Span); ok && agentSpan != nil {
 				var llmCtx context.Context
-				llmCtx, llmSpan = otel.StartLLMSpan(callContext, largeModel.ModelCfg.Provider, largeModel.CatwalkCfg.Name)
+				llmAttrs := otel.GenAIAttributes{
+					OperationName:        "chat",
+					ProviderName:         largeModel.ModelCfg.Provider,
+					RequestModel:         largeModel.CatwalkCfg.Name,
+					InputMessages:        stepMessages,
+					RequestTemperature:   call.Temperature,
+					RequestTopP:          call.TopP,
+					RequestTopK:          call.TopK,
+					RequestMaxTokens:     maxOutputTokens,
+					RequestSeed:          call.Seed,
+					RequestStopSequences: call.Stop,
+					RequestReasoningLevel: func() *string {
+						if largeModel.ModelCfg.ReasoningEffort != "" {
+							return &largeModel.ModelCfg.ReasoningEffort
+						}
+						return nil
+					}(),
+					RequestRepetitionPen: call.RepetitionPenalty,
+				}
+				llmCtx, llmSpan = otel.StartLLMSpan(callContext, largeModel.ModelCfg.Provider, largeModel.CatwalkCfg.Name, llmAttrs)
 				callContext = llmCtx
 			}
 
@@ -995,6 +1054,19 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 			stepMessages = cloneFantasyMessages(prepared.Messages)
 			sessionLock.Unlock()
 
+			// Optionally record the full input messages on the LLM span.
+			// stepMessages now contains the complete set of messages sent to the model
+			// (system prompt injection, cache control, queued messages, etc.).
+			if llmSpan != nil {
+				var inputMsgs string
+				if otel.ShouldCaptureInputMessages() {
+					inputMsgs = otel.SerializeMessages(stepMessages)
+					if inputMsgs != "" {
+						llmSpan.SetAttributes(attribute.String("gen_ai.input.messages", inputMsgs))
+					}
+				}
+			}
+
 			var assistantMsg message.Message
 			assistantMsg, err = a.messages.Create(callContext, call.SessionID, message.CreateMessageParams{
 				Role:     message.Assistant,
@@ -1080,6 +1152,11 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 		},
 		OnToolResult: func(result fantasy.ToolResultContent) error {
 			toolResult := a.convertToToolResult(result)
+			// Record security violations as OTel errors for dashboard visibility.
+			if toolResult.IsError && strings.Contains(toolResult.Content, "Security violation") {
+				secErr := fmt.Errorf("security violation: %s", toolResult.Content)
+				otel.RecordError(agentTurnSpan, secErr)
+			}
 			// Use parent ctx instead of genCtx to ensure the message is created
 			// even if the request is canceled mid-stream
 			_, createMsgErr := a.messages.Create(ctx, currentAssistant.SessionID, message.CreateMessageParams{
@@ -1093,11 +1170,27 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 		OnStepFinish: func(stepResult fantasy.StepResult) error {
 			// End the LLM call span and record usage data.
 			if llmSpan != nil {
+				// Optionally record the model's output messages on the LLM span.
+				var outputMsgs string
+				var fantasyMsgs []fantasy.Message
+				if otel.ShouldCaptureOutputMessages() && currentAssistant != nil {
+					fantasyMsgs = currentAssistant.ToAIMessage()
+					if len(fantasyMsgs) > 0 {
+						outputMsgs = otel.SerializeMessages(fantasyMsgs)
+						if outputMsgs != "" {
+							llmSpan.SetAttributes(attribute.String("gen_ai.output.messages", outputMsgs))
+						}
+					}
+				}
 				// Record token usage from the step result.
 				llmSpan.SetAttributes(
 					attribute.Int64("gen_ai.usage.input_tokens", stepResult.Usage.InputTokens),
 					attribute.Int64("gen_ai.usage.output_tokens", stepResult.Usage.OutputTokens),
 				)
+				// When OpenInference is enabled, also record flattened llm.output_messages.*.
+				if otel.ShouldUseOpenInference() && len(fantasyMsgs) > 0 {
+					llmSpan.SetAttributes(otel.FlattenMessages(oinference.LLMOutputMessages, fantasyMsgs)...)
+				}
 				// Record finish reason.
 				var finishReason string
 				switch stepResult.FinishReason {

@@ -15,7 +15,7 @@ Phosphor uses JSON configuration files with the following priority (highest to l
 
 ```json
 {
-  "$schema": "https://charm.land/phosphor.json",
+  "$schema": "https://raw.githubusercontent.com/hackafterdark/phosphor/main/schema.json",
   "models": {},
   "providers": {},
   "mcp": {},

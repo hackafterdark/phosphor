@@ -100,6 +100,25 @@ internal/
   simplifications)
 - **Dev**: `task dev` (runs with profiling enabled)
 
+## Path Handling
+
+**Always treat user-provided paths as relative to workspace root unless explicitly absolute.**
+
+- **Relative paths**: `./docs/`, `internal/agent/`, `docs/observability/LOGGING.md` → resolve to workspace root
+- **Absolute Unix paths**: `/etc/`, `/usr/local/...` → system paths (outside workspace)
+- **Absolute Windows paths**: `C:\`, `D:\`, etc. → explicit absolute paths
+
+**Tool conventions:**
+- `edit`, `view`, `write`, `append`: Use relative paths (no drive letter or leading `/`)
+- `bash`: Always pass `working_dir` parameter for commands that touch the workspace
+- When in doubt, use forward slashes and relative paths from workspace root
+
+**Security guard behavior:**
+The path-validation guard blocks any path that doesn't start with the workspace root. If you get a "Security violation" error, your path is being interpreted as absolute. Fix by:
+1. Removing drive letters (`C:\`, `D:\`)
+2. Removing leading slashes (`/etc/`, `/usr/local/`)
+3. Using relative paths from workspace root
+
 ## Code Style Guidelines
 
 - **Imports**: Use `goimports` formatting, group stdlib, external, internal

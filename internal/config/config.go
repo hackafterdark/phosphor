@@ -14,6 +14,7 @@ import (
 
 	"charm.land/catwalk/pkg/catwalk"
 	"github.com/hackafterdark/phosphor/internal/csync"
+	"github.com/hackafterdark/phosphor/internal/log"
 	"github.com/hackafterdark/phosphor/internal/oauth"
 	"github.com/hackafterdark/phosphor/internal/oauth/copilot"
 	"github.com/invopop/jsonschema"
@@ -82,6 +83,34 @@ type SelectedModel struct {
 	TopK             *int64   `json:"top_k,omitempty" jsonschema:"description=Top-k sampling parameter"`
 	FrequencyPenalty *float64 `json:"frequency_penalty,omitempty" jsonschema:"description=Frequency penalty to reduce repetition"`
 	PresencePenalty  *float64 `json:"presence_penalty,omitempty" jsonschema:"description=Presence penalty to increase topic diversity"`
+
+	// Seed is the random seed for deterministic sampling. Supported by
+	// OpenAI and some openai-compatible providers (e.g. vLLM).
+	Seed *int64 `json:"seed,omitempty" jsonschema:"description=Random seed for deterministic sampling"`
+
+	// MinP filters tokens whose probability is below min_p relative to
+	// the most likely token. Supported by vLLM and some openai-compatible
+	// providers.
+	MinP *float64 `json:"min_p,omitempty" jsonschema:"description=Minimum probability relative to most likely token,minimum=0,maximum=1"`
+
+	// RepetitionPenalty penalizes tokens based on whether they appear in
+	// the prompt and generated text so far (values > 1 encourage new
+	// tokens). Supported by vLLM and some openai-compatible providers.
+	RepetitionPenalty *float64 `json:"repetition_penalty,omitempty" jsonschema:"description=Repetition penalty (>1 discourages repetition)"`
+
+	// Stop is a list of sequences that stop generation when produced.
+	// Supported by OpenAI and some openai-compatible providers.
+	Stop []string `json:"stop,omitempty" jsonschema:"description=Stop sequences that halt generation"`
+
+	// TopLogProbs returns the log probabilities of the top N most likely
+	// tokens at each position. Requires logprobs:true on OpenAI.
+	TopLogProbs *int64 `json:"top_logprobs,omitempty" jsonschema:"description=Number of top log probabilities to return per token (0-20)"`
+
+	// MaxThinkingTokens sets the maximum number of tokens allocated to
+	// thinking/reasoning. Maps to Anthropic's thinking.budget_tokens,
+	// Google's thinking_config.thinking_budget, and vLLM's max_tokens for
+	// thinking.
+	MaxThinkingTokens *int64 `json:"max_thinking_tokens,omitempty" jsonschema:"description=Maximum tokens for thinking/reasoning output"`
 
 	// Override provider specific options.
 	ProviderOptions map[string]any `json:"provider_options,omitempty" jsonschema:"description=Additional provider-specific options for the model"`
@@ -410,6 +439,76 @@ type Options struct {
 	DisableNotifications      bool         `json:"disable_notifications,omitempty" jsonschema:"description=Deprecated: Use notification_style instead. Disable desktop notifications,default=false"`
 	NotificationStyle         string       `json:"notification_style,omitempty" jsonschema:"description=Notification style to use. Options: auto (default), native, osc, bell, disabled. Auto selects based on environment: native for local sessions, osc for SSH (with automatic OSC 99/777 detection).,enum=auto,enum=native,enum=osc,enum=bell,enum=disabled,default=auto"`
 	DisabledSkills            []string     `json:"disabled_skills,omitempty" jsonschema:"description=List of skill names to disable and hide from the agent,example=phosphor-config"`
+
+	// Logging controls application-wide logging behavior. When nil,
+	// logging is disabled by default (safe by default). Users must
+	// explicitly opt-in to enable logging and configure its behavior.
+	Logging *LoggingOptions `json:"logging,omitempty" jsonschema:"description=Logging configuration. When omitted, logging is disabled."`
+}
+
+// LoggingOptions configures application logging behavior. All fields are
+// optional; defaults are applied in setDefaults if Logging is non-nil but
+// any field is zero-valued.
+type LoggingOptions struct {
+	// Enabled controls whether logging is active. Default: false (safe).
+	Enabled bool `json:"enabled,omitempty" jsonschema:"description=Enable application logging,default=false"`
+
+	// Level sets the slog log level. Options: "off", "info", "debug".
+	// Default: "info".
+	Level string `json:"level,omitempty" jsonschema:"description=Slog log level,enum=off,enum=info,enum=debug,default=info"`
+
+	// MaxSizeMB is the maximum size of a single log file in megabytes
+	// before rotation. Default: 10.
+	MaxSizeMB int `json:"max_size_mb,omitempty" jsonschema:"description=Maximum log file size in MB before rotation,default=10,maximum=1000"`
+
+	// MaxAgeDays is the maximum number of days to retain old log files.
+	// Default: 30.
+	MaxAgeDays int `json:"max_age_days,omitempty" jsonschema:"description=Maximum age of log files in days,default=30"`
+
+	// MaxBackups is the maximum number of old log files to retain.
+	// Default: 0 (no backups).
+	MaxBackups int `json:"max_backups,omitempty" jsonschema:"description=Maximum number of old log files to retain,default=0"`
+
+	// Compress enables gzip compression of rotated log files.
+	// Default: false.
+	Compress bool `json:"compress,omitempty" jsonschema:"description=Enable gzip compression of rotated log files,default=false"`
+
+	// Filters are regex patterns applied to log entries. Entries matching
+	// any filter pattern are excluded from the log output. Each filter is
+	// a JSON object with "field" and "pattern" keys, e.g.:
+	// [{"field": "msg", "pattern": ".*password.*"}].
+	Filters []LogFilter `json:"filters,omitempty" jsonschema:"description=Regex filters to exclude matching log entries. Each filter has field and pattern keys."`
+}
+
+// LogFilter defines a regex-based exclusion rule for log entries.
+type LogFilter struct {
+	// Field is the JSON key in the log entry to match against (e.g.,
+	// "msg", "source", or any custom key).
+	Field string `json:"field" jsonschema:"description=Log entry field to match against,example=msg,example=source"`
+
+	// Pattern is a regular expression applied to the field value. Entries
+	// where the field matches this pattern are excluded from logging.
+	Pattern string `json:"pattern" jsonschema:"description=Regular expression pattern to exclude matching entries,example=.*password.*,example=.*secret.*"`
+}
+
+// ToLogConfig converts LoggingOptions to log.LogConfig for use with
+// phosphorlog.Setup. Returns nil if Logging is nil (logging disabled).
+func (o *LoggingOptions) ToLogConfig() *log.LogConfig {
+	if o == nil || !o.Enabled {
+		return nil
+	}
+	lc := &log.LogConfig{
+		Enabled:    true,
+		Level:      o.Level,
+		MaxSizeMB:  o.MaxSizeMB,
+		MaxAgeDays: o.MaxAgeDays,
+		MaxBackups: o.MaxBackups,
+		Compress:   o.Compress,
+	}
+	for _, f := range o.Filters {
+		lc.Filters = append(lc.Filters, log.LogFilter{Field: f.Field, Pattern: f.Pattern})
+	}
+	return lc
 }
 
 type MCPs map[string]MCPConfig
@@ -748,6 +847,23 @@ type Observability struct {
 	// be redacted from OTel traces to prevent leakage of credentials,
 	// secrets, or other sensitive data.
 	SensitiveMCPServers []string `json:"sensitive_mcp_servers,omitempty" jsonschema:"description=MCP server names whose results should be redacted from traces,example=vault"`
+
+	// CaptureInputMessages, when true, records the full chat history sent to
+	// the model as the gen_ai.input.messages attribute on LLM spans. Default
+	// is false — this attribute may contain PII and should only be enabled
+	// with explicit opt-in.
+	CaptureInputMessages bool `json:"capture_input_messages,omitempty" jsonschema:"description=Record full input messages (chat history) on LLM spans as gen_ai.input.messages,default=false"`
+
+	// CaptureOutputMessages, when true, records the model's response as the
+	// gen_ai.output.messages attribute on LLM spans. Default is false — this
+	// attribute may contain PII and should only be enabled with explicit opt-in.
+	CaptureOutputMessages bool `json:"capture_output_messages,omitempty" jsonschema:"description=Record model response on LLM spans as gen_ai.output.messages,default=false"`
+
+	// OpenInference, when true, adds OpenInference (llm.*) attributes alongside
+	// the standard gen_ai.* attributes on LLM spans. This is useful for
+	// compatibility with backends like Arize Phoenix that use the OpenInference
+	// attribute convention. Default is false.
+	OpenInference bool `json:"open_inference,omitempty" jsonschema:"description=Add OpenInference llm.* attributes alongside gen_ai.* attributes,default=false"`
 }
 
 // DisplayName returns the hook name for display purposes. It returns Name
@@ -794,6 +910,10 @@ type Config struct {
 	Hooks map[string][]HookConfig `json:"hooks,omitempty" jsonschema:"description=User-defined shell commands that fire on hook events (e.g. PreToolUse)"`
 
 	Observability *Observability `json:"observability,omitempty" jsonschema:"description=OpenTelemetry observability configuration"`
+
+	// Logging configures application-wide logging. When nil, logging is
+	// disabled by default (safe). Users must explicitly opt-in.
+	Logging *LoggingOptions `json:"logging,omitempty" jsonschema:"description=Logging configuration. When omitted, logging is disabled."`
 
 	Agents map[string]Agent `json:"-"`
 }

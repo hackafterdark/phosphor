@@ -25,12 +25,12 @@ We introduced a new `CurrentTokens` field on the session model that tracks the *
    - Stored in SQLite as `INTEGER NOT NULL DEFAULT 0`.
    - Propagated through all sqlc-generated queries (insert, select, update).
 
-2. **Real-time estimation at session start** (`internal/agent/agent.go:263`)
+2. **Real-time estimation at session start** (`internal/agent/agent.go`)
 
    - Before each API request, `estimateMessageTokensForMessage()` walks all session messages and sums token estimates (text via `approxTokenCount`, tool calls, media, etc.).
    - The result is saved to `session.CurrentTokens`.
 
-3. **Post-response update** (`internal/agent/agent.go:573`)
+3. **Post-response update** (`internal/agent/agent.go`)
 
    - After the API response, `CurrentTokens` is set to `PromptTokens + CompletionTokens` from the API's usage report, keeping the estimate in sync with the provider's actual count.
 
@@ -41,7 +41,7 @@ We introduced a new `CurrentTokens` field on the session model that tracks the *
    - Replaces the old fixed-buffer strategy with `float64(CurrentTokens) / float64(ContextWindow) >= threshold`.
    - Wired through from config to the agent in `coordinator.go` and `agentic_fetch_tool.go`.
 
-5. **Hard overflow guard** (`internal/agent/agent.go:304-325`)
+5. **Hard overflow guard** (`internal/agent/agent.go`)
 
    - After adding the user message (before sending to the API), total tokens are re-estimated.
    - If `totalTokens > ContextWindow`, summarization is forced regardless of the threshold setting.

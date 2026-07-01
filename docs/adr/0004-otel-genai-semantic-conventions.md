@@ -49,7 +49,8 @@ Both functions handle the full set of GenAI semantic convention attributes:
 | Request params | `gen_ai.request.temperature`, `gen_ai.request.top_p`, `gen_ai.request.top_k`, `gen_ai.request.max_tokens`, `gen_ai.request.frequency_penalty`, `gen_ai.request.presence_penalty` |
 | Response | `gen_ai.response.finish_reason`, `gen_ai.response.id` |
 | Conversation | `gen_ai.conversation.id` |
-| Error | `gen_ai.error.message`, `error.type` |
+|| Error | `gen_ai.error.message`, `error.type` |
+|| Content opt-in | `gen_ai.input.messages`, `gen_ai.output.messages` (gated by config) |
 
 ### 2. `internal/otel/metrics.go` — GenAI standard metrics
 
@@ -100,6 +101,69 @@ Added tests for the new GenAI helper functions:
 - `TestSetGenAIAttributes_NilSpan` — nil-safety
 - `TestRecordGenAIMetrics_NoMetrics` — metrics no-op safety
 
+### 7. `internal/config/config.go` — Opt-in content capture config
+
+Added two boolean fields to the `Observability` struct:
+
+| Field | JSON Key | Default | Description |
+|---|---|---|---|
+| `CaptureInputMessages` | `capture_input_messages` | `false` | When true, records the full chat history sent to the model as `gen_ai.input.messages` on LLM spans. |
+| `CaptureOutputMessages` | `capture_output_messages` | `false` | When true, records the model's response as `gen_ai.output.messages` on LLM spans. |
+| `OpenInference` | `open_inference` | `false` | When true, adds OpenInference (`llm.*`) attributes alongside the standard `gen_ai.*` attributes on LLM spans. Useful for backends like Arize Phoenix that use the OpenInference convention. The `gen_ai.*` attributes are always recorded regardless of this setting. Message content uses a flattened structure (`llm.input_messages.{i}.message.{role,content}`) for correct parsing by Phoenix. |
+
+Both fields default to `false` (off). Per the OTel GenAI semantic conventions, `gen_ai.input.messages` and `gen_ai.output.messages` are **Opt-In** attributes that may contain PII. Users must explicitly enable them in `phosphor.json`:
+
+```json
+{
+  "observability": {
+    "endpoint": "localhost:4317",
+    "capture_input_messages": true,
+    "capture_output_messages": true,
+    "open_inference": true
+  }
+}
+```
+
+When `open_inference` is enabled, every LLM span receives both `gen_ai.*` and `llm.*` attributes per the mapping (using `oinference` constants for the `llm.*` keys):
+
+| `gen_ai.*` | `llm.*` (flattened for messages, via `oinference`) |
+|---|---|
+| `gen_ai.request.model` | `llm.model_name` (`oinference.LLMModelName`) |
+| `gen_ai.usage.input_tokens` | `llm.token_count.prompt` (`oinference.LLMTokenCountPrompt`) |
+| `gen_ai.usage.output_tokens` | `llm.token_count.completion` (`oinference.LLMTokenCountCompletion`) |
+| `gen_ai.input.messages` | `llm.input_messages.{i}.message.{role,content}` (via `oinference.LLMInputMessageRoleKey(i)` / `LLMInputMessageContentKey(i)`) |
+| `gen_ai.output.messages` | `llm.output_messages.{i}.message.{role,content}` (via `oinference.LLMOutputMessageRoleKey(i)` / `LLMOutputMessageContentKey(i)`) |
+
+Plus `openinference.span.kind = "LLM"` (`oinference.OpenInferenceSpanKind` / `oinference.SpanKindLLM`) on every OpenInference-enabled span.
+
+### 8. `internal/otel/otel.go` — Capture flag storage and message serialization
+
+- Package-level flags (`captureInputMsgs`, `captureOutputMsgs`) are set during `Init()` from the config.
+- `ShouldCaptureInputMessages()` / `ShouldCaptureOutputMessages()` expose the flags to callers.
+- `SerializeMessages(msgs)` converts `[]fantasy.Message` into the OTel JSON format: `[{"role": "...", "parts": [{"type": "...", "content": "..."}]}]`. Reasoning parts are excluded since they represent internal model state.
+- `FlattenMessages(prefix, msgs)` converts messages into flattened OpenInference attribute key-value pairs using `oinference` indexer helpers (`LLMInputMessageRoleKey`, etc.). Consecutive duplicate user messages are deduplicated before flattening.
+
+### 9. `internal/agent/agent.go` — Wiring capture into LLM spans
+
+- **Input messages**: In the `PrepareStep` callback (before the LLM call), when `capture_input_messages` is enabled, the full message list (`prepared.Messages`) is serialized and attached to the LLM span as `gen_ai.input.messages`. When `open_inference` is also enabled, the same content is attached as `llm.input_messages`.
+- **Output messages**: In `OnStepFinish`, when `capture_output_messages` is enabled, the assistant's response (`currentAssistant.ToAIMessage()`) is serialized and attached to the LLM span as `gen_ai.output.messages`. When `open_inference` is also enabled, the same content is attached as `llm.output_messages`. Token counts are always recorded as both `gen_ai.usage.*` and (when enabled) `llm.token_count.*`.
+
+### 10. `internal/otel/otel.go` — OpenInference attribute support
+
+When `observability.open_inference` is true, every LLM span also receives OpenInference (`llm.*`) attributes alongside the standard `gen_ai.*` ones. The attribute keys and indexer helpers come from the official [Arize OpenInference Go package](https://pkg.go.dev/github.com/Arize-ai/openinference/go/openinference-semantic-conventions) (`oinference`), ensuring vendor-neutral, spec-compliant attribute names:
+
+| `gen_ai.*` attribute | `llm.*` attribute (via `oinference` constants) |
+|---|---|
+| `gen_ai.request.model` | `llm.model_name` (`oinference.LLMModelName`) |
+| `gen_ai.usage.input_tokens` | `llm.token_count.prompt` (`oinference.LLMTokenCountPrompt`) |
+| `gen_ai.usage.output_tokens` | `llm.token_count.completion` (`oinference.LLMTokenCountCompletion`) |
+| `gen_ai.input.messages` | flattened via `oinference.LLMInputMessageRoleKey(i)` / `LLMInputMessageContentKey(i)` |
+| `gen_ai.output.messages` | flattened via `oinference.LLMOutputMessageRoleKey(i)` / `LLMOutputMessageContentKey(i)` |
+
+Plus `openinference.span.kind = "LLM"` (`oinference.OpenInferenceSpanKind` / `oinference.SpanKindLLM`) on every OpenInference-enabled span.
+
+The `gen_ai.*` attributes are always recorded regardless of this setting. The OpenInference attributes are only added when `open_inference: true` is set in the config. Input and output messages use a **flattened** structure (`llm.input_messages.0.message.role`, `llm.input_messages.0.message.content`, etc.) rather than a single JSON string, which allows observability backends like Arize Phoenix to correctly parse and render the chat history. Consecutive duplicate user messages are deduplicated before flattening to avoid rendering artifacts.
+
 ## Consequences
 
 **Positive:**
@@ -117,7 +181,7 @@ Added tests for the new GenAI helper functions:
 
 **Open Questions:**
 - Should we populate `gen_ai.conversation.id` with the session ID? This would enable correlating all spans from a single conversation.
-- Should we populate `gen_ai.input.messages` and `gen_ai.output.messages` as opt-in attributes? These contain PII and should be gated behind a config option.
+- ~~Should we populate `gen_ai.input.messages` and `gen_ai.output.messages` as opt-in attributes?~~ **Done**: added `capture_input_messages` and `capture_output_messages` boolean config keys under `observability`. Both default to `false`. See "Content opt-in" row above.
 - Should we add `gen_ai.request.stream` to indicate whether streaming was used?
 - The `gen_ai.client.operation.time_to_first_chunk` metric is defined but not yet recorded — this is a known gap.
 
@@ -166,9 +230,8 @@ Add just the single required attribute (`gen_ai.operation.name`) to each span an
 - [GenAI Spans Documentation](https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-spans/)
 - [GenAI Agent Spans Documentation](https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-agent-spans/)
 - [RFC: OpenTelemetry Instrumentation for Phosphor](../../rfc/opentelemetry-instrumentation.md)
-- `internal/otel/otel.go` — GenAI helper functions and attribute keys
+- `internal/otel/otel.go` — GenAI helper functions, capture flag storage, message serialization
 - `internal/otel/metrics.go` — GenAI standard metrics
-- `internal/agent/agent.go` — agent span instrumentation
-- `internal/agent/hooked_tool.go` — tool execution span instrumentation
-- `internal/agent/tools/mcp/tools.go` — MCP tool span instrumentation
 - `internal/otel/otel_test.go` — tests for GenAI helpers
+- `internal/config/config.go` — Observability struct with capture config fields
+- `internal/agent/agent.go` — agent span instrumentation, input/output message capture wiring

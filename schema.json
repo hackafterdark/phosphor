@@ -99,6 +99,10 @@
           },
           "type": "object",
           "description": "User-defined shell commands that fire on hook events (e.g. PreToolUse)"
+        },
+        "observability": {
+          "$ref": "#/$defs/Observability",
+          "description": "OpenTelemetry observability configuration"
         }
       },
       "additionalProperties": false,
@@ -210,6 +214,145 @@
       "additionalProperties": {
         "$ref": "#/$defs/LSPConfig"
       },
+      "type": "object"
+    },
+    "LandingComponentConfig": {
+      "properties": {
+        "id": {
+          "type": "string",
+          "enum": [
+            "recent_sessions",
+            "quick_actions",
+            "active_project",
+            "active_llm",
+            "capabilities"
+          ],
+          "description": "Component ID"
+        },
+        "hidden": {
+          "type": "boolean",
+          "description": "Whether this component is hidden",
+          "default": false
+        },
+        "max_items": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Maximum number of items to display (applies to Recent Sessions)",
+          "default": 5
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "id"
+      ]
+    },
+    "LandingConfig": {
+      "properties": {
+        "max_columns": {
+          "type": "integer",
+          "description": "Maximum number of columns",
+          "default": 2
+        },
+        "min_col_width": {
+          "type": "integer",
+          "description": "Minimum column width before stacking",
+          "default": 40
+        },
+        "gap": {
+          "type": "integer",
+          "description": "Horizontal space between columns",
+          "default": 4
+        },
+        "vertical_gap": {
+          "type": "integer",
+          "description": "Blank lines between stacked components in a column",
+          "default": 1
+        },
+        "components": {
+          "items": {
+            "$ref": "#/$defs/LandingComponentConfig"
+          },
+          "type": "array",
+          "description": "List of components to show on the landing screen"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "LogFilter": {
+      "properties": {
+        "field": {
+          "type": "string",
+          "description": "Log entry field to match against",
+          "examples": [
+            "msg",
+            "source"
+          ]
+        },
+        "pattern": {
+          "type": "string",
+          "description": "Regular expression pattern to exclude matching entries",
+          "examples": [
+            ".*password.*",
+            ".*secret.*"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "field",
+        "pattern"
+      ]
+    },
+    "LoggingOptions": {
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable application logging",
+          "default": false
+        },
+        "level": {
+          "type": "string",
+          "enum": [
+            "off",
+            "info",
+            "debug"
+          ],
+          "description": "Slog log level",
+          "default": "info"
+        },
+        "max_size_mb": {
+          "type": "integer",
+          "maximum": 1000,
+          "description": "Maximum log file size in MB before rotation",
+          "default": 10
+        },
+        "max_age_days": {
+          "type": "integer",
+          "description": "Maximum age of log files in days",
+          "default": 30
+        },
+        "max_backups": {
+          "type": "integer",
+          "description": "Maximum number of old log files to retain",
+          "default": 0
+        },
+        "compress": {
+          "type": "boolean",
+          "description": "Enable gzip compression of rotated log files",
+          "default": false
+        },
+        "filters": {
+          "items": {
+            "$ref": "#/$defs/LogFilter"
+          },
+          "type": "array",
+          "description": "Regex filters to exclude matching log entries. Each filter has field and pattern keys."
+        }
+      },
+      "additionalProperties": false,
       "type": "object"
     },
     "MCPConfig": {
@@ -392,6 +535,59 @@
       "additionalProperties": false,
       "type": "object"
     },
+    "Observability": {
+      "properties": {
+        "endpoint": {
+          "type": "string",
+          "description": "OTLP endpoint for traces and metrics",
+          "examples": [
+            "otel-collector:4317"
+          ]
+        },
+        "service_name": {
+          "type": "string",
+          "description": "Service name for OTel resource",
+          "examples": [
+            "phosphor"
+          ]
+        },
+        "protocol": {
+          "type": "string",
+          "description": "OTLP transport protocol",
+          "default": "grpc",
+          "examples": [
+            "grpc"
+          ]
+        },
+        "sampling_rate": {
+          "type": "number",
+          "description": "Trace sampling rate",
+          "default": 1.0,
+          "examples": [
+            0.1
+          ]
+        },
+        "resource_attributes": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object",
+          "description": "Additional OTel resource attributes"
+        },
+        "sensitive_mcp_servers": {
+          "items": {
+            "type": "string",
+            "examples": [
+              "vault"
+            ]
+          },
+          "type": "array",
+          "description": "MCP server names whose results should be redacted from traces"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
     "Options": {
       "properties": {
         "context_paths": {
@@ -446,6 +642,11 @@
           "description": "Disable automatic conversation summarization",
           "default": false
         },
+        "summarize_threshold": {
+          "type": "number",
+          "description": "Fraction of context window at which to trigger auto-summarization (0-1",
+          "default": 0.8
+        },
         "data_directory": {
           "type": "string",
           "description": "Directory for storing application data. Relative paths are resolved against the working directory; absolute paths are used as-is.",
@@ -478,11 +679,6 @@
         "attribution": {
           "$ref": "#/$defs/Attribution",
           "description": "Attribution settings for generated content"
-        },
-        "disable_metrics": {
-          "type": "boolean",
-          "description": "Disable sending metrics",
-          "default": false
         },
         "initialize_as": {
           "type": "string",
@@ -531,6 +727,10 @@
           },
           "type": "array",
           "description": "List of skill names to disable and hide from the agent"
+        },
+        "logging": {
+          "$ref": "#/$defs/LoggingOptions",
+          "description": "Logging configuration. When omitted"
         }
       },
       "additionalProperties": false,
@@ -609,6 +809,15 @@
         "system_prompt_prefix": {
           "type": "string",
           "description": "Custom prefix to add to system prompts for this provider"
+        },
+        "tool_call_format": {
+          "type": "string",
+          "enum": [
+            "native",
+            "xml"
+          ],
+          "description": "How tool calls are elicited: native uses the provider's function-calling API; xml injects a \u003ctool_call\u003e text instruction for self-hosted parsers",
+          "default": "native"
         },
         "extra_headers": {
           "additionalProperties": {
@@ -712,6 +921,35 @@
           "type": "number",
           "description": "Presence penalty to increase topic diversity"
         },
+        "seed": {
+          "type": "integer",
+          "description": "Random seed for deterministic sampling"
+        },
+        "min_p": {
+          "type": "number",
+          "maximum": 1,
+          "minimum": 0,
+          "description": "Minimum probability relative to most likely token"
+        },
+        "repetition_penalty": {
+          "type": "number",
+          "description": "Repetition penalty (\u003e1 discourages repetition)"
+        },
+        "stop": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Stop sequences that halt generation"
+        },
+        "top_logprobs": {
+          "type": "integer",
+          "description": "Number of top log probabilities to return per token (0-20)"
+        },
+        "max_thinking_tokens": {
+          "type": "integer",
+          "description": "Maximum tokens for thinking/reasoning output"
+        },
         "provider_options": {
           "type": "object",
           "description": "Additional provider-specific options for the model"
@@ -723,6 +961,59 @@
         "model",
         "provider"
       ]
+    },
+    "SidebarComponentConfig": {
+      "properties": {
+        "id": {
+          "type": "string",
+          "enum": [
+            "logo",
+            "session_title",
+            "working_dir",
+            "active_llm",
+            "goal",
+            "files",
+            "lsps",
+            "mcps",
+            "skills"
+          ],
+          "description": "Component ID"
+        },
+        "hidden": {
+          "type": "boolean",
+          "description": "Whether this component is hidden",
+          "default": false
+        },
+        "max_items": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Maximum items to display for list components",
+          "default": 10
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "id"
+      ]
+    },
+    "SidebarLayoutConfig": {
+      "properties": {
+        "vertical_gap": {
+          "type": "integer",
+          "description": "Blank lines between stacked components",
+          "default": 1
+        },
+        "components": {
+          "items": {
+            "$ref": "#/$defs/SidebarComponentConfig"
+          },
+          "type": "array",
+          "description": "List of sidebar components"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
     },
     "TUIOptions": {
       "properties": {
@@ -739,6 +1030,10 @@
           ],
           "description": "Diff mode for the TUI interface"
         },
+        "theme": {
+          "type": "string",
+          "description": "Name of built-in theme"
+        },
         "completions": {
           "$ref": "#/$defs/Completions",
           "description": "Completions UI options"
@@ -747,6 +1042,31 @@
           "type": "boolean",
           "description": "Enable transparent background for the TUI interface",
           "default": false
+        },
+        "keybindings": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object",
+          "description": "Custom TUI key bindings. Keys are binding names"
+        },
+        "history_limit": {
+          "type": "integer",
+          "description": "Initial number of messages to load in chat history",
+          "default": 100
+        },
+        "history_batch_size": {
+          "type": "integer",
+          "description": "Number of messages to load when pagination is triggered",
+          "default": 50
+        },
+        "landing": {
+          "$ref": "#/$defs/LandingConfig",
+          "description": "Configuration for the startup landing screen layout"
+        },
+        "sidebar": {
+          "$ref": "#/$defs/SidebarLayoutConfig",
+          "description": "Configuration for the right sidebar layout"
         }
       },
       "additionalProperties": false,
@@ -775,6 +1095,30 @@
         "expires_in",
         "expires_at"
       ]
+    },
+    "ToolBash": {
+      "properties": {
+        "allowed_env": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Allowlist of environment variable names the bash tool may see. When empty"
+        },
+        "banned_commands": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Additional command names to block beyond the built-in defaults."
+        },
+        "allow_inline_execution": {
+          "type": "boolean",
+          "description": "Allow interpreters and shells to be invoked with inline code execution flags (-c"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
     },
     "ToolGrep": {
       "properties": {
@@ -808,6 +1152,23 @@
       "additionalProperties": false,
       "type": "object"
     },
+    "ToolWebFetch": {
+      "properties": {
+        "ip_allow_list": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Allowlist of IP addresses or CIDR ranges that the web tools may reach. Overrides the default IP-block policy."
+        },
+        "allow_raw_ips": {
+          "type": "boolean",
+          "description": "Allow the web tools to reach raw IP addresses. Default false (FQDN required)."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
     "Tools": {
       "properties": {
         "ls": {
@@ -815,6 +1176,12 @@
         },
         "grep": {
           "$ref": "#/$defs/ToolGrep"
+        },
+        "bash": {
+          "$ref": "#/$defs/ToolBash"
+        },
+        "web_fetch": {
+          "$ref": "#/$defs/ToolWebFetch"
         }
       },
       "additionalProperties": false,

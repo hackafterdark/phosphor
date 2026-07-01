@@ -110,7 +110,7 @@ The agent could use `bash` with `echo "content" >> file` or `printf "content" >>
 - `internal/agent/tools/append.md` — tool description
 - `internal/agent/tools/append_test.go` — tests
 - `internal/agent/tools/write.go` — reference implementation (write tool)
-- `internal/agent/coordinator.go:643` — tool registration
+- `internal/agent/coordinator.go` — tool registration
 - `internal/ui/chat/file.go` — UI message rendering
 - `internal/ui/dialog/permissions.go` — permission dialog support
 - `internal/proto/tools.go` — tool name and type exports

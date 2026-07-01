@@ -608,6 +608,19 @@ func (c *Config) setDefaults(workingDir, dataDir string) {
 	}
 
 	c.Options.InitializeAs = cmp.Or(c.Options.InitializeAs, defaultInitializeAs)
+
+	// Apply logging defaults. Logging is disabled by default (safe).
+	if c.Options.Logging != nil {
+		if c.Options.Logging.Level == "" {
+			c.Options.Logging.Level = "info"
+		}
+		if c.Options.Logging.MaxSizeMB <= 0 {
+			c.Options.Logging.MaxSizeMB = 10
+		}
+		if c.Options.Logging.MaxAgeDays <= 0 {
+			c.Options.Logging.MaxAgeDays = 30
+		}
+	}
 }
 
 // applyLSPDefaults applies default values from powernap to LSP configurations
@@ -774,6 +787,24 @@ func configureSelectedModels(store *ConfigStore, knownProviders []catwalk.Provid
 			if largeModelSelected.PresencePenalty != nil {
 				large.PresencePenalty = largeModelSelected.PresencePenalty
 			}
+			if largeModelSelected.Seed != nil {
+				large.Seed = largeModelSelected.Seed
+			}
+			if largeModelSelected.MinP != nil {
+				large.MinP = largeModelSelected.MinP
+			}
+			if largeModelSelected.RepetitionPenalty != nil {
+				large.RepetitionPenalty = largeModelSelected.RepetitionPenalty
+			}
+			if len(largeModelSelected.Stop) > 0 {
+				large.Stop = largeModelSelected.Stop
+			}
+			if largeModelSelected.TopLogProbs != nil {
+				large.TopLogProbs = largeModelSelected.TopLogProbs
+			}
+			if largeModelSelected.MaxThinkingTokens != nil {
+				large.MaxThinkingTokens = largeModelSelected.MaxThinkingTokens
+			}
 		}
 	}
 	smallModelSelected, smallModelConfigured := c.Models[SelectedModelTypeSmall]
@@ -816,6 +847,24 @@ func configureSelectedModels(store *ConfigStore, knownProviders []catwalk.Provid
 			}
 			if smallModelSelected.PresencePenalty != nil {
 				small.PresencePenalty = smallModelSelected.PresencePenalty
+			}
+			if smallModelSelected.Seed != nil {
+				small.Seed = smallModelSelected.Seed
+			}
+			if smallModelSelected.MinP != nil {
+				small.MinP = smallModelSelected.MinP
+			}
+			if smallModelSelected.RepetitionPenalty != nil {
+				small.RepetitionPenalty = smallModelSelected.RepetitionPenalty
+			}
+			if len(smallModelSelected.Stop) > 0 {
+				small.Stop = smallModelSelected.Stop
+			}
+			if smallModelSelected.TopLogProbs != nil {
+				small.TopLogProbs = smallModelSelected.TopLogProbs
+			}
+			if smallModelSelected.MaxThinkingTokens != nil {
+				small.MaxThinkingTokens = smallModelSelected.MaxThinkingTokens
 			}
 			small.Think = smallModelSelected.Think
 		}

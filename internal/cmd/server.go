@@ -50,9 +50,9 @@ var serverCmd = &cobra.Command{
 		logFile := filepath.Join(config.GlobalCacheDir(), "server-"+safeHostName(hostURL), "phosphor.log")
 
 		if term.IsTerminal(os.Stderr.Fd()) {
-			phosphorlog.Setup(logFile, debug, os.Stderr)
+			phosphorlog.SetupWithConfig(logFile, nil, debug, os.Stderr)
 		} else {
-			phosphorlog.Setup(logFile, debug)
+			phosphorlog.SetupWithConfig(logFile, nil, debug)
 		}
 
 		srv := server.NewServer(cfg, hostURL.Scheme, hostURL.Host)

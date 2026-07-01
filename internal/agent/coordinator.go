@@ -349,6 +349,12 @@ func (c *coordinator) run(ctx context.Context, accept *AcceptedRun, sessionID st
 			TopK:             topK,
 			FrequencyPenalty: freqPenalty,
 			PresencePenalty:  presPenalty,
+			Seed:             model.ModelCfg.Seed,
+			MinP:             model.ModelCfg.MinP,
+			RepetitionPenalty: model.ModelCfg.RepetitionPenalty,
+			Stop:             model.ModelCfg.Stop,
+			TopLogProbs:      model.ModelCfg.TopLogProbs,
+			MaxThinkingTokens: model.ModelCfg.MaxThinkingTokens,
 			OnComplete:       onComplete,
 			Accepted:         accept,
 		})
@@ -478,6 +484,25 @@ func getProviderOptions(model Model, providerCfg config.ProviderConfig) fantasy.
 	shouldSetEffort := model.CatwalkCfg.CanReason &&
 		slices.Contains(model.CatwalkCfg.ReasoningLevels, model.ModelCfg.ReasoningEffort)
 
+	// Inject per-model sampling parameters into mergedOptions before the
+	// provider-specific switch. Each case below maps them to the field
+	// names that its provider's Fantasy parser expects.
+	if model.ModelCfg.Seed != nil {
+		mergedOptions["seed"] = *model.ModelCfg.Seed
+	}
+	if model.ModelCfg.MinP != nil {
+		mergedOptions["min_p"] = *model.ModelCfg.MinP
+	}
+	if model.ModelCfg.RepetitionPenalty != nil {
+		mergedOptions["repetition_penalty"] = *model.ModelCfg.RepetitionPenalty
+	}
+	if len(model.ModelCfg.Stop) > 0 {
+		mergedOptions["stop"] = model.ModelCfg.Stop
+	}
+	if model.ModelCfg.TopLogProbs != nil {
+		mergedOptions["top_logprobs"] = *model.ModelCfg.TopLogProbs
+	}
+
 	switch providerCfg.Type {
 	case openai.Name, azure.Name:
 		_, hasReasoningEffort := mergedOptions["reasoning_effort"]
@@ -529,6 +554,20 @@ func getProviderOptions(model Model, providerCfg config.ProviderConfig) fantasy.
 			}
 		}
 
+		// Inject max_thinking_tokens as thinking.budget_tokens when not
+		// already set by user config or effort defaults.
+		if model.ModelCfg.MaxThinkingTokens != nil {
+			if _, hasThink := mergedOptions["thinking"]; !hasThink {
+				mergedOptions["thinking"] = map[string]any{
+					"budget_tokens": *model.ModelCfg.MaxThinkingTokens,
+				}
+			} else if thinkMap, ok := mergedOptions["thinking"].(map[string]any); ok {
+				if _, hasBudget := thinkMap["budget_tokens"]; !hasBudget {
+					thinkMap["budget_tokens"] = *model.ModelCfg.MaxThinkingTokens
+				}
+			}
+		}
+
 		parsed, err := anthropic.ParseOptions(mergedOptions)
 		if err == nil {
 			options[anthropic.Name] = parsed
@@ -542,6 +581,18 @@ func getProviderOptions(model Model, providerCfg config.ProviderConfig) fantasy.
 				"effort":  model.ModelCfg.ReasoningEffort,
 			}
 		}
+		// Inject max_thinking_tokens as reasoning.max_tokens.
+		if model.ModelCfg.MaxThinkingTokens != nil {
+			if _, hasReasoning := mergedOptions["reasoning"]; !hasReasoning {
+				mergedOptions["reasoning"] = map[string]any{
+					"max_tokens": *model.ModelCfg.MaxThinkingTokens,
+				}
+			} else if reasonMap, ok := mergedOptions["reasoning"].(map[string]any); ok {
+				if _, hasMax := reasonMap["max_tokens"]; !hasMax {
+					reasonMap["max_tokens"] = *model.ModelCfg.MaxThinkingTokens
+				}
+			}
+		}
 		parsed, err := openrouter.ParseOptions(mergedOptions)
 		if err == nil {
 			options[openrouter.Name] = parsed
@@ -552,6 +603,18 @@ func getProviderOptions(model Model, providerCfg config.ProviderConfig) fantasy.
 			mergedOptions["reasoning"] = map[string]any{
 				"enabled": true,
 				"effort":  model.ModelCfg.ReasoningEffort,
+			}
+		}
+		// Inject max_thinking_tokens as reasoning.max_tokens.
+		if model.ModelCfg.MaxThinkingTokens != nil {
+			if _, hasReasoning := mergedOptions["reasoning"]; !hasReasoning {
+				mergedOptions["reasoning"] = map[string]any{
+					"max_tokens": *model.ModelCfg.MaxThinkingTokens,
+				}
+			} else if reasonMap, ok := mergedOptions["reasoning"].(map[string]any); ok {
+				if _, hasMax := reasonMap["max_tokens"]; !hasMax {
+					reasonMap["max_tokens"] = *model.ModelCfg.MaxThinkingTokens
+				}
 			}
 		}
 		parsed, err := vercel.ParseOptions(mergedOptions)
@@ -570,6 +633,14 @@ func getProviderOptions(model Model, providerCfg config.ProviderConfig) fantasy.
 				mergedOptions["thinking_config"] = map[string]any{
 					"thinking_level":   model.ModelCfg.ReasoningEffort,
 					"include_thoughts": true,
+				}
+			}
+		}
+		// Inject max_thinking_tokens as thinking_config.thinking_budget.
+		if model.ModelCfg.MaxThinkingTokens != nil {
+			if tcMap, ok := mergedOptions["thinking_config"].(map[string]any); ok {
+				if _, hasBudget := tcMap["thinking_budget"]; !hasBudget {
+					tcMap["thinking_budget"] = *model.ModelCfg.MaxThinkingTokens
 				}
 			}
 		}
@@ -632,6 +703,21 @@ func getProviderOptions(model Model, providerCfg config.ProviderConfig) fantasy.
 		case string(catwalk.InferenceProviderAlibabaSingapore):
 			if model.CatwalkCfg.CanReason {
 				extraBody["enable_thinking"] = model.ModelCfg.Think
+			}
+		}
+
+		// Inject max_thinking_tokens as extra_body.thinking.max_tokens
+		// for openai-compat providers (vLLM, llama.cpp, etc.) that use
+		// this field name for thinking/reasoning token budgets.
+		if model.ModelCfg.MaxThinkingTokens != nil {
+			if thinkMap, ok := extraBody["thinking"].(map[string]any); ok {
+				if _, hasMax := thinkMap["max_tokens"]; !hasMax {
+					thinkMap["max_tokens"] = *model.ModelCfg.MaxThinkingTokens
+				}
+			} else {
+				extraBody["thinking"] = map[string]any{
+					"max_tokens": *model.ModelCfg.MaxThinkingTokens,
+				}
 			}
 		}
 
@@ -765,7 +851,15 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, isSubA
 		tools.NewUpdateGoalTool(c.goalService),
 		tools.NewBashTool(c.permissions, c.cfg.WorkingDir(), c.cfg.Config().Tools.Bash, c.cfg.Config().Options.Attribution, modelID),
 		tools.NewPhosphorInfoTool(c.cfg, c.lspManager, c.allSkills, c.activeSkills, c.skillTracker),
-		tools.NewPhosphorLogsTool(logFile),
+	)
+
+	// Add phosphor_logs tool only when logging is enabled.
+	if c.cfg.Config().Logging != nil && c.cfg.Config().Logging.Enabled {
+		allTools = append(allTools, tools.NewPhosphorLogsTool(logFile))
+	}
+
+	allTools = append(
+		allTools,
 		tools.NewJobOutputTool(),
 		tools.NewJobKillTool(),
 		tools.NewDownloadTool(c.permissions, c.cfg.WorkingDir(), nil),

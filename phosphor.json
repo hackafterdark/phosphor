@@ -1,5 +1,5 @@
 {
-  "$schema": "https://charm.land/phosphor.json",
+  "$schema": "https://raw.githubusercontent.com/hackafterdark/phosphor/main/schema.json",
   "lsp": {
     "gopls": {
       "options": {

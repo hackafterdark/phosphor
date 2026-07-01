@@ -52,7 +52,7 @@ The translation layer recognizes specific error categories:
 
 The `injectToolObservation` method on `sessionAgent` creates a synthetic `message.Tool` message with `IsError: true` and appends it to the session's message store, preserving the original tool call ID so it passes the orphan filter.
 
-#### 2. Recovery Flow in the Coordinator (`internal/agent/coordinator.go:270-314`)
+#### 2. Recovery Flow in the Coordinator (`internal/agent/coordinator.go`)
 
 The coordinator's `Run` method implements a three-phase recovery strategy for 400 Bad Request errors:
 
@@ -80,13 +80,13 @@ if c.isBadRequest(originalErr) {
 }
 ```
 
-The `isBadRequest` function (`coordinator.go:1149`) filters 400 errors to only those that are potentially recoverable — matching on keywords like `tool`, `malformed`, `invalid json`, `extra data`, `context overflow`, and `parse error`. This prevents retrying on permanent errors (e.g., model not found).
+The `isBadRequest` function (`coordinator.go`) filters 400 errors to only those that are potentially recoverable — matching on keywords like `tool`, `malformed`, `invalid json`, `extra data`, `context overflow`, and `parse error`. This prevents retrying on permanent errors (e.g., model not found).
 
-#### 3. Conversation History Stripping (`internal/agent/agent.go:1016`)
+#### 3. Conversation History Stripping (`internal/agent/agent.go`)
 
 When the `IsStripLastToolCall` context flag is set, the agent's `preparePrompt` method identifies the last assistant message with tool calls and skips its tool call parts when building the fantasy conversation history. This prevents the malformed tool call from being re-sent to the API while still preserving the rest of the conversation context.
 
-#### 4. System Prompt Constraint (`internal/agent/agent.go:454`)
+#### 4. System Prompt Constraint (`internal/agent/agent.go`)
 
 A `<tool-observation-instructions>` block is appended to the system prompt:
 
@@ -163,11 +163,11 @@ Strip the failed tool call but do not inject a Tool Observation message. This is
 ## References
 
 - `internal/agent/tool_observation.go` — error translation, observation injection
-- `internal/agent/coordinator.go:270-314` — three-phase recovery flow
-- `internal/agent/coordinator.go:1149-1168` — `isBadRequest` error filtering
-- `internal/agent/coordinator.go:1170-1216` — `injectToolObservation` implementation
-- `internal/agent/agent.go:1016` — conversation history stripping
-- `internal/agent/agent.go:454` — system prompt constraint
+- `internal/agent/coordinator.go` — three-phase recovery flow
+- `internal/agent/coordinator.go` — `isBadRequest` error filtering
+- `internal/agent/coordinator.go` — `injectToolObservation` implementation
+- `internal/agent/agent.go` — conversation history stripping
+- `internal/agent/agent.go` — system prompt constraint
 - `internal/agent/loop_detection.go` — consecutive failure guardrail
 - `internal/agent/runid.go` — context key design
 - RFC: `.agents/docs/rfc/structured-observation-layer-for-tool-failures.md`
