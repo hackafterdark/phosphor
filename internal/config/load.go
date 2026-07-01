@@ -621,6 +621,13 @@ func (c *Config) setDefaults(workingDir, dataDir string) {
 			c.Options.Logging.MaxAgeDays = 30
 		}
 	}
+
+	if c.Options.Agent == nil {
+		c.Options.Agent = &AgentConfig{}
+	}
+	if c.Options.Agent.ActiveProfile == "" {
+		c.Options.Agent.ActiveProfile = "default"
+	}
 }
 
 // applyLSPDefaults applies default values from powernap to LSP configurations
@@ -979,6 +986,9 @@ func loadFromBytes(configs [][]byte) (*Config, error) {
 				}
 				if gjson.GetBytes(data, "options.agent.max_turns").Exists() {
 					agentCfg.MaxTurns = config.Options.Agent.MaxTurns
+				}
+				if gjson.GetBytes(data, "options.agent.active_profile").Exists() {
+					agentCfg.ActiveProfile = config.Options.Agent.ActiveProfile
 				}
 			}
 			config.Options.Agent = &agentCfg

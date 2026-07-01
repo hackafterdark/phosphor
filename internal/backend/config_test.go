@@ -205,3 +205,22 @@ func TestPublishConfigChanged_NilWorkspaceSafe(t *testing.T) {
 	require.NotPanics(t, func() { publishConfigChanged(nil) })
 	require.NotPanics(t, func() { publishConfigChanged(&Workspace{}) })
 }
+
+func TestWorkspaceProfile(t *testing.T) {
+	xdgIsolated(t)
+
+	cwd := t.TempDir()
+	dataDir := t.TempDir()
+
+	b := New(context.Background(), nil, func() {})
+	b.SetCreateGrace(2 * time.Second)
+	t.Cleanup(func() { drainBackend(t, b) })
+
+	cid := uuid.New().String()
+	pWS := protoWS(cwd, dataDir, cid)
+	pWS.Profile = "fiduciary"
+
+	ws, _, err := b.CreateWorkspace(pWS)
+	require.NoError(t, err)
+	require.Equal(t, "fiduciary", ws.Cfg.ActiveProfile())
+}

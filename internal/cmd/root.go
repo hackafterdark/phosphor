@@ -51,6 +51,7 @@ func init() {
 	rootCmd.PersistentFlags().StringP("data-dir", "D", "", "Custom phosphor data directory")
 	rootCmd.PersistentFlags().BoolP("debug", "d", false, "Debug")
 	rootCmd.PersistentFlags().StringVarP(&clientHost, "host", "H", server.DefaultHost(), "Connect to a specific phosphor server host (for advanced users)")
+	rootCmd.PersistentFlags().String("profile", "", "Active prompt/governance profile")
 	rootCmd.Flags().BoolP("help", "h", false, "Help")
 	rootCmd.Flags().BoolP("yolo", "y", false, "Automatically accept all permissions (dangerous mode)")
 	rootCmd.Flags().StringP("session", "s", "", "Continue a previous session by ID")
@@ -227,6 +228,10 @@ func setupLocalWorkspace(cmd *cobra.Command) (workspace.Workspace, func(), *sql.
 
 	cfg := store.Config()
 	store.Overrides().SkipPermissionRequests = yolo
+	profile, _ := cmd.Flags().GetString("profile")
+	if profile != "" {
+		store.Overrides().ActiveProfile = profile
+	}
 
 	if err := os.MkdirAll(cfg.Options.DataDirectory, 0o700); err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to create data directory: %q %w", cfg.Options.DataDirectory, err)
@@ -332,6 +337,7 @@ func connectToServer(cmd *cobra.Command) (*client.Client, *proto.Workspace, func
 	debug, _ := cmd.Flags().GetBool("debug")
 	yolo, _ := cmd.Flags().GetBool("yolo")
 	dataDir, _ := cmd.Flags().GetString("data-dir")
+	profile, _ := cmd.Flags().GetString("profile")
 	ctx := cmd.Context()
 
 	cwd, err := ResolveCwd(cmd)
@@ -349,6 +355,7 @@ func connectToServer(cmd *cobra.Command) (*client.Client, *proto.Workspace, func
 		DataDir: dataDir,
 		Debug:   debug,
 		YOLO:    yolo,
+		Profile: profile,
 		Version: version.Version,
 		Env:     os.Environ(),
 	}

@@ -767,8 +767,12 @@ func (c *coordinator) buildAgent(ctx context.Context, prompt *prompt.Prompt, age
 		reflectionEnabled  bool
 		maxReflectionTurns int
 	)
-	if c.cfg.Config().Options.Agent != nil {
+	if c.cfg.ActiveProfile() == "fiduciary" {
+		reflectionEnabled = true
+	} else if c.cfg.Config().Options.Agent != nil {
 		reflectionEnabled = c.cfg.Config().Options.Agent.EnableReflection
+	}
+	if c.cfg.Config().Options.Agent != nil {
 		maxReflectionTurns = c.cfg.Config().Options.Agent.MaxTurns
 	}
 
@@ -934,7 +938,7 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, isSubA
 	// without hook interception to avoid firing the user's hook N times
 	// per delegated turn. The top-level invocation of the sub-agent tool
 	// itself is still wrapped from the coder's side.
-	filteredTools = wrapToolsWithHooks(filteredTools, hookRunner, isSubAgent)
+	filteredTools = wrapToolsWithHooks(filteredTools, hookRunner, isSubAgent, c.cfg.ActiveProfile())
 
 	return filteredTools, nil
 }
@@ -1420,8 +1424,12 @@ func (c *coordinator) UpdateModels(ctx context.Context) error {
 		reflectionEnabled  bool
 		maxReflectionTurns int
 	)
-	if c.cfg.Config().Options.Agent != nil {
+	if c.cfg.ActiveProfile() == "fiduciary" {
+		reflectionEnabled = true
+	} else if c.cfg.Config().Options.Agent != nil {
 		reflectionEnabled = c.cfg.Config().Options.Agent.EnableReflection
+	}
+	if c.cfg.Config().Options.Agent != nil {
 		maxReflectionTurns = c.cfg.Config().Options.Agent.MaxTurns
 	}
 	c.currentAgent.SetReflection(reflectionEnabled, maxReflectionTurns)

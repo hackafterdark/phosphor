@@ -17,8 +17,14 @@ func init() {
 	}
 }
 
+// DirOverride allows mocking the home directory in unit tests.
+var DirOverride string
+
 // Dir returns the user home directory.
 func Dir() string {
+	if DirOverride != "" {
+		return DirOverride
+	}
 	return homedir
 }
 

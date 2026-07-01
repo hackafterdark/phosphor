@@ -3,6 +3,7 @@ package prompt
 import (
 	"cmp"
 	"context"
+	_ "embed"
 	"fmt"
 	"log/slog"
 	"os"
@@ -18,6 +19,15 @@ import (
 	"github.com/hackafterdark/phosphor/internal/shell"
 	"github.com/hackafterdark/phosphor/internal/skills"
 )
+
+//go:embed templates/rules.md.tpl
+var defaultRules []byte
+
+//go:embed templates/style.md.tpl
+var defaultStyle []byte
+
+//go:embed templates/workflow.md.tpl
+var defaultWorkflow []byte
 
 // Prompt represents a template-based prompt generator.
 type Prompt struct {
@@ -44,6 +54,9 @@ type PromptDat struct {
 	GlobalContextFiles        []ContextFile
 	AvailSkillXML             string
 	StructuralSearchAvailable bool
+	CriticalRules             string
+	CommunicationStyle        string
+	Workflow                  string
 }
 
 type ContextFile struct {
@@ -89,16 +102,80 @@ func NewPrompt(name, promptTemplate string, opts ...Option) (*Prompt, error) {
 	return p, nil
 }
 
+func resolveProfileTemplate(profileName, templateFile, workingDir string, embeddedDefault []byte) (string, error) {
+	if profileName == "" {
+		profileName = "default"
+	}
+
+	// 1. Workspace override: <workspace>/.phosphor/profiles/<profile-name>/<file>.md.tpl
+	workspacePath := filepath.Join(workingDir, ".phosphor", "profiles", profileName, templateFile)
+	if _, err := os.Stat(workspacePath); err == nil {
+		content, err := os.ReadFile(workspacePath)
+		if err == nil {
+			return string(content), nil
+		}
+	}
+
+	// 2. Global override: ~/.phosphor/profiles/<profile-name>/<file>.md.tpl
+	globalPath := filepath.Join(home.Dir(), ".phosphor", "profiles", profileName, templateFile)
+	if _, err := os.Stat(globalPath); err == nil {
+		content, err := os.ReadFile(globalPath)
+		if err == nil {
+			return string(content), nil
+		}
+	}
+
+	// 3. Embedded fallback
+	return string(embeddedDefault), nil
+}
+
+func (p *Prompt) renderProfileTemplate(profileName, templateFile, workingDir string, embeddedDefault []byte, data PromptDat) (string, error) {
+	tmplStr, err := resolveProfileTemplate(profileName, templateFile, workingDir, embeddedDefault)
+	if err != nil {
+		return "", err
+	}
+	t, err := template.New(templateFile).Parse(tmplStr)
+	if err != nil {
+		return "", fmt.Errorf("parsing profile template %s: %w", templateFile, err)
+	}
+	var sb strings.Builder
+	if err := t.Execute(&sb, data); err != nil {
+		return "", fmt.Errorf("executing profile template %s: %w", templateFile, err)
+	}
+	return sb.String(), nil
+}
+
 func (p *Prompt) Build(ctx context.Context, provider, model string, store *config.ConfigStore) (string, error) {
+	d, err := p.promptData(ctx, provider, model, store)
+	if err != nil {
+		return "", err
+	}
+
+	profileName := store.ActiveProfile()
+	workingDir := cmp.Or(p.workingDir, store.WorkingDir())
+
+	rulesRendered, err := p.renderProfileTemplate(profileName, "rules.md.tpl", workingDir, defaultRules, d)
+	if err != nil {
+		return "", err
+	}
+	styleRendered, err := p.renderProfileTemplate(profileName, "style.md.tpl", workingDir, defaultStyle, d)
+	if err != nil {
+		return "", err
+	}
+	workflowRendered, err := p.renderProfileTemplate(profileName, "workflow.md.tpl", workingDir, defaultWorkflow, d)
+	if err != nil {
+		return "", err
+	}
+
+	d.CriticalRules = rulesRendered
+	d.CommunicationStyle = styleRendered
+	d.Workflow = workflowRendered
+
 	t, err := template.New(p.name).Parse(p.template)
 	if err != nil {
 		return "", fmt.Errorf("parsing template: %w", err)
 	}
 	var sb strings.Builder
-	d, err := p.promptData(ctx, provider, model, store)
-	if err != nil {
-		return "", err
-	}
 	if err := t.Execute(&sb, d); err != nil {
 		return "", fmt.Errorf("executing template: %w", err)
 	}
@@ -224,6 +301,11 @@ func (p *Prompt) promptData(ctx context.Context, provider, model string, store *
 	agentCfg := cfg.Options.Agent
 	if agentCfg == nil {
 		agentCfg = &config.AgentConfig{}
+	}
+	if store.ActiveProfile() == "fiduciary" {
+		cp := *agentCfg
+		cp.EnableReflection = true
+		agentCfg = &cp
 	}
 	data := PromptDat{
 		Provider:                  provider,

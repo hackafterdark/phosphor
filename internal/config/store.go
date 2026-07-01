@@ -41,6 +41,7 @@ type fileSnapshot struct {
 // the lifetime of the process (or workspace).
 type RuntimeOverrides struct {
 	SkipPermissionRequests bool
+	ActiveProfile          string
 }
 
 // ConfigStore is the single entry point for all config access. It owns the
@@ -107,6 +108,17 @@ func (s *ConfigStore) SetupAgents() {
 // Overrides returns the runtime overrides for this store.
 func (s *ConfigStore) Overrides() *RuntimeOverrides {
 	return &s.overrides
+}
+
+// ActiveProfile returns the resolved active prompt profile.
+func (s *ConfigStore) ActiveProfile() string {
+	if s.overrides.ActiveProfile != "" {
+		return s.overrides.ActiveProfile
+	}
+	if s.config != nil && s.config.Options != nil && s.config.Options.Agent != nil && s.config.Options.Agent.ActiveProfile != "" {
+		return s.config.Options.Agent.ActiveProfile
+	}
+	return "default"
 }
 
 // LoadedPaths returns the config file paths that were successfully loaded.

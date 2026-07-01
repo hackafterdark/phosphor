@@ -452,6 +452,9 @@ type Options struct {
 
 // AgentConfig controls agent-specific runtime behavior.
 type AgentConfig struct {
+	// ActiveProfile is the name of the active prompt/governance profile to load.
+	ActiveProfile string `json:"active_profile,omitempty" jsonschema:"description=Active prompt profile (e.g. fiduciary, standard, experimental),default=default"`
+
 	// EnableReflection toggles self-critique reflection after each LLM
 	// response. When true, the agent reviews its output against the
 	// critical_rules and performs a mandatory self-correction pass before
