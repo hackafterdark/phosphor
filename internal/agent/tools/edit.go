@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"hash/crc32"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -26,10 +27,11 @@ import (
 )
 
 type EditParams struct {
-	FilePath   string `json:"file_path" description:"The absolute path to the file to modify"`
-	OldString  string `json:"old_string" description:"The text to replace"`
-	NewString  string `json:"new_string" description:"The text to replace it with"`
-	ReplaceAll bool   `json:"replace_all,omitempty" description:"Replace all occurrences of old_string (default false)"`
+	FilePath    string `json:"file_path" description:"The absolute path to the file to modify"`
+	OldString   string `json:"old_string" description:"The text to replace"`
+	NewString   string `json:"new_string" description:"The text to replace it with"`
+	ReplaceAll  bool   `json:"replace_all,omitempty" description:"Replace all occurrences of old_string (default false)"`
+	UseHashline bool   `json:"use_hashline,omitempty" description:"If true, returns a hashline-tagged snippet of the modified region in the response metadata"`
 }
 
 type EditPermissionsParams struct {
@@ -44,6 +46,7 @@ type EditResponseMetadata struct {
 	OldContent     string   `json:"old_content,omitempty"`
 	NewContent     string   `json:"new_content,omitempty"`
 	NewDiagnostics []string `json:"new_diagnostics,omitempty"`
+	Snippet        string   `json:"snippet,omitempty"`
 }
 
 const EditToolName = "edit"
@@ -156,9 +159,9 @@ func NewEditTool(
 			if params.OldString == "" {
 				response, err = createNewFile(editCtx, params.FilePath, params.NewString, call)
 			} else if params.NewString == "" {
-				response, err = deleteContent(editCtx, params.FilePath, params.OldString, params.ReplaceAll, call)
+				response, err = deleteContent(editCtx, params.FilePath, params.OldString, params.ReplaceAll, params.UseHashline, call)
 			} else {
-				response, err = replaceContent(editCtx, params.FilePath, params.OldString, params.NewString, params.ReplaceAll, call)
+				response, err = replaceContent(editCtx, params.FilePath, params.OldString, params.NewString, params.ReplaceAll, params.UseHashline, call)
 			}
 
 			if err != nil {
@@ -206,6 +209,9 @@ func NewEditTool(
 
 func createNewFile(edit editContext, filePath, content string, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
 	if err := checkSecrets(content); err != nil {
+		return fantasy.NewTextErrorResponse(err.Error()), nil
+	}
+	if err := validateEditOutput(content); err != nil {
 		return fantasy.NewTextErrorResponse(err.Error()), nil
 	}
 	if err := verifySyntax(content, filePath); err != nil {
@@ -299,7 +305,7 @@ func createNewFile(edit editContext, filePath, content string, call fantasy.Tool
 	), nil
 }
 
-func deleteContent(edit editContext, filePath, oldString string, replaceAll bool, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+func deleteContent(edit editContext, filePath, oldString string, replaceAll bool, useHashline bool, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
 	fileInfo, err := os.Stat(filePath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -323,6 +329,12 @@ func deleteContent(edit editContext, filePath, oldString string, replaceAll bool
 		return fantasy.NewTextErrorResponse("you must read the file before editing it. Use the View tool first"), nil
 	}
 
+	cleanOldString, hashInfo, hasTags := parseTaggedContent(oldString)
+	oldStringForFuzzy := oldString
+	if hasTags {
+		oldStringForFuzzy = cleanOldString
+	}
+
 	// Read initial file content
 	initialBytes, err := os.ReadFile(filePath)
 	if err != nil {
@@ -332,12 +344,19 @@ func deleteContent(edit editContext, filePath, oldString string, replaceAll bool
 
 	// Perform the edit calculation on the initial content
 	oldContent, isCrlf := fsext.ToUnixLineEndings(initialContent)
-	newContent, err := applyEditWithFuzzy(edit.fuzzyCache, filePath, initialContent, oldString, "", replaceAll)
+
+	if hasTags {
+		if err := verifyHashes(oldContent, hashInfo); err != nil {
+			return fantasy.NewTextErrorResponse("Hash verification failed: " + err.Error() + ". Please re-run 'view' to synchronize your view of the file."), nil
+		}
+	}
+
+	newContent, err := applyEditWithFuzzy(edit.fuzzyCache, filePath, initialContent, oldStringForFuzzy, "", replaceAll)
 	if err != nil {
 		if strings.Contains(err.Error(), "multiple times") {
 			return fantasy.NewTextErrorResponse(err.Error()), nil
 		}
-		return makeNotFoundError(initialContent, oldString), nil
+		return makeNotFoundError(initialContent, oldStringForFuzzy), nil
 	}
 
 	_, additions, removals := diff.GenerateDiff(
@@ -401,12 +420,18 @@ func deleteContent(edit editContext, filePath, oldString string, replaceAll bool
 		initialContent = currentDiskContent
 		oldContent, isCrlf = fsext.ToUnixLineEndings(initialContent)
 
-		newContent, err = applyEditWithFuzzy(edit.fuzzyCache, filePath, initialContent, oldString, "", replaceAll)
+		if hasTags {
+			if err := verifyHashes(oldContent, hashInfo); err != nil {
+				return fantasy.NewTextErrorResponse("Hash verification failed during concurrent edit retry: " + err.Error() + ". Please re-run 'view' to synchronize your view of the file."), nil
+			}
+		}
+
+		newContent, err = applyEditWithFuzzy(edit.fuzzyCache, filePath, initialContent, oldStringForFuzzy, "", replaceAll)
 		if err != nil {
 			if strings.Contains(err.Error(), "multiple times") {
 				return fantasy.NewTextErrorResponse(err.Error()), nil
 			}
-			return makeNotFoundError(initialContent, oldString), nil
+			return makeNotFoundError(initialContent, oldStringForFuzzy), nil
 		}
 		finalContentToWrite = newContent
 	}
@@ -450,6 +475,23 @@ func deleteContent(edit editContext, filePath, oldString string, replaceAll bool
 
 	edit.filetracker.RecordRead(edit.ctx, sessionID, filePath)
 
+	wantHashlineSnippet := useHashline || hasTags
+	newLines := strings.Split(newContent, "\n")
+	startL, endL := findModifiedLineRange(oldContent, newContent)
+	var snippet string
+	if startL > 0 {
+		snippetStart := startL - 10
+		if snippetStart < 1 {
+			snippetStart = 1
+		}
+		snippetEnd := endL + 10
+		if snippetEnd > len(newLines) {
+			snippetEnd = len(newLines)
+		}
+		snippetContent := strings.Join(newLines[snippetStart-1:snippetEnd], "\n")
+		snippet = addLineNumbers(snippetContent, snippetStart, wantHashlineSnippet)
+	}
+
 	return fantasy.WithResponseMetadata(
 		fantasy.NewTextResponse("Content deleted from file: "+filePath),
 		EditResponseMetadata{
@@ -457,13 +499,24 @@ func deleteContent(edit editContext, filePath, oldString string, replaceAll bool
 			NewContent: newContent,
 			Additions:  additions,
 			Removals:   removals,
+			Snippet:    snippet,
 		},
 	), nil
 }
 
-func replaceContent(edit editContext, filePath, oldString, newString string, replaceAll bool, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
+func replaceContent(edit editContext, filePath, oldString, newString string, replaceAll bool, useHashline bool, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
 	if err := checkSecrets(newString); err != nil {
 		return fantasy.NewTextErrorResponse(err.Error()), nil
+	}
+
+	if err := validateEditOutput(newString); err != nil {
+		return fantasy.NewTextErrorResponse(err.Error()), nil
+	}
+
+	cleanOldString, hashInfo, hasTags := parseTaggedContent(oldString)
+	oldStringForFuzzy := oldString
+	if hasTags {
+		oldStringForFuzzy = cleanOldString
 	}
 
 	fileInfo, err := os.Stat(filePath)
@@ -498,12 +551,19 @@ func replaceContent(edit editContext, filePath, oldString, newString string, rep
 
 	// Perform the edit calculation on the initial content
 	oldContent, isCrlf := fsext.ToUnixLineEndings(initialContent)
-	newContent, err := applyEditWithFuzzy(edit.fuzzyCache, filePath, initialContent, oldString, newString, replaceAll)
+
+	if hasTags {
+		if err := verifyHashes(oldContent, hashInfo); err != nil {
+			return fantasy.NewTextErrorResponse("Hash verification failed: " + err.Error() + ". Please re-run 'view' to synchronize your view of the file."), nil
+		}
+	}
+
+	newContent, err := applyEditWithFuzzy(edit.fuzzyCache, filePath, initialContent, oldStringForFuzzy, newString, replaceAll)
 	if err != nil {
 		if strings.Contains(err.Error(), "multiple times") {
 			return fantasy.NewTextErrorResponse(err.Error()), nil
 		}
-		return makeNotFoundError(initialContent, oldString), nil
+		return makeNotFoundError(initialContent, oldStringForFuzzy), nil
 	}
 
 	if oldContent == newContent {
@@ -575,12 +635,18 @@ func replaceContent(edit editContext, filePath, oldString, newString string, rep
 		initialContent = currentDiskContent
 		oldContent, isCrlf = fsext.ToUnixLineEndings(initialContent)
 
-		newContent, err = applyEditWithFuzzy(edit.fuzzyCache, filePath, initialContent, oldString, newString, replaceAll)
+		if hasTags {
+			if err := verifyHashes(oldContent, hashInfo); err != nil {
+				return fantasy.NewTextErrorResponse("Hash verification failed during concurrent edit retry: " + err.Error() + ". Please re-run 'view' to synchronize your view of the file."), nil
+			}
+		}
+
+		newContent, err = applyEditWithFuzzy(edit.fuzzyCache, filePath, initialContent, oldStringForFuzzy, newString, replaceAll)
 		if err != nil {
 			if strings.Contains(err.Error(), "multiple times") {
 				return fantasy.NewTextErrorResponse(err.Error()), nil
 			}
-			return makeNotFoundError(initialContent, oldString), nil
+			return makeNotFoundError(initialContent, oldStringForFuzzy), nil
 		}
 		if err := verifySyntax(newContent, filePath); err != nil {
 			return fantasy.NewTextErrorResponse(fmt.Sprintf("Syntax error validation failed: %v. Your edit was rejected to prevent committing broken code. Please correct the edit.", err)), nil
@@ -627,6 +693,23 @@ func replaceContent(edit editContext, filePath, oldString, newString string, rep
 
 	edit.filetracker.RecordRead(edit.ctx, sessionID, filePath)
 
+	wantHashlineSnippet := useHashline || hasTags
+	newLines := strings.Split(newContent, "\n")
+	startL, endL := findModifiedLineRange(oldContent, newContent)
+	var snippet string
+	if startL > 0 {
+		snippetStart := startL - 10
+		if snippetStart < 1 {
+			snippetStart = 1
+		}
+		snippetEnd := endL + 10
+		if snippetEnd > len(newLines) {
+			snippetEnd = len(newLines)
+		}
+		snippetContent := strings.Join(newLines[snippetStart-1:snippetEnd], "\n")
+		snippet = addLineNumbers(snippetContent, snippetStart, wantHashlineSnippet)
+	}
+
 	return fantasy.WithResponseMetadata(
 		fantasy.NewTextResponse("Content replaced in file: "+filePath),
 		EditResponseMetadata{
@@ -634,6 +717,7 @@ func replaceContent(edit editContext, filePath, oldString, newString string, rep
 			NewContent: newContent,
 			Additions:  additions,
 			Removals:   removals,
+			Snippet:    snippet,
 		},
 	), nil
 }
@@ -963,4 +1047,100 @@ func checkSecrets(content string) error {
 		return fmt.Errorf("Security violation: potential API key leak detected")
 	}
 	return nil
+}
+
+var (
+	hashlineRegex    = regexp.MustCompile(`^[ \t]*(\d+):([0-9a-fA-F]{8})\|(.*)$`)
+	rawHashlineRegex = regexp.MustCompile(`[ \t]*\d+:[0-9a-fA-F]{8}\|`)
+)
+
+func parseTaggedContent(content string) (string, map[int]string, bool) {
+	if content == "" {
+		return "", nil, false
+	}
+	lines := strings.Split(content, "\n")
+	var cleanLines []string
+	hashInfo := make(map[int]string)
+	hasTags := false
+
+	for _, line := range lines {
+		trimmedLine := strings.TrimSuffix(line, "\r")
+		matches := hashlineRegex.FindStringSubmatch(trimmedLine)
+		if len(matches) == 4 {
+			hasTags = true
+			var lineNum int
+			_, _ = fmt.Sscanf(matches[1], "%d", &lineNum)
+			hashVal := matches[2]
+			code := matches[3]
+			cleanLines = append(cleanLines, code)
+			hashInfo[lineNum] = strings.ToLower(hashVal)
+		} else {
+			cleanLines = append(cleanLines, line)
+		}
+	}
+
+	if !hasTags {
+		return content, nil, false
+	}
+	return strings.Join(cleanLines, "\n"), hashInfo, true
+}
+
+func validateEditOutput(content string) error {
+	if rawHashlineRegex.MatchString(content) {
+		return fmt.Errorf("Security violation: raw hashline tags (e.g. '123:abc12345|') detected in the content. Do not write hashline metadata back to disk.")
+	}
+	return nil
+}
+
+func verifyHashes(content string, hashInfo map[int]string) error {
+	lines := strings.Split(content, "\n")
+	for lineNum, expectedHash := range hashInfo {
+		idx := lineNum - 1
+		if idx < 0 || idx >= len(lines) {
+			return fmt.Errorf("line number %d is out of range for the file (total lines: %d)", lineNum, len(lines))
+		}
+		lineContent := strings.TrimSuffix(lines[idx], "\r")
+		actualHash := fmt.Sprintf("%08x", crc32.ChecksumIEEE([]byte(lineContent)))
+		if actualHash != strings.ToLower(expectedHash) {
+			return fmt.Errorf("hash mismatch on line %d: expected %s, but file content on disk has different content (hash: %s)", lineNum, expectedHash, actualHash)
+		}
+	}
+	return nil
+}
+
+func findModifiedLineRange(oldContent, newContent string) (int, int) {
+	oldLines := strings.Split(oldContent, "\n")
+	newLines := strings.Split(newContent, "\n")
+
+	firstDiff := -1
+	for i := 0; i < len(oldLines) && i < len(newLines); i++ {
+		if oldLines[i] != newLines[i] {
+			firstDiff = i
+			break
+		}
+	}
+	if firstDiff == -1 {
+		if len(oldLines) != len(newLines) {
+			firstDiff = min(len(oldLines), len(newLines))
+		} else {
+			return 0, 0
+		}
+	}
+
+	lastDiffOld := len(oldLines) - 1
+	lastDiffNew := len(newLines) - 1
+	for lastDiffOld >= firstDiff && lastDiffNew >= firstDiff {
+		if oldLines[lastDiffOld] != newLines[lastDiffNew] {
+			break
+		}
+		lastDiffOld--
+		lastDiffNew--
+	}
+
+	startLine := firstDiff + 1
+	endLine := lastDiffNew + 1
+	if endLine < startLine {
+		endLine = startLine
+	}
+	return startLine, endLine
 }

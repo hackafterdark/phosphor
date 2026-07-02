@@ -179,6 +179,9 @@ func validateEdits(edits []MultiEditOperation) error {
 		if i > 0 && edit.OldString == "" {
 			return fmt.Errorf("edit %d: only the first edit can have empty old_string (for file creation)", i+1)
 		}
+		if err := validateEditOutput(edit.NewString); err != nil {
+			return fmt.Errorf("edit %d: %w", i+1, err)
+		}
 	}
 	return nil
 }
@@ -349,6 +352,16 @@ func processMultiEditExistingFile(edit editContext, params MultiEditParams, call
 	oldContent, isCrlf := fsext.ToUnixLineEndings(initialContent)
 	currentContent := oldContent
 
+	// Verify hashes for all edits against the initial content
+	for i, op := range params.Edits {
+		_, hashInfo, hasTags := parseTaggedContent(op.OldString)
+		if hasTags {
+			if err := verifyHashes(oldContent, hashInfo); err != nil {
+				return fantasy.NewTextErrorResponse(fmt.Sprintf("Hash verification failed for edit %d: %s. Please re-run 'view' to synchronize your view of the file.", i+1, err.Error())), nil
+			}
+		}
+	}
+
 	// Apply all edits sequentially, tracking failures
 	var failedEdits []FailedEdit
 	for i, op := range params.Edits {
@@ -442,6 +455,16 @@ func processMultiEditExistingFile(edit editContext, params MultiEditParams, call
 		initialContent = currentDiskContent
 		oldContent, isCrlf = fsext.ToUnixLineEndings(initialContent)
 		currentContent = oldContent
+
+		// Verify hashes for all edits against the new initial content
+		for i, op := range params.Edits {
+			_, hashInfo, hasTags := parseTaggedContent(op.OldString)
+			if hasTags {
+				if err := verifyHashes(oldContent, hashInfo); err != nil {
+					return fantasy.NewTextErrorResponse(fmt.Sprintf("Hash verification failed during concurrent edit retry for edit %d: %s. Please re-run 'view' to synchronize your view of the file.", i+1, err.Error())), nil
+				}
+			}
+		}
 
 		// Re-apply all edits sequentially
 		failedEdits = nil
@@ -538,9 +561,15 @@ func applyEditToContent(cache *fuzzyCache, filePath, content string, edit MultiE
 		return "", fmt.Errorf("old_string cannot be empty for content replacement")
 	}
 
-	newContent, err := applyEditWithFuzzy(cache, filePath, content, edit.OldString, edit.NewString, edit.ReplaceAll)
+	cleanOldString, _, hasTags := parseTaggedContent(edit.OldString)
+	oldStringForFuzzy := edit.OldString
+	if hasTags {
+		oldStringForFuzzy = cleanOldString
+	}
+
+	newContent, err := applyEditWithFuzzy(cache, filePath, content, oldStringForFuzzy, edit.NewString, edit.ReplaceAll)
 	if err != nil {
-		candidates := findCloseMatches(content, edit.OldString)
+		candidates := findCloseMatches(content, oldStringForFuzzy)
 		if len(candidates) > 0 {
 			var sb strings.Builder
 			sb.WriteString("old_string not found in content. Did you mean one of these close matches?\n")

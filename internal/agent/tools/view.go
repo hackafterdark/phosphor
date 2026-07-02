@@ -6,6 +6,7 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"html/template"
 	"io"
 	"io/fs"
@@ -47,10 +48,11 @@ func viewDescription() string {
 }
 
 type ViewParams struct {
-	FilePath  string `json:"file_path" description:"The path to the file to read"`
-	Offset    int    `json:"offset,omitempty" description:"The line number to start reading from (0-based)"`
-	Limit     int    `json:"limit,omitempty" description:"The number of lines to read (defaults to 200)"`
-	Summarize bool   `json:"summarize,omitempty" description:"If true and tree-sitter is available, returns a file outline containing only public function/struct signatures instead of the full content"`
+	FilePath    string `json:"file_path" description:"The path to the file to read"`
+	Offset      int    `json:"offset,omitempty" description:"The line number to start reading from (0-based)"`
+	Limit       int    `json:"limit,omitempty" description:"The number of lines to read (defaults to 200)"`
+	Summarize   bool   `json:"summarize,omitempty" description:"If true and tree-sitter is available, returns a file outline containing only public function/struct signatures instead of the full content"`
+	UseHashline bool   `json:"use_hashline,omitempty" description:"If true, prefixes lines with a CRC32 checksum of their contents in the format '<line_number>:<hash>|'"`
 }
 
 type ViewPermissionsParams struct {
@@ -250,7 +252,7 @@ func NewViewTool(
 			openInLSPs(ctx, lspManager, filePath)
 			waitForLSPDiagnostics(ctx, lspManager, filePath, 300*time.Millisecond)
 			output := "<file>\n"
-			output += addLineNumbers(content, params.Offset+1)
+			output += addLineNumbers(content, params.Offset+1, params.UseHashline)
 
 			if hasMore {
 				output += fmt.Sprintf("\n\n(File has more lines. Use 'offset' parameter to read beyond line %d)",
@@ -276,7 +278,7 @@ func NewViewTool(
 	)
 }
 
-func addLineNumbers(content string, startLine int) string {
+func addLineNumbers(content string, startLine int, useHashline bool) string {
 	if content == "" {
 		return ""
 	}
@@ -290,11 +292,23 @@ func addLineNumbers(content string, startLine int) string {
 		lineNum := i + startLine
 		numStr := fmt.Sprintf("%d", lineNum)
 
-		if len(numStr) >= 6 {
-			result = append(result, fmt.Sprintf("%s|%s", numStr, line))
+		var prefix string
+		if useHashline {
+			hashVal := crc32.ChecksumIEEE([]byte(line))
+			paddedNum := numStr
+			if len(numStr) < 6 {
+				paddedNum = fmt.Sprintf("%6s", numStr)
+			}
+			prefix = fmt.Sprintf("%s:%08x", paddedNum, hashVal)
 		} else {
-			paddedNum := fmt.Sprintf("%6s", numStr)
-			result = append(result, fmt.Sprintf("%s|%s", paddedNum, line))
+			prefix = numStr
+		}
+
+		if useHashline || len(prefix) >= 6 {
+			result = append(result, fmt.Sprintf("%s|%s", prefix, line))
+		} else {
+			paddedPrefix := fmt.Sprintf("%6s", prefix)
+			result = append(result, fmt.Sprintf("%s|%s", paddedPrefix, line))
 		}
 	}
 
@@ -424,7 +438,7 @@ func readBuiltinFile(params ViewParams, skillTracker *skills.Tracker) (fantasy.T
 	}
 
 	output := "<file>\n"
-	output += addLineNumbers(strings.Join(lines, "\n"), offset+1)
+	output += addLineNumbers(strings.Join(lines, "\n"), offset+1, params.UseHashline)
 	if hasMore {
 		output += fmt.Sprintf("\n\n(File has more lines. Use 'offset' parameter to read beyond line %d)",
 			offset+len(lines))

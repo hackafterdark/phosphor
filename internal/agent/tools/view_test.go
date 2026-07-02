@@ -354,3 +354,29 @@ func TestSniffImageMimeType(t *testing.T) {
 		})
 	}
 }
+
+func TestViewToolWithHashline(t *testing.T) {
+	t.Parallel()
+
+	workingDir := t.TempDir()
+	filePath := filepath.Join(workingDir, "hash_test.txt")
+	lines := []string{"hello world", "", "go hashline"}
+	require.NoError(t, os.WriteFile(filePath, []byte(strings.Join(lines, "\n")), 0o644))
+
+	tool := newViewToolForTest(workingDir)
+	ctx := context.WithValue(context.Background(), SessionIDContextKey, "test-session")
+	resp := runViewTool(t, tool, ctx, ViewParams{
+		FilePath:    filePath,
+		UseHashline: true,
+	})
+
+	require.False(t, resp.IsError)
+	// Check that lines have the hashline format
+	// CRC32 checksums:
+	// "hello world" -> 0d4a1185
+	// "" -> 00000000
+	require.Contains(t, resp.Content, "     1:0d4a1185|hello world")
+	require.Contains(t, resp.Content, "     2:00000000|")
+	require.Contains(t, resp.Content, "     3:")
+	require.Contains(t, resp.Content, "|go hashline")
+}

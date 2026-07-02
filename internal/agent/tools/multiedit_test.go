@@ -2,10 +2,14 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"hash/crc32"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"charm.land/fantasy"
 	"github.com/hackafterdark/phosphor/internal/history"
 	"github.com/hackafterdark/phosphor/internal/permission"
 	"github.com/hackafterdark/phosphor/internal/pubsub"
@@ -211,4 +215,105 @@ func TestMultiEditAllEditsFail(t *testing.T) {
 
 	require.Len(t, failedEdits, 2)
 	require.Equal(t, content, currentContent, "Content should be unchanged")
+}
+
+func TestMultiEditToolWithHashline(t *testing.T) {
+	t.Parallel()
+	workingDir := t.TempDir()
+	filePath := filepath.Join(workingDir, "test.txt")
+	err := os.WriteFile(filePath, []byte("line 1\nline 2\nline 3\n"), 0o644)
+	require.NoError(t, err)
+
+	hash2 := crc32.ChecksumIEEE([]byte("line 2"))
+	taggedOldString := fmt.Sprintf("     2:%08x|line 2", hash2)
+
+	tool := NewMultiEditTool(nil, &mockPermissionService{}, &mockHistoryService{}, mockFileTrackerForEdit{}, workingDir)
+	ctx := context.WithValue(context.Background(), SessionIDContextKey, "test-session")
+
+	input, err := json.Marshal(MultiEditParams{
+		FilePath: filePath,
+		Edits: []MultiEditOperation{
+			{
+				OldString: taggedOldString,
+				NewString: "line 2 modified",
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	resp, err := tool.Run(ctx, fantasy.ToolCall{
+		ID:    "test-call",
+		Name:  MultiEditToolName,
+		Input: string(input),
+	})
+	require.NoError(t, err)
+	require.False(t, resp.IsError, "expected successful edit but got error: %s", resp.Content)
+
+	data, err := os.ReadFile(filePath)
+	require.NoError(t, err)
+	require.Equal(t, "line 1\nline 2 modified\nline 3\n", string(data))
+}
+
+func TestMultiEditToolHashMismatch(t *testing.T) {
+	t.Parallel()
+	workingDir := t.TempDir()
+	filePath := filepath.Join(workingDir, "test.txt")
+	err := os.WriteFile(filePath, []byte("line 1\nline 2\nline 3\n"), 0o644)
+	require.NoError(t, err)
+
+	taggedOldString := "     2:badabada|line 2"
+
+	tool := NewMultiEditTool(nil, &mockPermissionService{}, &mockHistoryService{}, mockFileTrackerForEdit{}, workingDir)
+	ctx := context.WithValue(context.Background(), SessionIDContextKey, "test-session")
+
+	input, err := json.Marshal(MultiEditParams{
+		FilePath: filePath,
+		Edits: []MultiEditOperation{
+			{
+				OldString: taggedOldString,
+				NewString: "line 2 modified",
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	resp, err := tool.Run(ctx, fantasy.ToolCall{
+		ID:    "test-call",
+		Name:  MultiEditToolName,
+		Input: string(input),
+	})
+	require.NoError(t, err)
+	require.True(t, resp.IsError)
+	require.Contains(t, resp.Content, "Hash verification failed")
+}
+
+func TestMultiEditToolAnchorPoisoning(t *testing.T) {
+	t.Parallel()
+	workingDir := t.TempDir()
+	filePath := filepath.Join(workingDir, "test.txt")
+	err := os.WriteFile(filePath, []byte("line 1\nline 2\nline 3\n"), 0o644)
+	require.NoError(t, err)
+
+	tool := NewMultiEditTool(nil, &mockPermissionService{}, &mockHistoryService{}, mockFileTrackerForEdit{}, workingDir)
+	ctx := context.WithValue(context.Background(), SessionIDContextKey, "test-session")
+
+	input, err := json.Marshal(MultiEditParams{
+		FilePath: filePath,
+		Edits: []MultiEditOperation{
+			{
+				OldString: "line 2",
+				NewString: "     2:abcdef12|poisoned line 2",
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	resp, err := tool.Run(ctx, fantasy.ToolCall{
+		ID:    "test-call",
+		Name:  MultiEditToolName,
+		Input: string(input),
+	})
+	require.NoError(t, err)
+	require.True(t, resp.IsError)
+	require.Contains(t, resp.Content, "Security violation: raw hashline tags")
 }
