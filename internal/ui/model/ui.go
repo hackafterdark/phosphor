@@ -1825,7 +1825,7 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 				return util.ReportError(errors.New("configuration not found"))()
 			}
 
-			agentCfg, ok := cfg.Agents[config.AgentCoder]
+			agentCfg, ok := cfg.Agents[config.AgentSystem]
 			if !ok {
 				return util.ReportError(errors.New("agent configuration not found"))()
 			}
@@ -1896,7 +1896,7 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			break
 		}
 
-		agentCfg, ok := cfg.Agents[config.AgentCoder]
+		agentCfg, ok := cfg.Agents[config.AgentSystem]
 		if !ok {
 			cmds = append(cmds, util.ReportError(errors.New("agent configuration not found")))
 			break
@@ -2224,7 +2224,7 @@ func (m *UI) handleSelectModel(msg dialog.ActionSelectModel) tea.Cmd {
 	if isOnboarding {
 		m.setState(uiLanding, uiFocusEditor)
 		m.com.Config().SetupAgents()
-		if err := m.com.Workspace.InitCoderAgent(context.TODO()); err != nil {
+		if err := m.com.Workspace.InitSystemAgent(context.TODO()); err != nil {
 			cmds = append(cmds, util.ReportError(err))
 		}
 	} else if m.com.IsHyper() {
@@ -3096,7 +3096,7 @@ func (m *UI) currentModelSupportsImages() bool {
 	if cfg == nil {
 		return false
 	}
-	agentCfg, ok := cfg.Agents[config.AgentCoder]
+	agentCfg, ok := cfg.Agents[config.AgentSystem]
 	if !ok {
 		return false
 	}
@@ -4351,7 +4351,7 @@ func (m *UI) handleReAuthenticate(providerID string) tea.Cmd {
 	if !ok {
 		return nil
 	}
-	agentCfg, ok := cfg.Agents[config.AgentCoder]
+	agentCfg, ok := cfg.Agents[config.AgentSystem]
 	if !ok {
 		return nil
 	}

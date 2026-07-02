@@ -247,7 +247,6 @@ func RecoverPanic(name string, cleanup func()) {
 	}
 }
 
-
 func Initialized() bool {
 	return initialized.Load()
 }

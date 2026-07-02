@@ -278,6 +278,9 @@ func (b *Backend) CreateWorkspace(args proto.Workspace) (*Workspace, proto.Works
 	}
 
 	cfg.Overrides().SkipPermissionRequests = args.YOLO
+	if args.Profile != "" {
+		cfg.Overrides().ActiveProfile = args.Profile
+	}
 
 	if err := createDotPhosphorDir(cfg.Config().Options.DataDirectory); err != nil {
 		return nil, proto.Workspace{}, fmt.Errorf("failed to create data directory: %w", err)

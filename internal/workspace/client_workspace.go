@@ -261,7 +261,7 @@ func (w *ClientWorkspace) UpdateAgentModel(ctx context.Context) error {
 	return w.client.UpdateAgent(ctx, w.workspaceID())
 }
 
-func (w *ClientWorkspace) InitCoderAgent(ctx context.Context) error {
+func (w *ClientWorkspace) InitSystemAgent(ctx context.Context) error {
 	return w.client.InitiateAgentProcessing(ctx, w.workspaceID())
 }
 

@@ -250,8 +250,8 @@ internal/
       structural_search.md.tpl  # Tool description for the agent
     coordinator.go           # Tool registration
     common_test.go           # Test setup registration
-templates/
-  coder.md.tpl               # Tool funnel protocol section
+    templates/
+      system.md.tpl          # Tool funnel protocol section
 ```
 
 ### Key Components

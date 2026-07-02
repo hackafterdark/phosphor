@@ -58,8 +58,8 @@ const (
 )
 
 const (
-	AgentCoder string = "coder"
-	AgentTask  string = "task"
+	AgentSystem string = "system"
+	AgentTask   string = "task"
 )
 
 type SelectedModel struct {
@@ -444,6 +444,26 @@ type Options struct {
 	// logging is disabled by default (safe by default). Users must
 	// explicitly opt-in to enable logging and configure its behavior.
 	Logging *LoggingOptions `json:"logging,omitempty" jsonschema:"description=Logging configuration. When omitted, logging is disabled."`
+
+	// Agent holds agent-specific runtime configuration such as reflection
+	// and turn limits. When nil, sensible defaults are applied at use time.
+	Agent *AgentConfig `json:"agent,omitempty" jsonschema:"description=Agent runtime configuration"`
+}
+
+// AgentConfig controls agent-specific runtime behavior.
+type AgentConfig struct {
+	// ActiveProfile is the name of the active prompt/governance profile to load.
+	ActiveProfile string `json:"active_profile,omitempty" jsonschema:"description=Active prompt profile (e.g. fiduciary, standard, experimental),default=default"`
+
+	// EnableReflection toggles self-critique reflection after each LLM
+	// response. When true, the agent reviews its output against the
+	// critical_rules and performs a mandatory self-correction pass before
+	// yielding the final answer.
+	EnableReflection bool `json:"enable_reflection,omitempty" jsonschema:"description=Enable self-critique reflection after each LLM response,default=false"`
+
+	// MaxTurns caps the number of tool-use turns per prompt. A value of 0
+	// means no limit. This prevents runaway agent loops on complex tasks.
+	MaxTurns int `json:"max_turns,omitempty" jsonschema:"description=Maximum number of tool-use turns per prompt (0 = unlimited),default=0"`
 }
 
 // LoggingOptions configures application logging behavior. All fields are
@@ -1022,7 +1042,7 @@ func resolveAllowedTools(allTools []string, disabledTools []string) []string {
 }
 
 func resolveReadOnlyTools(tools []string) []string {
-	readOnlyTools := []string{"glob", "grep", "ls", "sourcegraph", "view"}
+	readOnlyTools := []string{"glob", "grep", "ls", "sourcegraph", "view", "structural_search"}
 	// filter to only include tools that are in allowedtools (include mode)
 	return filterSlice(tools, readOnlyTools, true)
 }
@@ -1043,9 +1063,9 @@ func (c *Config) SetupAgents() {
 	allowedTools := resolveAllowedTools(allToolNames(), c.Options.DisabledTools)
 
 	agents := map[string]Agent{
-		AgentCoder: {
-			ID:           AgentCoder,
-			Name:         "Coder",
+		AgentSystem: {
+			ID:           AgentSystem,
+			Name:         "System",
 			Description:  "An agent that helps with executing coding tasks.",
 			Model:        SelectedModelTypeLarge,
 			ContextPaths: c.Options.ContextPaths,

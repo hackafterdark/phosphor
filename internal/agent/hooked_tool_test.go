@@ -51,7 +51,7 @@ func TestHookedTool_AllowStampsHookApproval(t *testing.T) {
 
 	inner := &fakeTool{name: "view", resp: fantasy.NewTextResponse("ok")}
 	runner := newRunner(t, `echo '{"decision":"allow"}'`)
-	tool := newHookedTool(inner, runner)
+	tool := newHookedTool(inner, runner, "")
 
 	_, err := tool.Run(t.Context(), fantasy.ToolCall{ID: "call-1", Name: "view"})
 	require.NoError(t, err)
@@ -75,7 +75,7 @@ func TestHookedTool_SilentDoesNotStampApproval(t *testing.T) {
 
 	inner := &fakeTool{name: "view", resp: fantasy.NewTextResponse("ok")}
 	runner := newRunner(t, `exit 0`) // no stdout, no decision
-	tool := newHookedTool(inner, runner)
+	tool := newHookedTool(inner, runner, "")
 
 	_, err := tool.Run(t.Context(), fantasy.ToolCall{ID: "call-2", Name: "view"})
 	require.NoError(t, err)
@@ -104,7 +104,7 @@ func TestHookedTool_DenySkipsInnerTool(t *testing.T) {
 
 	inner := &fakeTool{name: "bash"}
 	runner := newRunner(t, `echo "blocked" >&2; exit 2`)
-	tool := newHookedTool(inner, runner)
+	tool := newHookedTool(inner, runner, "")
 
 	resp, err := tool.Run(t.Context(), fantasy.ToolCall{ID: "call-3", Name: "bash"})
 	require.NoError(t, err)
@@ -121,7 +121,7 @@ func TestWrapToolsWithHooks(t *testing.T) {
 
 	t.Run("top-level agent wraps every tool", func(t *testing.T) {
 		t.Parallel()
-		out := wrapToolsWithHooks(inputs, runner, false)
+		out := wrapToolsWithHooks(inputs, runner, false, "")
 		require.Len(t, out, len(inputs))
 		for i, tool := range out {
 			_, ok := tool.(*hookedTool)
@@ -131,7 +131,7 @@ func TestWrapToolsWithHooks(t *testing.T) {
 
 	t.Run("sub-agent skips the wrap", func(t *testing.T) {
 		t.Parallel()
-		out := wrapToolsWithHooks(inputs, runner, true)
+		out := wrapToolsWithHooks(inputs, runner, true, "")
 		require.Equal(t, inputs, out, "sub-agent tools should be returned unwrapped")
 		for _, tool := range out {
 			_, isHooked := tool.(*hookedTool)
@@ -139,9 +139,95 @@ func TestWrapToolsWithHooks(t *testing.T) {
 		}
 	})
 
-	t.Run("nil runner skips the wrap for both agent kinds", func(t *testing.T) {
+	t.Run("nil runner skips the wrap for both agent kinds when not fiduciary", func(t *testing.T) {
 		t.Parallel()
-		require.Equal(t, inputs, wrapToolsWithHooks(inputs, nil, false))
-		require.Equal(t, inputs, wrapToolsWithHooks(inputs, nil, true))
+		require.Equal(t, inputs, wrapToolsWithHooks(inputs, nil, false, ""))
+		require.Equal(t, inputs, wrapToolsWithHooks(inputs, nil, true, ""))
 	})
+
+	t.Run("fiduciary forces wrap even with nil runner and sub-agent", func(t *testing.T) {
+		t.Parallel()
+		outMain := wrapToolsWithHooks(inputs, nil, false, "fiduciary")
+		require.Len(t, outMain, len(inputs))
+		for i, tool := range outMain {
+			_, ok := tool.(*hookedTool)
+			require.Truef(t, ok, "tool %d should be a *hookedTool", i)
+		}
+
+		outSub := wrapToolsWithHooks(inputs, nil, true, "fiduciary")
+		require.Len(t, outSub, len(inputs))
+		for i, tool := range outSub {
+			_, ok := tool.(*hookedTool)
+			require.Truef(t, ok, "tool %d should be a *hookedTool", i)
+		}
+	})
+}
+
+func TestHookedTool_FiduciaryGuardrails(t *testing.T) {
+	t.Parallel()
+
+	inner := &fakeTool{name: "bash", resp: fantasy.NewTextResponse("ok")}
+	tool := newHookedTool(inner, nil, "fiduciary")
+
+	tests := []struct {
+		name      string
+		cmd       string
+		shouldErr bool
+		reason    string
+	}{
+		{
+			name:      "safe command",
+			cmd:       `{"command": "echo hello"}`,
+			shouldErr: false,
+		},
+		{
+			name:      "restricted command sudo",
+			cmd:       `{"command": "sudo apt-get update"}`,
+			shouldErr: true,
+			reason:    "Restricted Command \"sudo\"",
+		},
+		{
+			name:      "restricted command useradd",
+			cmd:       `{"command": "useradd admin"}`,
+			shouldErr: true,
+			reason:    "Restricted Command \"useradd\"",
+		},
+		{
+			name:      "restricted path /etc",
+			cmd:       `{"command": "cat /etc/passwd"}`,
+			shouldErr: true,
+			reason:    "Restricted Path \"/etc\"",
+		},
+		{
+			name:      "restricted path ~/.ssh",
+			cmd:       `{"command": "ls ~/.ssh"}`,
+			shouldErr: true,
+			reason:    "Restricted Path \"~/.ssh\"",
+		},
+		{
+			name:      "restricted path Windows style",
+			cmd:       `{"command": "type C:\\windows\\system32\\drivers\\etc\\hosts"}`,
+			shouldErr: true,
+			reason:    "Restricted Path \"\\\\etc\"",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			inner.called = false
+			resp, err := tool.Run(t.Context(), fantasy.ToolCall{ID: "call-fid", Name: "bash", Input: tt.cmd})
+			require.NoError(t, err)
+
+			if tt.shouldErr {
+				require.False(t, inner.called, "inner tool should not have run")
+				require.True(t, resp.IsError, "response should be an error")
+				require.True(t, resp.StopTurn, "should stop the turn")
+				require.Contains(t, resp.Content, "Fiduciary Policy Violation")
+				require.Contains(t, resp.Content, tt.reason)
+			} else {
+				require.True(t, inner.called, "inner tool should have run")
+				require.False(t, resp.IsError, "response should not be an error")
+			}
+		})
+	}
 }

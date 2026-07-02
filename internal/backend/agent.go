@@ -97,12 +97,14 @@ func (b *Backend) runAgent(ws *Workspace, msg proto.AgentMessage, accept *agent.
 		return
 	}
 
-	ws.AgentNotifications().Publish(pubsub.CreatedEvent, notify.Notification{
-		SessionID: msg.SessionID,
-		RunID:     msg.RunID,
-		Type:      notify.TypeAgentError,
-		Message:   err.Error(),
-	})
+	if an := ws.AgentNotifications(); an != nil {
+		an.Publish(pubsub.CreatedEvent, notify.Notification{
+			SessionID: msg.SessionID,
+			RunID:     msg.RunID,
+			Type:      notify.TypeAgentError,
+			Message:   err.Error(),
+		})
+	}
 
 	// Reliable terminal fallback. Only needed when a RunID waiter
 	// exists and the coordinator has not already emitted the run's
@@ -139,14 +141,14 @@ func (b *Backend) GetAgentInfo(workspaceID string) (proto.AgentInfo, error) {
 	return agentInfo, nil
 }
 
-// InitAgent initializes the coder agent for the workspace.
+// InitAgent initializes the system agent for the workspace.
 func (b *Backend) InitAgent(ctx context.Context, workspaceID string) error {
 	ws, err := b.GetWorkspace(workspaceID)
 	if err != nil {
 		return err
 	}
 
-	return ws.InitCoderAgent(ctx)
+	return ws.InitSystemAgent(ctx)
 }
 
 // UpdateAgent reloads the agent model configuration.

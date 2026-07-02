@@ -14,8 +14,8 @@ import (
 	"charm.land/catwalk/pkg/catwalk"
 	hyperp "github.com/hackafterdark/phosphor/internal/agent/hyper"
 	"github.com/hackafterdark/phosphor/internal/env"
-	"github.com/hackafterdark/phosphor/internal/log"
 	"github.com/hackafterdark/phosphor/internal/lock"
+	"github.com/hackafterdark/phosphor/internal/log"
 	"github.com/hackafterdark/phosphor/internal/oauth"
 	"github.com/hackafterdark/phosphor/internal/oauth/copilot"
 	"github.com/hackafterdark/phosphor/internal/oauth/hyper"
@@ -41,6 +41,7 @@ type fileSnapshot struct {
 // the lifetime of the process (or workspace).
 type RuntimeOverrides struct {
 	SkipPermissionRequests bool
+	ActiveProfile          string
 }
 
 // ConfigStore is the single entry point for all config access. It owns the
@@ -107,6 +108,17 @@ func (s *ConfigStore) SetupAgents() {
 // Overrides returns the runtime overrides for this store.
 func (s *ConfigStore) Overrides() *RuntimeOverrides {
 	return &s.overrides
+}
+
+// ActiveProfile returns the resolved active prompt profile.
+func (s *ConfigStore) ActiveProfile() string {
+	if s.overrides.ActiveProfile != "" {
+		return s.overrides.ActiveProfile
+	}
+	if s.config != nil && s.config.Options != nil && s.config.Options.Agent != nil && s.config.Options.Agent.ActiveProfile != "" {
+		return s.config.Options.Agent.ActiveProfile
+	}
+	return "default"
 }
 
 // LoadedPaths returns the config file paths that were successfully loaded.

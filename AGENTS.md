@@ -24,10 +24,10 @@ internal/
     provider.go                    Provider configuration and model resolution
   agent/
     agent.go                       SessionAgent: runs LLM conversations per session
-    coordinator.go                 Coordinator: manages named agents ("coder", "task")
+    coordinator.go                 Coordinator: manages named agent prompt templates ("system", "task")
     hooked_tool.go                 Decorator that runs PreToolUse hooks before tool execution
     prompts.go                     Loads Go-template system prompts
-    templates/                     System prompt templates (coder.md.tpl, task.md.tpl, etc.)
+    templates/                     System prompt templates (system.md.tpl, task.md.tpl, etc.)
     tools/                         All built-in tools (bash, edit, view, grep, glob, etc.)
       mcp/                         MCP client integration
   hooks/                           Hook engine: runs user shell commands on hook events

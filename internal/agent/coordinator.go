@@ -51,7 +51,7 @@ import (
 
 // Coordinator errors.
 var (
-	errCoderAgentNotConfigured         = errors.New("coder agent not configured")
+	errSystemAgentNotConfigured        = errors.New("system agent not configured")
 	errModelProviderNotConfigured      = errors.New("model provider not configured")
 	errLargeModelNotSelected           = errors.New("large model not selected")
 	errSmallModelNotSelected           = errors.New("small model not selected")
@@ -230,13 +230,12 @@ func NewCoordinator(
 		return granted, nil
 	}
 
-	agentCfg, ok := cfg.Config().Agents[config.AgentCoder]
+	agentCfg, ok := cfg.Config().Agents[config.AgentSystem]
 	if !ok {
-		return nil, errCoderAgentNotConfigured
+		return nil, errSystemAgentNotConfigured
 	}
 
-	// TODO: make this dynamic when we support multiple agents
-	prompt, err := coderPrompt(prompt.WithWorkingDir(c.cfg.WorkingDir()))
+	prompt, err := systemPrompt(prompt.WithWorkingDir(c.cfg.WorkingDir()))
 	if err != nil {
 		return nil, err
 	}
@@ -246,7 +245,7 @@ func NewCoordinator(
 		return nil, err
 	}
 	c.currentAgent = agent
-	c.agents[config.AgentCoder] = agent
+	c.agents[config.AgentSystem] = agent
 
 	// Start watcher for custom queries directory.
 	if err := parser.StartWatcher(cfg.WorkingDir(), func() {
@@ -338,25 +337,25 @@ func (c *coordinator) run(ctx context.Context, accept *AcceptedRun, sessionID st
 	runID := RunIDFromContext(ctx)
 	run := func() (*fantasy.AgentResult, error) {
 		return c.currentAgent.Run(ctx, SessionAgentCall{
-			SessionID:        sessionID,
-			RunID:            runID,
-			Prompt:           prompt,
-			Attachments:      attachments,
-			MaxOutputTokens:  maxTokens,
-			ProviderOptions:  mergedOptions,
-			Temperature:      temp,
-			TopP:             topP,
-			TopK:             topK,
-			FrequencyPenalty: freqPenalty,
-			PresencePenalty:  presPenalty,
-			Seed:             model.ModelCfg.Seed,
-			MinP:             model.ModelCfg.MinP,
+			SessionID:         sessionID,
+			RunID:             runID,
+			Prompt:            prompt,
+			Attachments:       attachments,
+			MaxOutputTokens:   maxTokens,
+			ProviderOptions:   mergedOptions,
+			Temperature:       temp,
+			TopP:              topP,
+			TopK:              topK,
+			FrequencyPenalty:  freqPenalty,
+			PresencePenalty:   presPenalty,
+			Seed:              model.ModelCfg.Seed,
+			MinP:              model.ModelCfg.MinP,
 			RepetitionPenalty: model.ModelCfg.RepetitionPenalty,
-			Stop:             model.ModelCfg.Stop,
-			TopLogProbs:      model.ModelCfg.TopLogProbs,
+			Stop:              model.ModelCfg.Stop,
+			TopLogProbs:       model.ModelCfg.TopLogProbs,
 			MaxThinkingTokens: model.ModelCfg.MaxThinkingTokens,
-			OnComplete:       onComplete,
-			Accepted:         accept,
+			OnComplete:        onComplete,
+			Accepted:          accept,
 		})
 	}
 	beforeLoaded := c.skillTracker.LoadedNames()
@@ -763,6 +762,19 @@ func (c *coordinator) buildAgent(ctx context.Context, prompt *prompt.Prompt, age
 	}
 
 	largeProviderCfg, _ := c.cfg.Config().Providers.Get(large.ModelCfg.Provider)
+	var (
+		reflectionEnabled  bool
+		maxReflectionTurns int
+	)
+	if c.cfg.ActiveProfile() == "fiduciary" {
+		reflectionEnabled = true
+	} else if c.cfg.Config().Options.Agent != nil {
+		reflectionEnabled = c.cfg.Config().Options.Agent.EnableReflection
+	}
+	if c.cfg.Config().Options.Agent != nil {
+		maxReflectionTurns = c.cfg.Config().Options.Agent.MaxTurns
+	}
+
 	result := NewSessionAgent(SessionAgentOptions{
 		LargeModel:           large,
 		SmallModel:           small,
@@ -777,24 +789,14 @@ func (c *coordinator) buildAgent(ctx context.Context, prompt *prompt.Prompt, age
 		Tools:                nil,
 		Notify:               c.notify,
 		RunComplete:          c.runComplete,
+		ReflectionEnabled:    reflectionEnabled,
+		MaxReflectionTurns:   maxReflectionTurns,
 	})
 
 	c.readyWg.Go(func() error {
-		systemPrompt, err := prompt.Build(ctx, large.Model.Provider(), large.Model.Model(), c.cfg)
+		systemPrompt, err := c.rebuildSystemPrompt(ctx, prompt, large, isSubAgent)
 		if err != nil {
 			return err
-		}
-		if !isSubAgent {
-			caps := parser.GetCapabilities()
-			if len(caps) > 0 {
-				var sb strings.Builder
-				sb.WriteString(systemPrompt)
-				sb.WriteString("\n\nYou have the following custom AST search capabilities available in the structural_search tool:\n")
-				for _, cap := range caps {
-					sb.WriteString(fmt.Sprintf("- ID: %s, Language: %s: %s\n", cap.ID, cap.Language, cap.Description))
-				}
-				systemPrompt = sb.String()
-			}
 		}
 		result.SetSystemPrompt(systemPrompt)
 		return nil
@@ -935,7 +937,7 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, isSubA
 	// without hook interception to avoid firing the user's hook N times
 	// per delegated turn. The top-level invocation of the sub-agent tool
 	// itself is still wrapped from the coder's side.
-	filteredTools = wrapToolsWithHooks(filteredTools, hookRunner, isSubAgent)
+	filteredTools = wrapToolsWithHooks(filteredTools, hookRunner, isSubAgent, c.cfg.ActiveProfile())
 
 	return filteredTools, nil
 }
@@ -1327,6 +1329,30 @@ func (c *coordinator) CancelAll() {
 	c.currentAgent.CancelAll()
 }
 
+func (c *coordinator) rebuildSystemPrompt(ctx context.Context, prompt *prompt.Prompt, largeModel Model, isSubAgent bool) (string, error) {
+	if prompt == nil {
+		return "", errors.New("prompt builder not initialized")
+	}
+	systemPrompt, err := prompt.Build(ctx, largeModel.Model.Provider(), largeModel.Model.Model(), c.cfg)
+	if err != nil {
+		return "", err
+	}
+
+	if !isSubAgent {
+		caps := parser.GetCapabilities()
+		if len(caps) > 0 {
+			var sb strings.Builder
+			sb.WriteString(systemPrompt)
+			sb.WriteString("\n\nYou have the following custom AST search capabilities available in the structural_search tool:\n")
+			for _, cap := range caps {
+				sb.WriteString(fmt.Sprintf("- ID: %s, Language: %s: %s\n", cap.ID, cap.Language, cap.Description))
+			}
+			systemPrompt = sb.String()
+		}
+	}
+	return systemPrompt, nil
+}
+
 func (c *coordinator) reloadQueriesAndPrompt(ctx context.Context) {
 	if err := parser.ReloadQueries(c.cfg.WorkingDir()); err != nil {
 		slog.Error("Failed to reload queries during sync", "error", err)
@@ -1336,21 +1362,10 @@ func (c *coordinator) reloadQueriesAndPrompt(ctx context.Context) {
 		return
 	}
 
-	systemPrompt, err := c.prompt.Build(ctx, c.largeModel.Model.Provider(), c.largeModel.Model.Model(), c.cfg)
+	systemPrompt, err := c.rebuildSystemPrompt(ctx, c.prompt, c.largeModel, false)
 	if err != nil {
 		slog.Error("Failed to build system prompt during reload", "error", err)
 		return
-	}
-
-	caps := parser.GetCapabilities()
-	if len(caps) > 0 {
-		var sb strings.Builder
-		sb.WriteString(systemPrompt)
-		sb.WriteString("\n\nYou have the following custom AST search capabilities available in the structural_search tool:\n")
-		for _, cap := range caps {
-			sb.WriteString(fmt.Sprintf("- ID: %s, Language: %s: %s\n", cap.ID, cap.Language, cap.Description))
-		}
-		systemPrompt = sb.String()
 	}
 
 	if c.currentAgent != nil {
@@ -1384,11 +1399,12 @@ func (c *coordinator) UpdateModels(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	c.largeModel = large
 	c.currentAgent.SetModels(large, small)
 
-	agentCfg, ok := c.cfg.Config().Agents[config.AgentCoder]
+	agentCfg, ok := c.cfg.Config().Agents[config.AgentSystem]
 	if !ok {
-		return errCoderAgentNotConfigured
+		return errSystemAgentNotConfigured
 	}
 
 	tools, err := c.buildTools(ctx, agentCfg, false)
@@ -1396,6 +1412,27 @@ func (c *coordinator) UpdateModels(ctx context.Context) error {
 		return err
 	}
 	c.currentAgent.SetTools(tools)
+
+	systemPrompt, err := c.rebuildSystemPrompt(ctx, c.prompt, large, false)
+	if err != nil {
+		return err
+	}
+	c.currentAgent.SetSystemPrompt(systemPrompt)
+
+	var (
+		reflectionEnabled  bool
+		maxReflectionTurns int
+	)
+	if c.cfg.ActiveProfile() == "fiduciary" {
+		reflectionEnabled = true
+	} else if c.cfg.Config().Options.Agent != nil {
+		reflectionEnabled = c.cfg.Config().Options.Agent.EnableReflection
+	}
+	if c.cfg.Config().Options.Agent != nil {
+		maxReflectionTurns = c.cfg.Config().Options.Agent.MaxTurns
+	}
+	c.currentAgent.SetReflection(reflectionEnabled, maxReflectionTurns)
+
 	return nil
 }
 

@@ -172,8 +172,8 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore, skillsMgr
 		slog.Warn("No agent configuration found")
 		return app, nil
 	}
-	if err := app.InitCoderAgent(ctx); err != nil {
-		return nil, fmt.Errorf("failed to initialize coder agent: %w", err)
+	if err := app.InitSystemAgent(ctx); err != nil {
+		return nil, fmt.Errorf("failed to initialize system agent: %w", err)
 	}
 
 	// Set up callback for LSP state updates.
@@ -609,10 +609,10 @@ func setupSubscriberMustDeliver[T any](
 	})
 }
 
-func (app *App) InitCoderAgent(ctx context.Context) error {
-	coderAgentCfg := app.config.Config().Agents[config.AgentCoder]
-	if coderAgentCfg.ID == "" {
-		return fmt.Errorf("coder agent configuration is missing")
+func (app *App) InitSystemAgent(ctx context.Context) error {
+	systemAgentCfg := app.config.Config().Agents[config.AgentSystem]
+	if systemAgentCfg.ID == "" {
+		return fmt.Errorf("system agent configuration is missing")
 	}
 	var err error
 	app.AgentCoordinator, err = agent.NewCoordinator(
@@ -630,7 +630,7 @@ func (app *App) InitCoderAgent(ctx context.Context) error {
 		app.Skills,
 	)
 	if err != nil {
-		slog.Error("Failed to create coder agent", "err", err)
+		slog.Error("Failed to create system agent", "err", err)
 		return err
 	}
 	app.GoalRuntime = app.AgentCoordinator.GoalRuntime()

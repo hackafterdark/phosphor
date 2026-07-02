@@ -29,8 +29,9 @@ func TestConfig_LoadFromBytes(t *testing.T) {
 	data1 := []byte(`{"providers": {"openai": {"api_key": "key1", "base_url": "https://api.openai.com/v1"}}}`)
 	data2 := []byte(`{"providers": {"openai": {"api_key": "key2", "base_url": "https://api.openai.com/v2"}}}`)
 	data3 := []byte(`{"providers": {"openai": {}}}`)
+	data4 := []byte(`{"agent": {"enable_reflection": true, "max_turns": 10}}`)
 
-	loadedConfig, err := loadFromBytes([][]byte{data1, data2, data3})
+	loadedConfig, err := loadFromBytes([][]byte{data1, data2, data3, data4})
 
 	require.NoError(t, err)
 	require.NotNil(t, loadedConfig)
@@ -38,6 +39,36 @@ func TestConfig_LoadFromBytes(t *testing.T) {
 	pc, _ := loadedConfig.Providers.Get("openai")
 	require.Equal(t, "key2", pc.APIKey)
 	require.Equal(t, "https://api.openai.com/v2", pc.BaseURL)
+	require.NotNil(t, loadedConfig.Options)
+	require.NotNil(t, loadedConfig.Options.Agent)
+	require.True(t, loadedConfig.Options.Agent.EnableReflection)
+	require.Equal(t, 10, loadedConfig.Options.Agent.MaxTurns)
+}
+
+func TestConfig_LoadFromBytes_Precedence(t *testing.T) {
+	// If both are specified, options.agent should take precedence over root agent config.
+	data1 := []byte(`{"agent": {"enable_reflection": false, "max_turns": 5}}`)
+	data2 := []byte(`{"options": {"agent": {"enable_reflection": true, "max_turns": 20}}}`)
+
+	loadedConfig, err := loadFromBytes([][]byte{data1, data2})
+	require.NoError(t, err)
+	require.NotNil(t, loadedConfig)
+	require.NotNil(t, loadedConfig.Options)
+	require.NotNil(t, loadedConfig.Options.Agent)
+	require.True(t, loadedConfig.Options.Agent.EnableReflection)
+	require.Equal(t, 20, loadedConfig.Options.Agent.MaxTurns)
+
+	// If options.agent is only partially specified, the unspecified fields can be filled by root agent.
+	data3 := []byte(`{"agent": {"enable_reflection": true, "max_turns": 5}}`)
+	data4 := []byte(`{"options": {"agent": {"max_turns": 20}}}`)
+
+	loadedConfig2, err := loadFromBytes([][]byte{data3, data4})
+	require.NoError(t, err)
+	require.NotNil(t, loadedConfig2)
+	require.NotNil(t, loadedConfig2.Options)
+	require.NotNil(t, loadedConfig2.Options.Agent)
+	require.True(t, loadedConfig2.Options.Agent.EnableReflection)
+	require.Equal(t, 20, loadedConfig2.Options.Agent.MaxTurns)
 }
 
 func TestLookupConfigs_BoundedByProject(t *testing.T) {
@@ -685,13 +716,13 @@ func TestConfig_setupAgentsWithNoDisabledTools(t *testing.T) {
 	}
 
 	cfg.SetupAgents()
-	coderAgent, ok := cfg.Agents[AgentCoder]
+	systemAgent, ok := cfg.Agents[AgentSystem]
 	require.True(t, ok)
-	assert.Equal(t, allToolNames(), coderAgent.AllowedTools)
+	assert.Equal(t, allToolNames(), systemAgent.AllowedTools)
 
 	taskAgent, ok := cfg.Agents[AgentTask]
 	require.True(t, ok)
-	assert.Equal(t, []string{"glob", "grep", "ls", "sourcegraph", "view"}, taskAgent.AllowedTools)
+	assert.Equal(t, []string{"glob", "grep", "ls", "structural_search", "sourcegraph", "view"}, taskAgent.AllowedTools)
 }
 
 func TestConfig_setupAgentsWithDisabledTools(t *testing.T) {
@@ -706,14 +737,14 @@ func TestConfig_setupAgentsWithDisabledTools(t *testing.T) {
 	}
 
 	cfg.SetupAgents()
-	coderAgent, ok := cfg.Agents[AgentCoder]
+	systemAgent, ok := cfg.Agents[AgentSystem]
 	require.True(t, ok)
 
-	assert.Equal(t, []string{"agent", "bash", "phosphor_info", "phosphor_logs", "job_output", "job_kill", "multiedit", "update_goal", "lsp_diagnostics", "lsp_references", "lsp_restart", "fetch", "agentic_fetch", "glob", "ls", "structural_search", "reload_queries", "sourcegraph", "todos", "view", "write", "append", "list_mcp_resources", "read_mcp_resource"}, coderAgent.AllowedTools)
+	assert.Equal(t, []string{"agent", "bash", "phosphor_info", "phosphor_logs", "job_output", "job_kill", "multiedit", "update_goal", "lsp_diagnostics", "lsp_references", "lsp_restart", "fetch", "agentic_fetch", "glob", "ls", "structural_search", "reload_queries", "sourcegraph", "todos", "view", "write", "append", "list_mcp_resources", "read_mcp_resource"}, systemAgent.AllowedTools)
 
 	taskAgent, ok := cfg.Agents[AgentTask]
 	require.True(t, ok)
-	assert.Equal(t, []string{"glob", "ls", "sourcegraph", "view"}, taskAgent.AllowedTools)
+	assert.Equal(t, []string{"glob", "ls", "structural_search", "sourcegraph", "view"}, taskAgent.AllowedTools)
 }
 
 func TestConfig_setupAgentsWithEveryReadOnlyToolDisabled(t *testing.T) {
@@ -725,14 +756,15 @@ func TestConfig_setupAgentsWithEveryReadOnlyToolDisabled(t *testing.T) {
 				"ls",
 				"sourcegraph",
 				"view",
+				"structural_search",
 			},
 		},
 	}
 
 	cfg.SetupAgents()
-	coderAgent, ok := cfg.Agents[AgentCoder]
+	systemAgent, ok := cfg.Agents[AgentSystem]
 	require.True(t, ok)
-	assert.Equal(t, []string{"agent", "bash", "phosphor_info", "phosphor_logs", "job_output", "job_kill", "download", "edit", "multiedit", "update_goal", "lsp_diagnostics", "lsp_references", "lsp_restart", "fetch", "agentic_fetch", "structural_search", "reload_queries", "todos", "write", "append", "list_mcp_resources", "read_mcp_resource"}, coderAgent.AllowedTools)
+	assert.Equal(t, []string{"agent", "bash", "phosphor_info", "phosphor_logs", "job_output", "job_kill", "download", "edit", "multiedit", "update_goal", "lsp_diagnostics", "lsp_references", "lsp_restart", "fetch", "agentic_fetch", "reload_queries", "todos", "write", "append", "list_mcp_resources", "read_mcp_resource"}, systemAgent.AllowedTools)
 
 	taskAgent, ok := cfg.Agents[AgentTask]
 	require.True(t, ok)

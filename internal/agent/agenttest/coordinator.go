@@ -60,9 +60,9 @@ func NewCoordinator(
 	cfg.SetupAgents()
 
 	// Keep buildTools light: no sub-agent or agentic-fetch construction.
-	coderCfg := cfg.Config().Agents[config.AgentCoder]
-	coderCfg.AllowedTools = nil
-	cfg.Config().Agents[config.AgentCoder] = coderCfg
+	systemCfg := cfg.Config().Agents[config.AgentSystem]
+	systemCfg.AllowedTools = nil
+	cfg.Config().Agents[config.AgentSystem] = systemCfg
 
 	return agent.NewCoordinator(
 		ctx,

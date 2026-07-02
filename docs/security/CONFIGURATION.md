@@ -11,7 +11,6 @@ This guide covers every security control that can be managed via the
   - [YOLO Mode](#yolo-mode)
 - [Disabling Built-In Tools](#disabling-built-in-tools)
 - [Disabling Skills](#disabling-skills)
-- [Disabling Agents](#disabling-agents)
 - [MCP Server Security](#mcp-server-security)
   - [Disabling MCP Servers](#disabling-mcp-servers)
   - [Disabling MCP Tools](#disabling-mcp-tools)
@@ -20,7 +19,6 @@ This guide covers every security control that can be managed via the
   - [Disabling Providers](#disabling-providers)
   - [Locking Down Default Providers](#locking-down-default-providers)
   - [Disabling Provider Auto-Update](#disabling-provider-auto-update)
-- [Per-Agent Tool Access](#per-agent-tool-access)
 - [Observability Security](#observability-security)
 - [Telemetry opt-out](#telemetry-opt-out)
 - [Tool Limits and Timeouts](#tool-limits-and-timeouts)
@@ -120,24 +118,6 @@ the agent, including builtin skills and skills discovered from disk.
   "$schema": "https://github.com/hackafterdark/phosphor/blob/main/schema.json",
   "options": {
     "disabled_skills": ["phosphor-config"]
-  }
-}
-```
-
----
-
-## Disabling Agents
-
-Phosphor supports named agents (e.g. "coder", "task"). You can disable an
-agent entirely so it is not available for selection:
-
-```json
-{
-  "$schema": "https://github.com/hackafterdark/phosphor/blob/main/schema.json",
-  "agents": {
-    "task": {
-      "disabled": true
-    }
   }
 }
 ```
@@ -272,44 +252,6 @@ To prevent Phosphor from automatically fetching updated provider model lists:
   }
 }
 ```
-
----
-
-## Per-Agent Tool Access
-
-Named agents can have their own tool allow-lists, restricting which tools
-each agent can use regardless of global permissions:
-
-```json
-{
-  "$schema": "https://github.com/hackafterdark/phosphor/blob/main/schema.json",
-  "agents": {
-    "coder": {
-      "allowed_tools": ["view", "edit", "grep", "glob", "ls"]
-    }
-  }
-}
-```
-
-Agents can also be restricted to specific MCP tools:
-
-```json
-{
-  "$schema": "https://github.com/hackafterdark/phosphor/blob/main/schema.json",
-  "agents": {
-    "coder": {
-      "allowed_mcp": {
-        "context7": ["get-library-doc"],
-        "memory": null
-      }
-    }
-  }
-}
-```
-
-- If `allowed_mcp` is empty, all MCP servers are available.
-- If a server's tool list is `null`, all tools from that server are available.
-- If a server's tool list is an array, only those tools are available.
 
 ---
 

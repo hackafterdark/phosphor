@@ -162,7 +162,7 @@ func renderHeaderDetails(
 		parts = append(parts, t.LSP.ErrorDiagnostic.Render(fmt.Sprintf("%s%d", styles.LSPErrorIcon, lspErrorCount)))
 	}
 
-	agentCfg := com.Config().Agents[config.AgentCoder]
+	agentCfg := com.Config().Agents[config.AgentSystem]
 	model := com.Config().GetModelByType(agentCfg.Model)
 	if model != nil && model.ContextWindow > 0 {
 		tokens := session.CurrentTokens

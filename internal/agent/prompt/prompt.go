@@ -3,6 +3,7 @@ package prompt
 import (
 	"cmp"
 	"context"
+	_ "embed"
 	"fmt"
 	"log/slog"
 	"os"
@@ -19,6 +20,24 @@ import (
 	"github.com/hackafterdark/phosphor/internal/skills"
 )
 
+//go:embed templates/rules.md.tpl
+var defaultRules []byte
+
+//go:embed templates/style.md.tpl
+var defaultStyle []byte
+
+//go:embed templates/workflow.md.tpl
+var defaultWorkflow []byte
+
+//go:embed templates/interaction_gating.md.tpl
+var defaultInteractionGating []byte
+
+//go:embed templates/decision_making.md.tpl
+var defaultDecisionMaking []byte
+
+//go:embed templates/coding.md.tpl
+var defaultCodingProtocol []byte
+
 // Prompt represents a template-based prompt generator.
 type Prompt struct {
 	name                      string
@@ -34,6 +53,7 @@ type PromptDat struct {
 	Model                     string
 	PromptToolCalls           bool
 	Config                    config.Config
+	AgentConfig               *config.AgentConfig
 	WorkingDir                string
 	IsGitRepo                 bool
 	Platform                  string
@@ -43,11 +63,69 @@ type PromptDat struct {
 	GlobalContextFiles        []ContextFile
 	AvailSkillXML             string
 	StructuralSearchAvailable bool
+	CriticalRules             string
+	CommunicationStyle        string
+	Workflow                  string
+	InteractionGating         string
+	DecisionMaking            string
+	CodingProtocol            string
 }
 
 type ContextFile struct {
 	Path    string
 	Content string
+}
+
+// --- Section-specific views (least-privilege for profile partials) ---
+
+// RulesView is the data exposed to rules.md.tpl partials.
+type RulesView struct {
+	PromptToolCalls           bool
+	IsGitRepo                 bool
+	Platform                  string
+	StructuralSearchAvailable bool
+}
+
+// StyleView is the data exposed to style.md.tpl partials.
+// The embedded default contains no template directives, but this view
+// allows users to write conditional style content if needed.
+type StyleView struct {
+	Provider string
+	Model    string
+	Platform string
+	Date     string
+}
+
+// WorkflowView is the data exposed to workflow.md.tpl partials.
+type WorkflowView struct {
+	WorkingDir string
+	IsGitRepo  bool
+	GitStatus  string
+	Platform   string
+}
+
+// InteractionGatingView is the data exposed to interaction_gating.md.tpl partials.
+type InteractionGatingView struct {
+	MaxTurns int
+}
+
+// DecisionMakingView is the data exposed to decision_making.md.tpl partials.
+// The embedded default contains no template directives, but this view
+// allows users to write conditional decision content if needed.
+type DecisionMakingView struct {
+	Provider string
+	Model    string
+}
+
+// CodingProtocolView is the data exposed to coding.md.tpl partials.
+type CodingProtocolView struct {
+	Provider                  string
+	Model                     string
+	WorkingDir                string
+	IsGitRepo                 bool
+	GitStatus                 string
+	Platform                  string
+	StructuralSearchAvailable bool
 }
 
 type Option func(*Prompt)
@@ -88,16 +166,136 @@ func NewPrompt(name, promptTemplate string, opts ...Option) (*Prompt, error) {
 	return p, nil
 }
 
-func (p *Prompt) Build(ctx context.Context, provider, model string, store *config.ConfigStore) (string, error) {
-	t, err := template.New(p.name).Parse(p.template)
+func resolveProfileTemplate(profileName, templateFile, workingDir string, embeddedDefault []byte) (string, error) {
+	if profileName == "" {
+		profileName = "default"
+	}
+
+	// 1. Workspace override: <workspace>/.phosphor/profiles/<profile-name>/<file>.md.tpl
+	workspacePath := filepath.Join(workingDir, ".phosphor", "profiles", profileName, templateFile)
+	if _, err := os.Stat(workspacePath); err == nil {
+		content, err := os.ReadFile(workspacePath)
+		if err == nil {
+			return string(content), nil
+		}
+	}
+
+	// 2. Global override: ~/.phosphor/profiles/<profile-name>/<file>.md.tpl
+	globalPath := filepath.Join(home.Dir(), ".phosphor", "profiles", profileName, templateFile)
+	if _, err := os.Stat(globalPath); err == nil {
+		content, err := os.ReadFile(globalPath)
+		if err == nil {
+			return string(content), nil
+		}
+	}
+
+	// 3. Embedded fallback
+	return string(embeddedDefault), nil
+}
+
+func (p *Prompt) renderProfileTemplate(profileName, templateFile, workingDir string, embeddedDefault []byte, data any) (string, error) {
+	tmplStr, err := resolveProfileTemplate(profileName, templateFile, workingDir, embeddedDefault)
 	if err != nil {
-		return "", fmt.Errorf("parsing template: %w", err)
+		return "", err
+	}
+	t, err := template.New(templateFile).Parse(tmplStr)
+	if err != nil {
+		return "", fmt.Errorf("parsing profile template %s: %w", templateFile, err)
 	}
 	var sb strings.Builder
+	if err := t.Execute(&sb, data); err != nil {
+		return "", fmt.Errorf("executing profile template %s: %w", templateFile, err)
+	}
+	trimmed := strings.TrimSpace(sb.String())
+	// Magic word override: Omit section
+	if strings.Contains(trimmed, "# DISABLE_SECTION") {
+		return "", nil
+	}
+	return trimmed, nil
+}
+
+func (p *Prompt) Build(ctx context.Context, provider, model string, store *config.ConfigStore) (string, error) {
 	d, err := p.promptData(ctx, provider, model, store)
 	if err != nil {
 		return "", err
 	}
+
+	profileName := store.ActiveProfile()
+	workingDir := cmp.Or(p.workingDir, store.WorkingDir())
+
+	rulesRendered, err := p.renderProfileTemplate(profileName, "rules.md.tpl", workingDir, defaultRules, RulesView{
+		PromptToolCalls:           d.PromptToolCalls,
+		IsGitRepo:                 d.IsGitRepo,
+		Platform:                  d.Platform,
+		StructuralSearchAvailable: d.StructuralSearchAvailable,
+	})
+	if err != nil {
+		return "", err
+	}
+	styleRendered, err := p.renderProfileTemplate(profileName, "style.md.tpl", workingDir, defaultStyle, StyleView{
+		Provider: d.Provider,
+		Model:    d.Model,
+		Platform: d.Platform,
+		Date:     d.Date,
+	})
+	if err != nil {
+		return "", err
+	}
+	workflowRendered, err := p.renderProfileTemplate(profileName, "workflow.md.tpl", workingDir, defaultWorkflow, WorkflowView{
+		WorkingDir: d.WorkingDir,
+		IsGitRepo:  d.IsGitRepo,
+		GitStatus:  d.GitStatus,
+		Platform:   d.Platform,
+	})
+	if err != nil {
+		return "", err
+	}
+
+	var maxTurns int
+	if d.AgentConfig != nil {
+		maxTurns = d.AgentConfig.MaxTurns
+	}
+	interactionGatingRendered, err := p.renderProfileTemplate(profileName, "interaction_gating.md.tpl", workingDir, defaultInteractionGating, InteractionGatingView{MaxTurns: maxTurns})
+	if err != nil {
+		return "", err
+	}
+	decisionMakingRendered, err := p.renderProfileTemplate(profileName, "decision_making.md.tpl", workingDir, defaultDecisionMaking, DecisionMakingView{
+		Provider: d.Provider,
+		Model:    d.Model,
+	})
+	if err != nil {
+		return "", err
+	}
+	codingProtocolRendered, err := p.renderProfileTemplate(profileName, "coding.md.tpl", workingDir, defaultCodingProtocol, CodingProtocolView{
+		Provider:                  d.Provider,
+		Model:                     d.Model,
+		WorkingDir:                d.WorkingDir,
+		IsGitRepo:                 d.IsGitRepo,
+		GitStatus:                 d.GitStatus,
+		Platform:                  d.Platform,
+		StructuralSearchAvailable: d.StructuralSearchAvailable,
+	})
+	if err != nil {
+		return "", err
+	}
+
+	d.CriticalRules = rulesRendered
+	d.CommunicationStyle = styleRendered
+	d.Workflow = workflowRendered
+	d.InteractionGating = interactionGatingRendered
+	d.DecisionMaking = decisionMakingRendered
+	d.CodingProtocol = codingProtocolRendered
+
+	mainTmpl, err := resolveProfileTemplate(profileName, p.name+".md.tpl", workingDir, []byte(p.template))
+	if err != nil {
+		return "", err
+	}
+
+	t, err := template.New(p.name).Parse(mainTmpl)
+	if err != nil {
+		return "", fmt.Errorf("parsing template: %w", err)
+	}
+	var sb strings.Builder
 	if err := t.Execute(&sb, d); err != nil {
 		return "", fmt.Errorf("executing template: %w", err)
 	}
@@ -220,11 +418,21 @@ func (p *Prompt) promptData(ctx context.Context, provider, model string, store *
 	}
 
 	isGit := isGitRepo(store.WorkingDir())
+	agentCfg := cfg.Options.Agent
+	if agentCfg == nil {
+		agentCfg = &config.AgentConfig{}
+	}
+	if store.ActiveProfile() == "fiduciary" {
+		cp := *agentCfg
+		cp.EnableReflection = true
+		agentCfg = &cp
+	}
 	data := PromptDat{
 		Provider:                  provider,
 		Model:                     model,
 		PromptToolCalls:           promptToolCalls,
 		Config:                    *cfg,
+		AgentConfig:               agentCfg,
 		WorkingDir:                filepath.ToSlash(workingDir),
 		IsGitRepo:                 isGit,
 		Platform:                  platform,

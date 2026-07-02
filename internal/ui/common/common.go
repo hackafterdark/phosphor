@@ -45,7 +45,7 @@ func defaultTestConfig() *config.Config {
 				TUI: &config.TUIOptions{},
 			},
 			Agents: map[string]config.Agent{
-				config.AgentCoder: {
+				config.AgentSystem: {
 					Model: config.SelectedModelTypeLarge,
 				},
 				config.AgentTask: {

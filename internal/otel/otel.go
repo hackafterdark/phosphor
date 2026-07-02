@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	oinference "github.com/Arize-ai/openinference/go/openinference-semantic-conventions"
 	"charm.land/fantasy"
+	oinference "github.com/Arize-ai/openinference/go/openinference-semantic-conventions"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -221,8 +221,8 @@ func FlattenMessages(prefix string, msgs []fantasy.Message) []attribute.KeyValue
 	// Pre-compute content for all messages and filter consecutive duplicate
 	// user messages (same role + same content).
 	type filteredMsg struct {
-		role     string
-		content  string
+		role       string
+		content    string
 		hasContent bool
 	}
 	filtered := make([]filteredMsg, 0, len(msgs))
@@ -305,7 +305,7 @@ func SerializeMessages(msgs []fantasy.Message) string {
 		Content any    `json:"content,omitempty"`
 	}
 	type otelMessage struct {
-		Role  string    `json:"role"`
+		Role  string        `json:"role"`
 		Parts []messagePart `json:"parts"`
 	}
 
@@ -512,127 +512,127 @@ func StartPromptWithAttachmentsSpan(ctx context.Context, sessionID string, attac
 
 // genAIAttrKeys provides typed attribute keys for GenAI semantic conventions.
 var genAIAttrKeys = struct {
-	OperationName      attribute.Key
-	ProviderName       attribute.Key
-	RequestModel       attribute.Key
-	ResponseModel      attribute.Key
-	ResponseID         attribute.Key
-	ConversationID     attribute.Key
-	AgentName          attribute.Key
-	AgentID            attribute.Key
-	AgentDescription   attribute.Key
-	AgentVersion       attribute.Key
-	WorkflowName       attribute.Key
-	ToolName           attribute.Key
-	ToolType           attribute.Key
-	ToolCallID         attribute.Key
-	ToolCallArgs       attribute.Key
-	ToolCallResult     attribute.Key
-	DataSourceID       attribute.Key
-	OutputType         attribute.Key
-	FinishReason       attribute.Key
-	ErrorMessage       attribute.Key
-	ErrorType          attribute.Key
-	SystemInstructions attribute.Key
-	ToolDefinitions    attribute.Key
-	UsageInputTokens   attribute.Key
-	UsageOutputTokens  attribute.Key
-	UsageReasoning     attribute.Key
-	UsageCacheCreate   attribute.Key
-	UsageCacheRead     attribute.Key
-	RequestTemperature attribute.Key
-	RequestTopP        attribute.Key
-	RequestTopK        attribute.Key
-	RequestMaxTokens   attribute.Key
-	RequestFreqPenalty attribute.Key
-	RequestPresencePen attribute.Key
-	RequestSeed        attribute.Key
-	RequestStopSequences attribute.Key
+	OperationName         attribute.Key
+	ProviderName          attribute.Key
+	RequestModel          attribute.Key
+	ResponseModel         attribute.Key
+	ResponseID            attribute.Key
+	ConversationID        attribute.Key
+	AgentName             attribute.Key
+	AgentID               attribute.Key
+	AgentDescription      attribute.Key
+	AgentVersion          attribute.Key
+	WorkflowName          attribute.Key
+	ToolName              attribute.Key
+	ToolType              attribute.Key
+	ToolCallID            attribute.Key
+	ToolCallArgs          attribute.Key
+	ToolCallResult        attribute.Key
+	DataSourceID          attribute.Key
+	OutputType            attribute.Key
+	FinishReason          attribute.Key
+	ErrorMessage          attribute.Key
+	ErrorType             attribute.Key
+	SystemInstructions    attribute.Key
+	ToolDefinitions       attribute.Key
+	UsageInputTokens      attribute.Key
+	UsageOutputTokens     attribute.Key
+	UsageReasoning        attribute.Key
+	UsageCacheCreate      attribute.Key
+	UsageCacheRead        attribute.Key
+	RequestTemperature    attribute.Key
+	RequestTopP           attribute.Key
+	RequestTopK           attribute.Key
+	RequestMaxTokens      attribute.Key
+	RequestFreqPenalty    attribute.Key
+	RequestPresencePen    attribute.Key
+	RequestSeed           attribute.Key
+	RequestStopSequences  attribute.Key
 	RequestReasoningLevel attribute.Key
 	RequestRepetitionPen  attribute.Key
 }{
-	OperationName:      "gen_ai.operation.name",
-	ProviderName:       "gen_ai.provider.name",
-	RequestModel:       "gen_ai.request.model",
-	ResponseModel:      "gen_ai.response.model",
-	ResponseID:         "gen_ai.response.id",
-	ConversationID:     "gen_ai.conversation.id",
-	AgentName:          "gen_ai.agent.name",
-	AgentID:            "gen_ai.agent.id",
-	AgentDescription:   "gen_ai.agent.description",
-	AgentVersion:       "gen_ai.agent.version",
-	WorkflowName:       "gen_ai.workflow.name",
-	ToolName:           "gen_ai.tool.name",
-	ToolType:           "gen_ai.tool.type",
-	ToolCallID:         "gen_ai.tool.call.id",
-	ToolCallArgs:       "gen_ai.tool.call.arguments",
-	ToolCallResult:     "gen_ai.tool.call.result",
-	DataSourceID:       "gen_ai.data_source.id",
-	OutputType:         "gen_ai.output.type",
-	FinishReason:       "gen_ai.response.finish_reason",
-	ErrorMessage:       "gen_ai.error.message",
-	ErrorType:          "error.type",
-	SystemInstructions: "gen_ai.system.instructions",
-	ToolDefinitions:    "gen_ai.tool.definitions",
-	UsageInputTokens:   "gen_ai.usage.input_tokens",
-	UsageOutputTokens:  "gen_ai.usage.output_tokens",
-	UsageReasoning:     "gen_ai.usage.reasoning.output_tokens",
-	UsageCacheCreate:   "gen_ai.usage.cache_creation.input_tokens",
-	UsageCacheRead:     "gen_ai.usage.cache_read.input_tokens",
-	RequestTemperature: "gen_ai.request.temperature",
-	RequestTopP:        "gen_ai.request.top_p",
-	RequestTopK:        "gen_ai.request.top_k",
-	RequestMaxTokens:   "gen_ai.request.max_tokens",
-	RequestFreqPenalty: "gen_ai.request.frequency_penalty",
-	RequestPresencePen: "gen_ai.request.presence_penalty",
-	RequestSeed:        "gen_ai.request.seed",
-	RequestStopSequences: "gen_ai.request.stop_sequences",
+	OperationName:         "gen_ai.operation.name",
+	ProviderName:          "gen_ai.provider.name",
+	RequestModel:          "gen_ai.request.model",
+	ResponseModel:         "gen_ai.response.model",
+	ResponseID:            "gen_ai.response.id",
+	ConversationID:        "gen_ai.conversation.id",
+	AgentName:             "gen_ai.agent.name",
+	AgentID:               "gen_ai.agent.id",
+	AgentDescription:      "gen_ai.agent.description",
+	AgentVersion:          "gen_ai.agent.version",
+	WorkflowName:          "gen_ai.workflow.name",
+	ToolName:              "gen_ai.tool.name",
+	ToolType:              "gen_ai.tool.type",
+	ToolCallID:            "gen_ai.tool.call.id",
+	ToolCallArgs:          "gen_ai.tool.call.arguments",
+	ToolCallResult:        "gen_ai.tool.call.result",
+	DataSourceID:          "gen_ai.data_source.id",
+	OutputType:            "gen_ai.output.type",
+	FinishReason:          "gen_ai.response.finish_reason",
+	ErrorMessage:          "gen_ai.error.message",
+	ErrorType:             "error.type",
+	SystemInstructions:    "gen_ai.system.instructions",
+	ToolDefinitions:       "gen_ai.tool.definitions",
+	UsageInputTokens:      "gen_ai.usage.input_tokens",
+	UsageOutputTokens:     "gen_ai.usage.output_tokens",
+	UsageReasoning:        "gen_ai.usage.reasoning.output_tokens",
+	UsageCacheCreate:      "gen_ai.usage.cache_creation.input_tokens",
+	UsageCacheRead:        "gen_ai.usage.cache_read.input_tokens",
+	RequestTemperature:    "gen_ai.request.temperature",
+	RequestTopP:           "gen_ai.request.top_p",
+	RequestTopK:           "gen_ai.request.top_k",
+	RequestMaxTokens:      "gen_ai.request.max_tokens",
+	RequestFreqPenalty:    "gen_ai.request.frequency_penalty",
+	RequestPresencePen:    "gen_ai.request.presence_penalty",
+	RequestSeed:           "gen_ai.request.seed",
+	RequestStopSequences:  "gen_ai.request.stop_sequences",
 	RequestReasoningLevel: "gen_ai.request.reasoning.level",
 	RequestRepetitionPen:  "gen_ai.request.repetition_penalty",
 }
 
 // GenAIAttributes holds optional GenAI semantic convention attributes for spans.
 type GenAIAttributes struct {
-	OperationName      string
-	ProviderName       string
-	RequestModel       string
-	ResponseModel      string
-	ResponseID         string
-	ConversationID     string
-	AgentName          string
-	AgentID            string
-	AgentDescription   string
-	AgentVersion       string
-	WorkflowName       string
-	ToolName           string
-	ToolType           string
-	ToolCallID         string
-	ToolCallArgs       string
-	ToolCallResult     string
-	DataSourceID       string
-	OutputType         string
-	FinishReason       string
-	ErrorMessage       string
-	ErrorType          string
-	InputMessages      []fantasy.Message
-	OutputMessages     []fantasy.Message
-	SystemInstructions string
-	ToolDefinitions    string
-	RequestTemperature *float64
-	RequestTopP        *float64
-	RequestTopK        *int64
-	RequestMaxTokens   *int64
-	RequestFreqPenalty *float64
-	RequestPresencePen *float64
-	RequestSeed        *int64
-	RequestStopSequences []string
+	OperationName         string
+	ProviderName          string
+	RequestModel          string
+	ResponseModel         string
+	ResponseID            string
+	ConversationID        string
+	AgentName             string
+	AgentID               string
+	AgentDescription      string
+	AgentVersion          string
+	WorkflowName          string
+	ToolName              string
+	ToolType              string
+	ToolCallID            string
+	ToolCallArgs          string
+	ToolCallResult        string
+	DataSourceID          string
+	OutputType            string
+	FinishReason          string
+	ErrorMessage          string
+	ErrorType             string
+	InputMessages         []fantasy.Message
+	OutputMessages        []fantasy.Message
+	SystemInstructions    string
+	ToolDefinitions       string
+	RequestTemperature    *float64
+	RequestTopP           *float64
+	RequestTopK           *int64
+	RequestMaxTokens      *int64
+	RequestFreqPenalty    *float64
+	RequestPresencePen    *float64
+	RequestSeed           *int64
+	RequestStopSequences  []string
 	RequestReasoningLevel *string
 	RequestRepetitionPen  *float64
-	UsageInputTokens   *int64
-	UsageOutputTokens  *int64
-	UsageReasoning     *int64
-	UsageCacheCreate   *int64
-	UsageCacheRead     *int64
+	UsageInputTokens      *int64
+	UsageOutputTokens     *int64
+	UsageReasoning        *int64
+	UsageCacheCreate      *int64
+	UsageCacheRead        *int64
 }
 
 // buildGenAIAttrKeys builds a slice of attribute.KeyValue from GenAIAttributes,

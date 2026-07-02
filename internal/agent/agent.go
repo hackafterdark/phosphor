@@ -37,6 +37,7 @@ import (
 	"charm.land/fantasy/providers/openrouter"
 	"charm.land/fantasy/providers/vercel"
 	"charm.land/lipgloss/v2"
+	oinference "github.com/Arize-ai/openinference/go/openinference-semantic-conventions"
 	"github.com/charmbracelet/x/exp/charmtone"
 	"github.com/hackafterdark/phosphor/internal/agent/hyper"
 	"github.com/hackafterdark/phosphor/internal/agent/notify"
@@ -47,7 +48,6 @@ import (
 	"github.com/hackafterdark/phosphor/internal/goal"
 	"github.com/hackafterdark/phosphor/internal/message"
 	"github.com/hackafterdark/phosphor/internal/otel"
-	oinference "github.com/Arize-ai/openinference/go/openinference-semantic-conventions"
 	"github.com/hackafterdark/phosphor/internal/pubsub"
 	"github.com/hackafterdark/phosphor/internal/session"
 	"github.com/hackafterdark/phosphor/internal/stringext"
@@ -108,7 +108,7 @@ type SessionAgentCall struct {
 	// MaxThinkingTokens sets max tokens for thinking/reasoning output.
 	MaxThinkingTokens *int64
 
-	NonInteractive   bool
+	NonInteractive bool
 	// OnComplete, when non-nil, replaces the default RunComplete
 	// publish path: the inner Run hands the terminal payload to this
 	// callback instead of emitting it on the RunComplete broker. The
@@ -147,6 +147,7 @@ type SessionAgent interface {
 	SetModels(large Model, small Model)
 	SetTools(tools []fantasy.AgentTool)
 	SetSystemPrompt(systemPrompt string)
+	SetReflection(enabled bool, maxTurns int)
 	Cancel(sessionID string)
 	CancelAll()
 	IsSessionBusy(sessionID string) bool
@@ -181,6 +182,10 @@ type sessionAgent struct {
 	isYolo               bool
 	notify               pubsub.Publisher[notify.Notification]
 	runComplete          pubsub.Publisher[notify.RunComplete]
+
+	// Reflection loop state.
+	reflectionEnabled  *csync.Value[bool]
+	maxReflectionTurns *csync.Value[int]
 
 	messageQueue   *csync.Map[string, []SessionAgentCall]
 	activeRequests *csync.Map[string, context.CancelFunc]
@@ -237,6 +242,8 @@ type SessionAgentOptions struct {
 	Tools                []fantasy.AgentTool
 	Notify               pubsub.Publisher[notify.Notification]
 	RunComplete          pubsub.Publisher[notify.RunComplete]
+	ReflectionEnabled    bool
+	MaxReflectionTurns   int
 }
 
 func NewSessionAgent(
@@ -256,6 +263,8 @@ func NewSessionAgent(
 		isYolo:               opts.IsYolo,
 		notify:               opts.Notify,
 		runComplete:          opts.RunComplete,
+		reflectionEnabled:    csync.NewValue(opts.ReflectionEnabled),
+		maxReflectionTurns:   csync.NewValue(opts.MaxReflectionTurns),
 		messageQueue:         csync.NewMap[string, []SessionAgentCall](),
 		activeRequests:       csync.NewMap[string, context.CancelFunc](),
 		dispatchMu:           csync.NewMap[string, *sync.Mutex](),
@@ -567,6 +576,7 @@ func ValidateCall(call SessionAgentCall) error {
 }
 
 func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *fantasy.AgentResult, retErr error) {
+	var reflectionTurns int
 	slog.Info("SessionAgent.Run called", "session_id", call.SessionID, "temp", call.Temperature, "rep_pen", call.RepetitionPenalty)
 	if err := ValidateCall(call); err != nil {
 		return nil, err
@@ -1249,6 +1259,14 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 				return sessionErr
 			}
 			currentSession = updatedSession
+			// Check for reflection tags in the assistant response.
+			if a.reflectionEnabled.Get() && currentAssistant != nil {
+				text := currentAssistant.Content().String()
+				if strings.Contains(text, "<reflection>") {
+					reflectionTurns++
+					slog.Debug("Reflection detected", "turn", reflectionTurns)
+				}
+			}
 			return a.messages.Update(genCtx, *currentAssistant)
 		},
 		StopWhen: []fantasy.StopCondition{
@@ -1284,8 +1302,26 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 			func(steps []fantasy.StepResult) bool {
 				return hasConsecutiveToolFailures(steps)
 			},
+			func(steps []fantasy.StepResult) bool {
+				// Stop if max reflection turns have been exceeded.
+				if a.reflectionEnabled.Get() && a.maxReflectionTurns.Get() > 0 && reflectionTurns >= a.maxReflectionTurns.Get() {
+					slog.Debug("Max reflection turns reached", "turns", reflectionTurns)
+					return true
+				}
+				return false
+			},
 		},
 	})
+
+	// After Stream returns, check if reflection is needed.
+	if err == nil && a.reflectionEnabled.Get() && reflectionTurns > 0 {
+		slog.Debug("Reflection detected, adding correction message", "turns", reflectionTurns)
+		// Add a system message with correction instructions to the conversation.
+		correctionMsg := fmt.Sprintf("Self-critique detected %d violation(s). Please review and correct your output according to the critical_rules.", reflectionTurns)
+		history = append(history, fantasy.NewSystemMessage(correctionMsg))
+		// Re-run the agent with the correction message.
+		return a.Run(ctx, call)
+	}
 
 	if err != nil {
 		isHyper := largeModel.ModelCfg.Provider == hyper.Name
@@ -2417,6 +2453,11 @@ func (a *sessionAgent) SetTools(tools []fantasy.AgentTool) {
 
 func (a *sessionAgent) SetSystemPrompt(systemPrompt string) {
 	a.systemPrompt.Set(systemPrompt)
+}
+
+func (a *sessionAgent) SetReflection(enabled bool, maxTurns int) {
+	a.reflectionEnabled.Set(enabled)
+	a.maxReflectionTurns.Set(maxTurns)
 }
 
 func (a *sessionAgent) Model() Model {
