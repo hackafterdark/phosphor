@@ -9,14 +9,12 @@ import (
 	"html/template"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strings"
 	"time"
 
 	"charm.land/fantasy"
 	"github.com/hackafterdark/phosphor/internal/config"
 	"github.com/hackafterdark/phosphor/internal/filepathext"
-	"github.com/hackafterdark/phosphor/internal/fsext"
 	"github.com/hackafterdark/phosphor/internal/otel"
 	"github.com/hackafterdark/phosphor/internal/permission"
 	"github.com/hackafterdark/phosphor/internal/shell"
@@ -72,6 +70,7 @@ type bashDescriptionData struct {
 	ModelID         string
 	RgAvailable     bool
 	GhAvailable     bool
+	WorkspaceRoot   string
 }
 
 var bannedCommands = []string{
@@ -147,7 +146,7 @@ var bannedCommands = []string{
 	"ufw",
 }
 
-func bashDescription(attribution *config.Attribution, modelID string) string {
+func bashDescription(workspaceRoot string, attribution *config.Attribution, modelID string) string {
 	bannedCommandsStr := strings.Join(bannedCommands, ", ")
 	var attr config.Attribution
 	if attribution != nil {
@@ -161,6 +160,7 @@ func bashDescription(attribution *config.Attribution, modelID string) string {
 		ModelID:         modelID,
 		RgAvailable:     getRg() != "",
 		GhAvailable:     ghAvailable,
+		WorkspaceRoot:   workspaceRoot,
 	}); err != nil {
 		// this should never happen.
 		panic("failed to execute bash description template: " + err.Error())
@@ -242,28 +242,38 @@ func blockFuncs(ctx context.Context, cfg config.ToolBash) []shell.BlockFunc {
 	return funcs
 }
 
-// I/O command keywords that may attempt to read/write files outside workspace
+// I/O command keywords that may attempt to read/write files outside workspace.
+// These are checked as whole words (not substrings) to avoid false positives
+// from paths like ./cmd/petstore or arguments containing these names.
 var ioCommands = []string{
 	"cat", "type", "Get-Content", "read", "write",
 	"grep", "tail", "head", "sed", "awk",
-	"powershell", "cmd", "dir",
+	"powershell", "dir",
 }
+
+// ioCommandRegex matches I/O commands as whole words at the start of a
+// command or after a chain operator (&&, ||, ;). This prevents substring
+// false positives like "cmd" matching "./cmd/petstore" in Go build commands.
+var ioCommandRegex = regexp.MustCompile(
+	`(?i)(?:^|[\s;&|])(` + strings.Join(ioCommands, "|") + `)(?:\s|$)`,
+)
 
 // pathRegex extracts file paths from commands
 var pathRegex = regexp.MustCompile(`['"]?([A-Za-z]:)?[/\\][^\s'"]+['"]?`)
 
 // validateCommandPaths checks if any file paths in the command are outside the workspace
 func validateCommandPaths(command string, absWorkingDir string) error {
-	// Check for I/O commands
-	hasIOCommand := false
-	for _, cmd := range ioCommands {
-		if strings.Contains(strings.ToLower(command), strings.ToLower(cmd)) {
-			hasIOCommand = true
-			break
-		}
+	// Skip cd commands entirely — they change directory, not access files.
+	// The shell's workspace boundary enforcement (updateShellFromRunner)
+	// already prevents cd from escaping the workspace.
+	if isCDCommand(command) {
+		return nil
 	}
 
-	if !hasIOCommand {
+	// Check for I/O commands using whole-word matching to avoid false
+	// positives from paths like ./cmd/petstore or arguments containing
+	// I/O command names.
+	if !ioCommandRegex.MatchString(command) {
 		return nil // No I/O commands detected, skip path validation
 	}
 
@@ -276,10 +286,18 @@ func validateCommandPaths(command string, absWorkingDir string) error {
 			continue
 		}
 
-		// Resolve absolute path
-		absPath, err := filepath.Abs(path)
-		if err != nil {
-			continue // Skip paths that can't be resolved
+		// Resolve to absolute path relative to the workspace, not the
+		// process CWD. SmartIsAbs handles both Windows drive letters and
+		// Unix-style prefixes cross-platform. filepath.ToSlash normalizes
+		// mixed slash directions before joining, preventing filepath.Join
+		// from treating backslashes as literal characters. filepath.Clean
+		// then collapses any ".." traversal before the bounds check,
+		// preventing evasion through path manipulation.
+		var absPath string
+		if filepathext.SmartIsAbs(path) {
+			absPath = filepath.Clean(path)
+		} else {
+			absPath = filepath.Clean(filepath.Join(absWorkingDir, filepath.ToSlash(path)))
 		}
 
 		// Check if path is inside workspace
@@ -291,10 +309,20 @@ func validateCommandPaths(command string, absWorkingDir string) error {
 	return nil
 }
 
+// isCDCommand reports whether the command is a cd/before command. These are
+// skipped by validateCommandPaths because they change directory rather than
+// access files, and the shell's workspace boundary enforcement already
+// prevents them from escaping the workspace.
+func isCDCommand(command string) bool {
+	trimmed := strings.TrimSpace(command)
+	lower := strings.ToLower(trimmed)
+	return strings.HasPrefix(lower, "cd ") || strings.HasPrefix(lower, "cd\t") || lower == "cd"
+}
+
 func NewBashTool(permissions permission.Service, workingDir string, bashCfg config.ToolBash, attribution *config.Attribution, modelID string) fantasy.AgentTool {
 	return fantasy.NewAgentTool(
 		BashToolName,
-		string(bashDescription(attribution, modelID)),
+		string(bashDescription(workingDir, attribution, modelID)),
 		func(ctx context.Context, params BashParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
 			ctx, span := otel.StartSpan(ctx, "execute_tool bash")
 			defer span.End()
@@ -574,8 +602,5 @@ func countLines(s string) int {
 }
 
 func normalizeWorkingDir(path string) string {
-	if runtime.GOOS == "windows" {
-		path = strings.ReplaceAll(path, fsext.WindowsWorkingDirDrive(), "")
-	}
 	return filepath.ToSlash(path)
 }

@@ -1,5 +1,9 @@
 Execute shell commands; long-running commands automatically move to background and return a shell ID.
 
+<system_constraint>
+Your workspace root is {{ .WorkspaceRoot }}. You are confined to this directory. Any path or command that would access files or directories outside this root will be blocked by a security guard. Always resolve relative paths against this workspace root. Do not attempt to navigate above it.
+</system_constraint>
+
 <cross_platform>
 Uses mvdan/sh interpreter (Bash-compatible on all platforms including Windows).
 Use forward slashes for paths: "ls C:/foo/bar" not "ls C:\foo\bar".

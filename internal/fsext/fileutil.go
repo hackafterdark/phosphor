@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"time"
@@ -210,11 +211,23 @@ func PathOrPrefix(path, prefix string) string {
 }
 
 // HasPrefix checks if the given path starts with the specified prefix.
-// Uses filepath.Rel to determine if path is within prefix.
+// Uses filepath.Rel to determine if path is within prefix. On Windows,
+// comparison is case-insensitive to match the filesystem semantics; on
+// Unix it remains case-sensitive.
 func HasPrefix(path, prefix string) bool {
-	rel, err := filepath.Rel(prefix, path)
-	if err != nil {
-		return false
+	var rel string
+	if runtime.GOOS == "windows" {
+		var err error
+		rel, err = filepath.Rel(strings.ToLower(prefix), strings.ToLower(path))
+		if err != nil {
+			return false
+		}
+	} else {
+		var err error
+		rel, err = filepath.Rel(prefix, path)
+		if err != nil {
+			return false
+		}
 	}
 	// If path is within prefix, Rel will not return a path starting with ".."
 	return !strings.HasPrefix(rel, "..")
