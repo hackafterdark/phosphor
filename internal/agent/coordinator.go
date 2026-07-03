@@ -886,8 +886,8 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, isSubA
 	}
 
 	// Add structural search only when CGO is available (required for tree-sitter).
-	if structuralSearchAvailable {
-		allTools = append(allTools, tools.NewStructuralSearchTool(c.cfg.WorkingDir()))
+	if StructuralSearchAvailable {
+		allTools = append(allTools, tools.NewStructuralSearchTool(c.cfg.WorkingDir(), c.cfg.Config().Options.Agent.StructuralSearchLanguages))
 	}
 
 	if len(c.cfg.Config().MCP) > 0 {
@@ -1341,10 +1341,20 @@ func (c *coordinator) rebuildSystemPrompt(ctx context.Context, prompt *prompt.Pr
 	if !isSubAgent {
 		caps := parser.GetCapabilities()
 		if len(caps) > 0 {
+			langFilter := c.cfg.Config().Options.Agent.StructuralSearchLanguages
+			// Apply the same language filter used by the tool description.
+			filterSet := make(map[string]bool, len(langFilter))
+			for _, l := range langFilter {
+				filterSet[l] = true
+			}
+
 			var sb strings.Builder
 			sb.WriteString(systemPrompt)
 			sb.WriteString("\n\nYou have the following custom AST search capabilities available in the structural_search tool:\n")
 			for _, cap := range caps {
+				if len(langFilter) > 0 && !filterSet[cap.Language] {
+					continue
+				}
 				sb.WriteString(fmt.Sprintf("- ID: %s, Language: %s: %s\n", cap.ID, cap.Language, cap.Description))
 			}
 			systemPrompt = sb.String()

@@ -31,6 +31,7 @@ import (
 	"github.com/charmbracelet/ultraviolet/screen"
 	"github.com/charmbracelet/x/editor"
 	xstrings "github.com/charmbracelet/x/exp/strings"
+	"github.com/hackafterdark/phosphor/internal/agent"
 	"github.com/hackafterdark/phosphor/internal/agent/hyper"
 	"github.com/hackafterdark/phosphor/internal/agent/notify"
 	agenttools "github.com/hackafterdark/phosphor/internal/agent/tools"
@@ -1774,6 +1775,29 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			m.notifyBackend = selectNotificationBackend(m.caps, cfg)
 		}
 		m.dialog.CloseDialog(dialog.NotificationsID)
+	case dialog.ActionSetStructuralSearchLanguages:
+		languages := msg.Languages
+		if languages == nil {
+			// nil means "inherit from global" — delete the key from workspace.
+			if err := m.com.Workspace.RemoveConfigField(config.ScopeWorkspace, "options.agent.structural_search_languages"); err != nil {
+				cmds = append(cmds, util.ReportError(err))
+			} else {
+				cmds = append(cmds, util.CmdHandler(util.NewInfoMsg("Structural search: inheriting from global config")))
+			}
+		} else if len(languages) == 0 {
+			if err := m.com.Workspace.SetConfigField(config.ScopeWorkspace, "options.agent.structural_search_languages", languages); err != nil {
+				cmds = append(cmds, util.ReportError(err))
+			} else {
+				cmds = append(cmds, util.CmdHandler(util.NewInfoMsg("Structural search languages: all languages")))
+			}
+		} else {
+			if err := m.com.Workspace.SetConfigField(config.ScopeWorkspace, "options.agent.structural_search_languages", languages); err != nil {
+				cmds = append(cmds, util.ReportError(err))
+			} else {
+				cmds = append(cmds, util.CmdHandler(util.NewInfoMsg("Structural search languages: "+strings.Join(languages, ", "))))
+			}
+		}
+		m.dialog.CloseDialog(dialog.LanguagesID)
 	case dialog.ActionNewSession:
 		if m.isAgentBusy() {
 			cmds = append(cmds, util.ReportWarn("Agent is busy, please wait before starting a new session..."))
@@ -3877,12 +3901,15 @@ func cancelTimerCmd() tea.Cmd {
 // registerSlashCommands sets up the mapping between slash command names and their TUI handlers.
 func (m *UI) registerSlashCommands() {
 	m.slashHandlers = map[string]slashCommandHandler{
-		"goal":  m.handleGoalSlashCommand,
-		"name":  m.handleNameSlashCommand,
-		"menu":  m.handleMenuSlashCommand,
-		"stats": m.handleStatsSlashCommand,
-		"learn": m.handleLearnSlashCommand,
-		"quit":  m.handleQuitSlashCommand,
+		"goal":     m.handleGoalSlashCommand,
+		"name":     m.handleNameSlashCommand,
+		"menu":     m.handleMenuSlashCommand,
+		"stats":    m.handleStatsSlashCommand,
+		"learn":    m.handleLearnSlashCommand,
+		"quit":     m.handleQuitSlashCommand,
+	}
+	if agent.StructuralSearchAvailable {
+		m.slashHandlers["languages"] = m.handleLanguagesSlashCommand
 	}
 }
 
@@ -3966,6 +3993,14 @@ func (m *UI) handleQuitSlashCommand(args []string) tea.Cmd {
 		m.dialog.BringToFront(dialog.QuitID)
 	} else {
 		m.dialog.OpenDialog(dialog.NewQuit(m.com))
+	}
+	return func() tea.Msg { return nil }
+}
+
+// handleLanguagesSlashCommand handles the "/languages" slash command.
+func (m *UI) handleLanguagesSlashCommand(args []string) tea.Cmd {
+	if cmd := m.openLanguagesDialog(); cmd != nil {
+		return cmd
 	}
 	return func() tea.Msg { return nil }
 }
@@ -4223,6 +4258,18 @@ func (m *UI) openUsageStatsDialog() tea.Cmd {
 	return func() tea.Msg {
 		return dialog.LoadUsageDataMsg{}
 	}
+}
+
+// openNotificationsDialog opens the notification style picker dialog.
+func (m *UI) openLanguagesDialog() tea.Cmd {
+	if m.dialog.ContainsDialog(dialog.LanguagesID) {
+		m.dialog.BringToFront(dialog.LanguagesID)
+		return nil
+	}
+
+	languagesDialog := dialog.NewLanguages(m.com)
+	m.dialog.OpenDialog(languagesDialog)
+	return nil
 }
 
 // openNotificationsDialog opens the notification style picker dialog.

@@ -3,6 +3,34 @@
   "$id": "https://github.com/hackafterdark/phosphor/internal/config/config",
   "$ref": "#/$defs/Config",
   "$defs": {
+    "AgentConfig": {
+      "properties": {
+        "active_profile": {
+          "type": "string",
+          "description": "Active prompt profile (e.g. fiduciary",
+          "default": "default"
+        },
+        "enable_reflection": {
+          "type": "boolean",
+          "description": "Enable self-critique reflection after each LLM response",
+          "default": false
+        },
+        "max_turns": {
+          "type": "integer",
+          "description": "Maximum number of tool-use turns per prompt (0 = unlimited)",
+          "default": 0
+        },
+        "structural_search_languages": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Restrict structural_search tool description to specific languages (empty = all supported languages). Valid values: go"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
     "Attribution": {
       "properties": {
         "trailer_style": {
@@ -103,6 +131,10 @@
         "observability": {
           "$ref": "#/$defs/Observability",
           "description": "OpenTelemetry observability configuration"
+        },
+        "logging": {
+          "$ref": "#/$defs/LoggingOptions",
+          "description": "Logging configuration. When omitted"
         }
       },
       "additionalProperties": false,
@@ -583,6 +615,21 @@
           },
           "type": "array",
           "description": "MCP server names whose results should be redacted from traces"
+        },
+        "capture_input_messages": {
+          "type": "boolean",
+          "description": "Record full input messages (chat history) on LLM spans as gen_ai.input.messages",
+          "default": false
+        },
+        "capture_output_messages": {
+          "type": "boolean",
+          "description": "Record model response on LLM spans as gen_ai.output.messages",
+          "default": false
+        },
+        "open_inference": {
+          "type": "boolean",
+          "description": "Add OpenInference llm.* attributes alongside gen_ai.* attributes",
+          "default": false
         }
       },
       "additionalProperties": false,
@@ -731,6 +778,10 @@
         "logging": {
           "$ref": "#/$defs/LoggingOptions",
           "description": "Logging configuration. When omitted"
+        },
+        "agent": {
+          "$ref": "#/$defs/AgentConfig",
+          "description": "Agent runtime configuration"
         }
       },
       "additionalProperties": false,

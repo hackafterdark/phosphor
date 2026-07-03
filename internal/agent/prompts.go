@@ -19,7 +19,7 @@ var initializePromptTmpl []byte
 
 // The main "system" prompt.
 func systemPrompt(opts ...prompt.Option) (*prompt.Prompt, error) {
-	opts = append(opts, prompt.WithStructuralSearchAvailable(structuralSearchAvailable))
+	opts = append(opts, prompt.WithStructuralSearchAvailable(StructuralSearchAvailable))
 	systemPrompt, err := prompt.NewPrompt("system", string(systemPromptTmpl), opts...)
 	if err != nil {
 		return nil, err

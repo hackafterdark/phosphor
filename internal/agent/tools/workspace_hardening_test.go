@@ -345,7 +345,7 @@ func TestWorkspaceHardening_StructuralSearchToolBlocksOutsidePaths(t *testing.T)
 	workingDir := t.TempDir()
 	ctx := context.WithValue(context.Background(), SessionIDContextKey, "test-session")
 
-	tool := NewStructuralSearchTool(workingDir)
+	tool := NewStructuralSearchTool(workingDir, nil)
 
 	tests := []struct {
 		name string

@@ -2,5 +2,5 @@
 
 package agent
 
-// structuralSearchAvailable is true when CGO is enabled (required for tree-sitter).
-var structuralSearchAvailable = true
+// StructuralSearchAvailable is true when CGO is enabled (required for tree-sitter).
+var StructuralSearchAvailable = true

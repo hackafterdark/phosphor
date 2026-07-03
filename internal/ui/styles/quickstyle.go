@@ -117,7 +117,7 @@ func quickStyle(o quickStyleOpts) Styles {
 			Text:             base.Foreground(o.fgMoreSubtle),
 			LineNumber:       base.Foreground(o.fgMoreSubtle),
 			CursorLine:       base,
-			CursorLineNumber: base.Foreground(o.fgMoreSubtle),
+			CursorLineNumber: base.Foreground(o.fgMostSubtle),
 			Placeholder:      base.Foreground(o.fgMostSubtle),
 			Prompt:           base.Foreground(o.fgMoreSubtle),
 		},
@@ -148,8 +148,8 @@ func quickStyle(o quickStyleOpts) Styles {
 		Heading: ansi.StyleBlock{
 			StylePrimitive: ansi.StylePrimitive{
 				BlockSuffix: "\n",
-				Color:       hex(o.info),
 				Bold:        new(true),
+				Color:       hex(o.info),
 			},
 		},
 		H1: ansi.StyleBlock{
@@ -847,6 +847,10 @@ func quickStyle(o quickStyleOpts) Styles {
 	s.Dialog.ListItem.InfoBlurred = lipgloss.NewStyle().Foreground(o.fgBase)
 	s.Dialog.ListItem.InfoFocused = lipgloss.NewStyle().Foreground(o.fgBase)
 
+	// Dialog.Checkbox for multi-select list items.
+	s.Dialog.CheckboxUnchecked = lipgloss.NewStyle().Foreground(o.fgMoreSubtle)
+	s.Dialog.CheckboxChecked = lipgloss.NewStyle().Foreground(o.success).Bold(true)
+
 	// Dialog.Models
 	s.Dialog.Models.ConfiguredText = lipgloss.NewStyle().Foreground(o.fgMostSubtle)
 
@@ -959,7 +963,7 @@ func quickStyle(o quickStyleOpts) Styles {
 	s.Pills.TodoLabel = lipgloss.NewStyle().Foreground(o.fgBase)
 	s.Pills.TodoProgress = lipgloss.NewStyle().Foreground(o.fgMoreSubtle)
 	s.Pills.TodoCurrentTask = lipgloss.NewStyle().Foreground(o.fgMostSubtle)
-	s.Pills.GoalElapsedTime = lipgloss.NewStyle().Foreground(o.fgMoreSubtle)
+	s.Pills.GoalElapsedTime = lipgloss.NewStyle().Foreground(o.fgMostSubtle)
 	s.Pills.TodoSpinner = lipgloss.NewStyle().Foreground(o.successMostSubtle)
 	s.Pills.HelpKey = lipgloss.NewStyle().Foreground(o.fgMoreSubtle)
 	s.Pills.HelpText = lipgloss.NewStyle().Foreground(o.fgMostSubtle)

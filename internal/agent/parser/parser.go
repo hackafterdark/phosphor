@@ -46,6 +46,77 @@ type Match struct {
 	Captures []QueryResult
 }
 
+// LanguageExtensions maps each supported language to its file extensions.
+// This is the inverse of DetectLanguage and is used for display purposes
+// (e.g., in the structural_search tool description).
+var LanguageExtensions = map[string][]string{
+	"go":           {"*.go"},
+	"cpp":          {"*.cpp", "*.cc", "*.cxx", "*.hpp", "*.hxx"},
+	"c":            {"*.c", "*.h"},
+	"bash":         {"*.sh"},
+	"hcl":          {"*.hcl", "*.tf"},
+	"json":         {"*.json"},
+	"html":         {"*.html", "*.htm"},
+	"css":          {"*.css"},
+	"toml":         {"*.toml"},
+	"scala":        {"*.scala", "*.sbt"},
+	"typescript":   {"*.ts", "*.tsx"},
+	"javascript":   {"*.js", "*.jsx"},
+	"python":       {"*.py"},
+	"php":          {"*.php"},
+	"sql":          {"*.sql"},
+	"rust":         {"*.rs"},
+	"csharp":       {"*.cs"},
+}
+
+// AllLanguageExtensions returns a sorted list of all supported language names.
+var AllLanguageExtensions = []string{
+	"go", "cpp", "c", "bash", "hcl", "json", "html", "css", "toml",
+	"scala", "typescript", "javascript", "python", "php", "sql", "rust", "csharp",
+}
+
+// LanguageDisplayName returns a human-readable display name for a language ID.
+func LanguageDisplayName(lang string) string {
+	switch lang {
+	case "go":
+		return "Go"
+	case "cpp":
+		return "C++"
+	case "c":
+		return "C"
+	case "bash":
+		return "Bash"
+	case "hcl":
+		return "HCL"
+	case "json":
+		return "JSON"
+	case "html":
+		return "HTML"
+	case "css":
+		return "CSS"
+	case "toml":
+		return "TOML"
+	case "scala":
+		return "Scala"
+	case "typescript":
+		return "TypeScript"
+	case "javascript":
+		return "JavaScript"
+	case "python":
+		return "Python"
+	case "php":
+		return "PHP"
+	case "sql":
+		return "SQL"
+	case "rust":
+		return "Rust"
+	case "csharp":
+		return "C#"
+	default:
+		return lang
+	}
+}
+
 // QueryResult represents a captured node in a query match.
 type QueryResult struct {
 	Capture   string

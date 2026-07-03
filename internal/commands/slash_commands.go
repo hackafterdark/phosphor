@@ -36,6 +36,10 @@ var SlashCommands = []SlashCommand{
 		Description: "Name or rename the current session",
 		Arguments:   []string{"<title>"},
 	},
+	{
+		Name:        "languages",
+		Description: "Configure structural search languages",
+	},
 }
 
 // GetSlashCommands returns all registered slash commands.

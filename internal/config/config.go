@@ -464,6 +464,13 @@ type AgentConfig struct {
 	// MaxTurns caps the number of tool-use turns per prompt. A value of 0
 	// means no limit. This prevents runaway agent loops on complex tasks.
 	MaxTurns int `json:"max_turns,omitempty" jsonschema:"description=Maximum number of tool-use turns per prompt (0 = unlimited),default=0"`
+
+	// StructuralSearchLanguages restricts which languages appear in the
+	// structural_search tool description in the system prompt. When empty,
+	// all supported languages are listed. Setting a non-empty list causes
+	// only those languages (by canonical name) to be shown, saving tokens
+	// for projects that work with a limited set of languages.
+	StructuralSearchLanguages []string `json:"structural_search_languages,omitempty" jsonschema:"description=Restrict structural_search tool description to specific languages (empty = all supported languages). Valid values: go, cpp, c, bash, hcl, json, html, css, toml, scala, typescript, javascript, python, php, sql, rust, csharp"`
 }
 
 // LoggingOptions configures application logging behavior. All fields are

@@ -107,6 +107,12 @@ type (
 	ActionGoalPause struct{}
 	// ActionGoalResume is a message to resume the current paused goal.
 	ActionGoalResume struct{}
+	// ActionSetStructuralSearchLanguages is a message to set the structural
+	// search languages filter at the workspace level. Languages is the list of
+	// selected language IDs; an empty list means "all languages".
+	ActionSetStructuralSearchLanguages struct {
+		Languages []string
+	}
 )
 
 // Messages for API key input dialog.

@@ -45,27 +45,44 @@ var structuralSearchDescriptionTpl = template.Must(
 // 		Parse(string(structuralSearchDescriptionTmpl)),
 // )
 
-// LanguageTemplates holds the template names for a single language.
+// LanguageTemplates holds the template names and file extensions for a single language.
 type LanguageTemplates struct {
-	Language  string
-	Templates []string
+	Language   string
+	Extensions []string
+	Templates  []string
 }
 
 type structuralSearchDescriptionData struct {
 	LanguageTemplates []LanguageTemplates
 }
 
-func structuralSearchDescription() string {
+func structuralSearchDescription(langFilter ...[]string) string {
+	var filter []string
+	if len(langFilter) > 0 && len(langFilter[0]) > 0 {
+		filter = langFilter[0]
+	}
+
+	// Build a set from the filter for O(1) lookup.
+	filterSet := make(map[string]bool, len(filter))
+	for _, l := range filter {
+		filterSet[l] = true
+	}
+
 	var langTemplates []LanguageTemplates
 	seen := make(map[string]bool)
 	for _, cap := range parser.GetCapabilities() {
 		if !seen[cap.Language] {
 			seen[cap.Language] = true
+			// If a filter is set, skip languages not in it.
+			if len(filter) > 0 && !filterSet[cap.Language] {
+				continue
+			}
 			names := parser.TemplateNames(cap.Language)
 			if len(names) > 0 {
 				langTemplates = append(langTemplates, LanguageTemplates{
-					Language:  cap.Language,
-					Templates: names,
+					Language:   cap.Language,
+					Extensions: parser.LanguageExtensions[cap.Language],
+					Templates:  names,
 				})
 			}
 		}
@@ -479,10 +496,10 @@ done:
 }
 
 // NewStructuralSearchTool creates a new structural search tool.
-func NewStructuralSearchTool(workingDir string) fantasy.AgentTool {
+func NewStructuralSearchTool(workingDir string, langFilter []string) fantasy.AgentTool {
 	return fantasy.NewAgentTool(
 		"structural_search",
-		structuralSearchDescription(),
+		structuralSearchDescription(langFilter),
 		func(ctx context.Context, params StructuralSearchParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
 			ctx, span := otel.StartSpan(ctx, "execute_tool structural_search")
 			defer span.End()

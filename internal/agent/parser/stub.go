@@ -105,3 +105,16 @@ func Query(root *Node, code []byte, lang, id string) ([]Match, error) {
 func SupportedLanguages() []string {
 	return nil
 }
+
+// LanguageExtensions maps each supported language to its file extensions.
+// In non-CGO builds this returns an empty map since structural search is unavailable.
+var LanguageExtensions = map[string][]string{}
+
+// AllLanguageExtensions returns a sorted list of all supported language names.
+// In non-CGO builds this returns an empty slice since structural search is unavailable.
+var AllLanguageExtensions = []string{}
+
+// LanguageDisplayName returns a human-readable display name for a language ID.
+func LanguageDisplayName(lang string) string {
+	return lang
+}

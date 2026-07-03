@@ -83,6 +83,9 @@ type RenderContext struct {
 	// part is displayed as is, any styling must be applied before setting this
 	// field.
 	TitleInfo string
+	// Subtitle is a secondary line of text displayed below the title with a
+	// lighter color to distinguish it from the primary title.
+	Subtitle string
 	// Parts are the rendered parts of the dialog.
 	Parts []string
 	// Help is the help view content. This will be appended to the content parts
@@ -134,6 +137,10 @@ func (rc *RenderContext) Render() string {
 			title += rc.TitleInfo
 		}
 		parts = append(parts, titleStyle.Render(title))
+		if len(rc.Subtitle) > 0 {
+			subtitleStyle := rc.Styles.Dialog.SecondaryText.Width(rc.Width - dialogStyle.GetHorizontalFrameSize())
+			parts = append(parts, subtitleStyle.Render(rc.Subtitle))
+		}
 		if rc.Gap > 0 {
 			parts = append(parts, make([]string, rc.Gap)...)
 		}
