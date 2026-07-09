@@ -37,7 +37,7 @@ func (c *blockingCoordinator) Run(ctx context.Context, sessionID, prompt string,
 	return nil, nil
 }
 
-func (c *blockingCoordinator) RunAccepted(ctx context.Context, accept *agent.AcceptedRun, sessionID, prompt string, attachments ...message.Attachment) (*fantasy.AgentResult, error) {
+func (c *blockingCoordinator) RunAccepted(ctx context.Context, accept *agent.AcceptedRun, sessionID, prompt string, msg *proto.AgentMessage, attachments ...message.Attachment) (*fantasy.AgentResult, error) {
 	c.runCount.Add(1)
 	select {
 	case c.entered <- struct{}{}:

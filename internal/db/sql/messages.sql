@@ -53,3 +53,14 @@ SELECT *
 FROM messages
 WHERE role = 'user'
 ORDER BY created_at DESC;
+
+-- name: CountPrunableMessages :one
+SELECT COUNT(*)
+FROM messages
+WHERE session_id = ?1
+  AND created_at < ?2;
+
+-- name: PruneSessionMessages :exec
+DELETE FROM messages
+WHERE session_id = ?1
+  AND created_at < ?2;

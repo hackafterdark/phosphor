@@ -35,6 +35,7 @@ var (
 	ErrInvalidClientID         = errors.New("invalid client_id")
 	ErrClientNotAttached       = errors.New("client not attached")
 	ErrWorkspaceClosing        = errors.New("workspace closing")
+	ErrSessionNotFound         = errors.New("session not found")
 )
 
 // DefaultCreateGrace is the window in which a client must open an SSE
@@ -286,7 +287,7 @@ func (b *Backend) CreateWorkspace(args proto.Workspace) (*Workspace, proto.Works
 		return nil, proto.Workspace{}, fmt.Errorf("failed to create data directory: %w", err)
 	}
 
-	conn, err := db.Connect(b.ctx, cfg.Config().Options.DataDirectory, db.WithDataDirLock(true))
+	conn, err := db.Connect(b.ctx, cfg.Config().Options.DataDirectory)
 	if err != nil {
 		return nil, proto.Workspace{}, fmt.Errorf("failed to connect to database: %w", err)
 	}
@@ -689,6 +690,17 @@ func (b *Backend) Shutdown() {
 	if b.shutdownFn != nil {
 		b.shutdownFn()
 	}
+}
+
+// ShutdownAll shuts down all running workspaces.
+func (b *Backend) ShutdownAll() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for _, ws := range b.workspaces.Seq2() {
+		ws.Shutdown()
+	}
+	b.workspaces = csync.NewMap[string, *Workspace]()
+	b.pathIndex = make(map[string]string)
 }
 
 // resolveWorkspaceKey returns a stable canonical form of path suitable

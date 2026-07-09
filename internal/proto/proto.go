@@ -130,10 +130,25 @@ func (a AgentInfo) IsZero() bool {
 // remains correct only when no other turns are in flight for the
 // same session.
 type AgentMessage struct {
-	SessionID   string       `json:"session_id"`
-	RunID       string       `json:"run_id,omitempty"`
-	Prompt      string       `json:"prompt"`
-	Attachments []Attachment `json:"attachments,omitempty"`
+	SessionID         string       `json:"session_id"`
+	RunID             string       `json:"run_id,omitempty"`
+	Prompt            string       `json:"prompt"`              // full stitched prompt for agent context
+	UserPrompt        string       `json:"user_prompt,omitempty"` // original last user message for persistence
+	Attachments       []Attachment `json:"attachments,omitempty"`
+	IsStateless       bool         `json:"is_stateless,omitempty"`
+	SystemPrompt      string       `json:"system_prompt,omitempty"` // optional override for the agent's system prompt
+	Temperature       *float64     `json:"temperature,omitempty"`
+	MaxOutputTokens   int64        `json:"max_output_tokens,omitempty"`
+	TopP              *float64     `json:"top_p,omitempty"`
+	TopK              *int64       `json:"top_k,omitempty"`
+	FrequencyPenalty  *float64     `json:"frequency_penalty,omitempty"`
+	PresencePenalty   *float64     `json:"presence_penalty,omitempty"`
+	Seed              *int64       `json:"seed,omitempty"`
+	MinP              *float64     `json:"min_p,omitempty"`
+	RepetitionPenalty *float64     `json:"repetition_penalty,omitempty"`
+	Stop              []string     `json:"stop,omitempty"`
+	TopLogProbs       *int64       `json:"top_log_probs,omitempty"`
+	MaxThinkingTokens *int64       `json:"max_thinking_tokens,omitempty"`
 }
 
 // AgentSession represents a session with its busy status.

@@ -101,9 +101,9 @@ func TestValidateCommandPaths_AbsolutePathClean(t *testing.T) {
 // TestValidateCommandPaths_NonIOCommands verifies that commands without
 // I/O keywords (using whole-word matching) skip path validation.
 // "go build ./cmd/petstore/..." should NOT trigger validation because:
-// - "cmd" was removed from ioCommands (it's a Windows built-in AND a common
-//   Go package directory name)
-// - Whole-word regex matching prevents substring false positives
+//   - "cmd" was removed from ioCommands (it's a Windows built-in AND a common
+//     Go package directory name)
+//   - Whole-word regex matching prevents substring false positives
 func TestValidateCommandPaths_NonIOCommands(t *testing.T) {
 	t.Parallel()
 
@@ -125,8 +125,8 @@ func TestValidateCommandPaths_IOCommandWholeWord(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
-		name     string
-		command  string
+		name      string
+		command   string
 		wantMatch bool
 	}{
 		{"cat file.txt", "cat file.txt", true},
@@ -153,9 +153,9 @@ func TestValidateCommandPaths_CDCommandSkipped(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
-		name     string
-		command  string
-		wantCD   bool
+		name    string
+		command string
+		wantCD  bool
 	}{
 		{"cd relative", "cd cmd", true},
 		{"cd absolute", "cd F:/some/path", true},

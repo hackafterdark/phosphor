@@ -30,7 +30,7 @@ func (c *errorCoordinator) Run(ctx context.Context, sessionID, prompt string, at
 	return nil, c.err
 }
 
-func (c *errorCoordinator) RunAccepted(ctx context.Context, accept *agent.AcceptedRun, sessionID, prompt string, attachments ...message.Attachment) (*fantasy.AgentResult, error) {
+func (c *errorCoordinator) RunAccepted(ctx context.Context, accept *agent.AcceptedRun, sessionID, prompt string, msg *proto.AgentMessage, attachments ...message.Attachment) (*fantasy.AgentResult, error) {
 	if c.markPublished {
 		agent.MarkRunCompletePublished(ctx)
 	}

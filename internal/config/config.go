@@ -942,7 +942,38 @@ type Config struct {
 	// disabled by default (safe). Users must explicitly opt-in.
 	Logging *LoggingOptions `json:"logging,omitempty" jsonschema:"description=Logging configuration. When omitted, logging is disabled."`
 
+	Services map[string]ServiceEntry `json:"services,omitempty" jsonschema:"description=Configuration for platform services"`
+
+	Security *SecurityConfig `json:"security,omitempty" jsonschema:"description=Security manifest and governance options"`
+
 	Agents map[string]Agent `json:"-"`
+}
+
+type ServiceEntry struct {
+	Enabled              bool       `json:"enabled" jsonschema:"description=Whether the service is enabled"`
+	Port                 int        `json:"port,omitempty" jsonschema:"description=Port number for network services"`
+	Host                 string     `json:"host,omitempty" jsonschema:"description=Host address to bind to"`
+	Auth                 AuthConfig `json:"auth,omitempty" jsonschema:"description=Authentication configuration"`
+	AcceptSystemPrompt   bool       `json:"accept_system_prompt,omitempty" jsonschema:"description=Whether to accept system prompts from API clients (OpenAI-compatible API only)"`
+	LogRequestBody       bool       `json:"log_request_body,omitempty" jsonschema:"description=Log raw request bodies at Debug level (useful for debugging client compatibility, contains user prompts)"`
+}
+
+type AuthConfig struct {
+	Type string `json:"type" jsonschema:"description=Auth type: none or bearer,enum=none,enum=bearer"`
+	Key  string `json:"key,omitempty" jsonschema:"description=Bearer token or key"`
+}
+
+type AllowedEgressConfig struct {
+	HTTP     bool `json:"http,omitempty" jsonschema:"description=Allow HTTP API service egress"`
+	Discord  bool `json:"discord,omitempty" jsonschema:"description=Allow Discord bot egress"`
+	Slack    bool `json:"slack,omitempty" jsonschema:"description=Allow Slack bot egress"`
+	Telegram bool `json:"telegram,omitempty" jsonschema:"description=Allow Telegram bot egress"`
+}
+
+type SecurityConfig struct {
+	AllowedEgress AllowedEgressConfig `json:"allowed_egress,omitempty" jsonschema:"description=Permitted outbound platforms"`
+	ToolBlacklist []string            `json:"tool_blacklist,omitempty" jsonschema:"description=List of tools to block"`
+	ReadOnly      bool                `json:"read_only,omitempty" jsonschema:"description=Force read-only mode"`
 }
 
 func (c *Config) EnabledProviders() []ProviderConfig {

@@ -249,3 +249,42 @@ func (q *Queries) UpdateMessage(ctx context.Context, arg UpdateMessageParams) er
 	_, err := q.exec(ctx, q.updateMessageStmt, updateMessage, arg.Parts, arg.FinishedAt, arg.ID)
 	return err
 }
+
+
+const countPrunableMessages = `-- name: CountPrunableMessages :one
+SELECT COUNT(*)
+FROM messages
+WHERE session_id = ?1 AND created_at < ?2
+`
+
+type CountPrunableMessagesParams struct {
+	SessionID string `json:"session_id"`
+	CutoffAt  int64  `json:"cutoff_at"`
+}
+
+func (q *Queries) CountPrunableMessages(ctx context.Context, arg CountPrunableMessagesParams) (int, error) {
+	var i int
+	err := q.queryRow(ctx, q.countPrunableMessagesStmt, countPrunableMessages,
+		arg.SessionID,
+		arg.CutoffAt,
+	).Scan(&i)
+	return i, err
+}
+
+const pruneSessionMessages = `-- name: PruneSessionMessages :exec
+DELETE FROM messages
+WHERE session_id = ?1 AND created_at < ?2
+`
+
+type PruneSessionMessagesParams struct {
+	SessionID string `json:"session_id"`
+	CutoffAt  int64  `json:"cutoff_at"`
+}
+
+func (q *Queries) PruneSessionMessages(ctx context.Context, arg PruneSessionMessagesParams) error {
+	_, err := q.exec(ctx, q.pruneSessionMessagesStmt, pruneSessionMessages,
+		arg.SessionID,
+		arg.CutoffAt,
+	)
+	return err
+}

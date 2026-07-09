@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/hackafterdark/phosphor/internal/db"
@@ -60,6 +61,8 @@ type Session struct {
 	CreatedAt        int64
 	UpdatedAt        int64
 	CurrentTokens    int64
+	IsStateless      bool
+	Service          string
 }
 
 type Service interface {
@@ -74,7 +77,20 @@ type Service interface {
 	UpdateTitleAndUsage(ctx context.Context, sessionID, title string, promptTokens, completionTokens int64, cost float64) error
 	RecordTokenUsage(ctx context.Context, sessionID, model, provider string, promptTokens, completionTokens int64, cost float64) error
 	Rename(ctx context.Context, id string, title string) error
+	UpdateStateless(ctx context.Context, sessionID string, stateless bool, service string) error
 	Delete(ctx context.Context, id string) error
+
+	// ListStatelessSessions returns all stateless sessions, optionally
+	// filtered by service origin.
+	ListStatelessSessions(ctx context.Context, serviceFilter string) ([]Session, error)
+
+	// CountPrunableMessages returns the count of messages older than cutoff
+	// for a session.
+	CountPrunableMessages(ctx context.Context, sessionID string, cutoff time.Time) (int, error)
+
+	// PruneMessages removes messages older than cutoff from a session and
+	// returns the number of messages deleted.
+	PruneMessages(ctx context.Context, sessionID string, cutoff time.Time) (int, error)
 
 	// Agent tool session management
 	CreateAgentToolSessionID(messageID, toolCallID string) string
@@ -263,6 +279,68 @@ func (s *service) Rename(ctx context.Context, id string, title string) error {
 	return nil
 }
 
+// UpdateStateless marks a session as stateless (agent skips history loading)
+// and records the service origin for audit provenance.
+func (s *service) UpdateStateless(ctx context.Context, sessionID string, stateless bool, service string) error {
+	if err := s.q.UpdateStatelessSession(ctx, db.UpdateStatelessSessionParams{
+		ID:          sessionID,
+		IsStateless: boolToInt64(stateless),
+		Service:     service,
+	}); err != nil {
+		return err
+	}
+	s.publishSessionUpdate(ctx, sessionID)
+	return nil
+}
+
+// ListStatelessSessions returns all stateless sessions, optionally filtered
+// by service origin.
+func (s *service) ListStatelessSessions(ctx context.Context, serviceFilter string) ([]Session, error) {
+	dbSessions, err := s.q.ListStatelessSessions(ctx, db.ListStatelessSessionsParams{
+		ServiceFilter: serviceFilter,
+	})
+	if err != nil {
+		return nil, err
+	}
+	sessions := make([]Session, len(dbSessions))
+	for i, dbSession := range dbSessions {
+		sessions[i] = s.fromDBItem(dbSession)
+	}
+	return sessions, nil
+}
+
+// CountPrunableMessages returns the count of messages older than cutoff for a
+// session.
+func (s *service) CountPrunableMessages(ctx context.Context, sessionID string, cutoff time.Time) (int, error) {
+	return s.q.CountPrunableMessages(ctx, db.CountPrunableMessagesParams{
+		SessionID: sessionID,
+		CutoffAt:  cutoff.Unix(),
+	})
+}
+
+// PruneMessages removes messages older than cutoff from a session and returns
+// the number of messages deleted.
+func (s *service) PruneMessages(ctx context.Context, sessionID string, cutoff time.Time) (int, error) {
+	count, err := s.CountPrunableMessages(ctx, sessionID, cutoff)
+	if err != nil {
+		return 0, err
+	}
+
+	if count == 0 {
+		return 0, nil
+	}
+
+	if err := s.q.PruneSessionMessages(ctx, db.PruneSessionMessagesParams{
+		SessionID: sessionID,
+		CutoffAt:  cutoff.Unix(),
+	}); err != nil {
+		return 0, fmt.Errorf("pruning messages: %w", err)
+	}
+
+	s.publishSessionUpdate(ctx, sessionID)
+	return count, nil
+}
+
 func (s *service) List(ctx context.Context) ([]Session, error) {
 	dbSessions, err := s.q.ListSessions(ctx)
 	if err != nil {
@@ -327,6 +405,8 @@ func (s *service) fromDBItem(item db.Session) Session {
 		CreatedAt:        item.CreatedAt,
 		UpdatedAt:        item.UpdatedAt,
 		CurrentTokens:    item.CurrentTokens,
+		IsStateless:      item.IsStateless != 0,
+		Service:          item.Service,
 	}
 }
 
@@ -339,6 +419,13 @@ func marshalTodos(todos []Todo) (string, error) {
 		return "", err
 	}
 	return string(data), nil
+}
+
+func boolToInt64(b bool) int64 {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 func unmarshalTodos(data string) ([]Todo, error) {

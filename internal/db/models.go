@@ -60,6 +60,8 @@ type Session struct {
 	SummaryMessageID sql.NullString `json:"summary_message_id"`
 	Todos            sql.NullString `json:"todos"`
 	CurrentTokens    int64          `json:"current_tokens"`
+	IsStateless      int64          `json:"is_stateless"`
+	Service          string         `json:"service"`
 }
 
 type TokenUsage struct {

@@ -31,15 +31,15 @@ const (
 // LanguageOption represents a single language entry in the dialog list.
 type LanguageOption struct {
 	*list.Versioned
-	langID        string   // canonical language ID (e.g. "go", "typescript")
-	DisplayName   string   // human-readable name (e.g. "Go", "TypeScript")
-	Extensions    []string // file extensions (e.g. ["*.go"])
-	Templates     []string // available template names
-	Checked       bool     // whether this language is enabled
-	t             *styles.Styles
-	m             fuzzy.Match
-	cache         map[int]string
-	focused       bool
+	langID      string   // canonical language ID (e.g. "go", "typescript")
+	DisplayName string   // human-readable name (e.g. "Go", "TypeScript")
+	Extensions  []string // file extensions (e.g. ["*.go"])
+	Templates   []string // available template names
+	Checked     bool     // whether this language is enabled
+	t           *styles.Styles
+	m           fuzzy.Match
+	cache       map[int]string
+	focused     bool
 }
 
 // AllLanguageOptions returns every supported language with defaults, plus an

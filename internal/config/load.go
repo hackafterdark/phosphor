@@ -561,6 +561,38 @@ func (c *Config) setDefaults(workingDir, dataDir string) {
 	if c.LSP == nil {
 		c.LSP = make(map[string]LSPConfig)
 	}
+	if c.Services == nil {
+		c.Services = make(map[string]ServiceEntry)
+	}
+	if _, exists := c.Services["tui"]; !exists {
+		c.Services["tui"] = ServiceEntry{Enabled: true}
+	}
+	if _, exists := c.Services["http-api"]; !exists {
+		c.Services["http-api"] = ServiceEntry{Enabled: true}
+	}
+	if _, exists := c.Services["openai-api"]; !exists {
+		c.Services["openai-api"] = ServiceEntry{
+			Enabled: true,
+			Host:    "127.0.0.1",
+			Port:    8643,
+		}
+	} else {
+		entry := c.Services["openai-api"]
+		if entry.Host == "" {
+			entry.Host = "127.0.0.1"
+		}
+		if entry.Port == 0 {
+			entry.Port = 8643
+		}
+		c.Services["openai-api"] = entry
+	}
+	if c.Security == nil {
+		c.Security = &SecurityConfig{
+			AllowedEgress: AllowedEgressConfig{
+				HTTP: true,
+			},
+		}
+	}
 
 	// Apply defaults to LSP configurations
 	c.applyLSPDefaults()

@@ -119,6 +119,20 @@ func (w *ClientWorkspace) ListSessions(ctx context.Context) ([]session.Session, 
 	return sessions, nil
 }
 
+func (w *ClientWorkspace) ListSessionsFiltered(ctx context.Context) ([]session.Session, error) {
+	all, err := w.ListSessions(ctx)
+	if err != nil {
+		return nil, err
+	}
+	filtered := make([]session.Session, 0, len(all))
+	for _, s := range all {
+		if !s.IsStateless {
+			filtered = append(filtered, s)
+		}
+	}
+	return filtered, nil
+}
+
 func (w *ClientWorkspace) SaveSession(ctx context.Context, sess session.Session) (session.Session, error) {
 	saved, err := w.client.SaveSession(ctx, w.workspaceID(), sessionToProto(sess))
 	if err != nil {

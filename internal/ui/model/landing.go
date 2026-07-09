@@ -21,10 +21,11 @@ import (
 
 type loadRecentSessionsMsg []session.Session
 
-// loadRecentSessions queries the workspace for recent sessions.
+// loadRecentSessions queries the workspace for recent sessions (excluding
+// stateless API sessions which are hidden from the TUI).
 func (m *UI) loadRecentSessions() tea.Cmd {
 	return func() tea.Msg {
-		sessions, err := m.com.Workspace.ListSessions(context.Background())
+		sessions, err := m.com.Workspace.ListSessionsFiltered(context.Background())
 		if err != nil {
 			return loadRecentSessionsMsg(nil)
 		}

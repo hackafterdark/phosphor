@@ -54,3 +54,4 @@ manpages/
 completions/phosphor.*sh
 .prettierignore
 .task
+.obsidian

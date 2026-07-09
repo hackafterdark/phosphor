@@ -156,6 +156,18 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.updateSessionTitleAndUsageStmt, err = db.PrepareContext(ctx, updateSessionTitleAndUsage); err != nil {
 		return nil, fmt.Errorf("error preparing query UpdateSessionTitleAndUsage: %w", err)
 	}
+	if q.updateStatelessSessionStmt, err = db.PrepareContext(ctx, updateStatelessSession); err != nil {
+		return nil, fmt.Errorf("error preparing query UpdateStatelessSession: %w", err)
+	}
+	if q.listStatelessSessionsStmt, err = db.PrepareContext(ctx, listStatelessSessions); err != nil {
+		return nil, fmt.Errorf("error preparing query ListStatelessSessions: %w", err)
+	}
+	if q.countPrunableMessagesStmt, err = db.PrepareContext(ctx, countPrunableMessages); err != nil {
+		return nil, fmt.Errorf("error preparing query CountPrunableMessages: %w", err)
+	}
+	if q.pruneSessionMessagesStmt, err = db.PrepareContext(ctx, pruneSessionMessages); err != nil {
+		return nil, fmt.Errorf("error preparing query PruneSessionMessages: %w", err)
+	}
 	return &q, nil
 }
 
@@ -381,6 +393,26 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing updateSessionTitleAndUsageStmt: %w", cerr)
 		}
 	}
+	if q.updateStatelessSessionStmt != nil {
+		if cerr := q.updateStatelessSessionStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing updateStatelessSessionStmt: %w", cerr)
+		}
+	}
+	if q.listStatelessSessionsStmt != nil {
+		if cerr := q.listStatelessSessionsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listStatelessSessionsStmt: %w", cerr)
+		}
+	}
+	if q.countPrunableMessagesStmt != nil {
+		if cerr := q.countPrunableMessagesStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing countPrunableMessagesStmt: %w", cerr)
+		}
+	}
+	if q.pruneSessionMessagesStmt != nil {
+		if cerr := q.pruneSessionMessagesStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing pruneSessionMessagesStmt: %w", cerr)
+		}
+	}
 	return err
 }
 
@@ -456,7 +488,10 @@ type Queries struct {
 	listNewFilesStmt               *sql.Stmt
 	listSessionReadFilesStmt       *sql.Stmt
 	listSessionsStmt               *sql.Stmt
+	listStatelessSessionsStmt      *sql.Stmt
 	listUserMessagesBySessionStmt  *sql.Stmt
+	pruneSessionMessagesStmt       *sql.Stmt
+	countPrunableMessagesStmt      *sql.Stmt
 	recordFileReadStmt             *sql.Stmt
 	recordTokenUsageStmt           *sql.Stmt
 	renameSessionStmt              *sql.Stmt
@@ -464,6 +499,7 @@ type Queries struct {
 	updateMessageStmt              *sql.Stmt
 	updateSessionStmt              *sql.Stmt
 	updateSessionTitleAndUsageStmt *sql.Stmt
+	updateStatelessSessionStmt     *sql.Stmt
 }
 
 func (q *Queries) WithTx(tx *sql.Tx) *Queries {
@@ -514,5 +550,9 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		updateMessageStmt:              q.updateMessageStmt,
 		updateSessionStmt:              q.updateSessionStmt,
 		updateSessionTitleAndUsageStmt: q.updateSessionTitleAndUsageStmt,
+		updateStatelessSessionStmt:     q.updateStatelessSessionStmt,
+		listStatelessSessionsStmt:      q.listStatelessSessionsStmt,
+		countPrunableMessagesStmt:      q.countPrunableMessagesStmt,
+		pruneSessionMessagesStmt:       q.pruneSessionMessagesStmt,
 	}
 }

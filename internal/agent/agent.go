@@ -85,7 +85,10 @@ type SessionAgentCall struct {
 	// session that may be busy) MUST set it; SessionID alone is
 	// ambiguous when concurrent turns share the same session.
 	RunID            string
-	Prompt           string
+	Prompt           string // full stitched prompt for agent context
+	UserPrompt       string // original last user message for persistence (fallback to Prompt if empty)
+	IsStateless      bool // true = stateless session, agent skips history loading
+	SystemPromptOverride string // optional system prompt override (e.g. from OpenAI-compatible API client)
 	ProviderOptions  fantasy.ProviderOptions
 	Attachments      []message.Attachment
 	MaxOutputTokens  int64
@@ -703,6 +706,9 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 	agentTools := a.tools.Copy()
 	largeModel := a.largeModel.Get()
 	systemPrompt := a.systemPrompt.Get()
+	if call.SystemPromptOverride != "" {
+		systemPrompt = call.SystemPromptOverride
+	}
 	promptPrefix := a.systemPromptPrefix.Get()
 	var instructions strings.Builder
 
@@ -738,36 +744,46 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 		return nil, fmt.Errorf("failed to get session: %w", err)
 	}
 
-	msgs, err := a.getSessionMessages(ctx, currentSession)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get session messages: %w", err)
+	// For stateless sessions, skip history loading — the client already
+	// sent all prior messages in the request body (e.g. OpenAI-compatible
+	// clients send full conversation history per turn). The agent only
+	// processes the current prompt's messages.
+	var msgs []message.Message
+	if !call.IsStateless {
+		msgs, err = a.getSessionMessages(ctx, currentSession)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get session messages: %w", err)
+		}
 	}
 
 	// Estimate the current context window usage from the active messages.
 	// This is used for display and auto-summarization threshold checks.
-	currentTokens := estimateMessageTokensForMessage(msgs)
-	if currentSession.CurrentTokens != currentTokens {
-		currentSession.CurrentTokens = currentTokens
-		if _, saveErr := a.sessions.Save(ctx, currentSession); saveErr != nil {
-			slog.Warn("Failed to save current tokens", "error", saveErr)
+	// Stateles sessions skip this — the client already manages context.
+	if !call.IsStateless {
+		currentTokens := estimateMessageTokensForMessage(msgs)
+		if currentSession.CurrentTokens != currentTokens {
+			currentSession.CurrentTokens = currentTokens
+			if _, saveErr := a.sessions.Save(ctx, currentSession); saveErr != nil {
+				slog.Warn("Failed to save current tokens", "error", saveErr)
+			}
 		}
-	}
 
-	// Check if we need to auto-summarize before sending the request.
-	// This prevents context overflow when a large prompt pushes us over the limit.
-	if shouldSummarize(currentSession, largeModel, a.summarizeThreshold, a.disableAutoSummarize) {
-		slog.Debug("Auto-summarizing before request to prevent context overflow", "session_id", call.SessionID)
-		if summaryErr := a.Summarize(ctx, call.SessionID, a.getCacheControlOptions()); summaryErr != nil {
-			slog.Warn("Failed to auto-summarize before request", "error", summaryErr)
-		}
-		// After summarization, re-fetch the session and messages.
-		currentSession, err = a.sessions.Get(ctx, call.SessionID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get session after summarization: %w", err)
-		}
-		msgs, err = a.getSessionMessages(ctx, currentSession)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get session messages after summarization: %w", err)
+		// Check if we need to auto-summarize before sending the request.
+		// This prevents context overflow when a large prompt pushes us over the limit.
+		if shouldSummarize(currentSession, largeModel, a.summarizeThreshold, a.disableAutoSummarize) {
+			slog.Debug("Auto-summarizing before request to prevent context overflow", "session_id", call.SessionID)
+			if summaryErr := a.Summarize(ctx, call.SessionID, a.getCacheControlOptions()); summaryErr != nil {
+				slog.Warn("Failed to auto-summarize before request", "error", summaryErr)
+			}
+			// After summarization, re-fetch the session and messages.
+			currentSession, err = a.sessions.Get(ctx, call.SessionID)
+			if err != nil {
+				return nil, fmt.Errorf("failed to get session after summarization: %w", err)
+			}
+			msgs, err = a.getSessionMessages(ctx, currentSession)
+			if err != nil {
+				return nil, fmt.Errorf("failed to get session messages after summarization: %w", err)
+			}
 		}
 	}
 
@@ -790,24 +806,27 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 
 	// Re-estimate total tokens after adding the user message.
 	// If the total would exceed the context window, force summarization.
-	msgs, err = a.getSessionMessages(ctx, currentSession)
-	if err != nil {
-		return nil, err
-	}
-	totalTokens := estimateMessageTokensForMessage(msgs)
-	cw := int64(largeModel.CatwalkCfg.ContextWindow)
-	if cw > 0 && !a.disableAutoSummarize && totalTokens > cw {
-		slog.Warn("Prompt would exceed context window, forcing summarization", "session_id", call.SessionID, "tokens", totalTokens, "window", cw)
-		if summaryErr := a.Summarize(ctx, call.SessionID, a.getCacheControlOptions()); summaryErr != nil {
-			slog.Warn("Failed to force-summarize before overflow", "error", summaryErr)
-		} else {
-			currentSession, err = a.sessions.Get(ctx, call.SessionID)
-			if err != nil {
-				return nil, fmt.Errorf("failed to get session after forced summarization: %w", err)
-			}
-			msgs, err = a.getSessionMessages(ctx, currentSession)
-			if err != nil {
-				return nil, fmt.Errorf("failed to get session messages after forced summarization: %w", err)
+	// Stateles sessions skip this — the client already manages context.
+	if !call.IsStateless {
+		msgs, err = a.getSessionMessages(ctx, currentSession)
+		if err != nil {
+			return nil, err
+		}
+		totalTokens := estimateMessageTokensForMessage(msgs)
+		cw := int64(largeModel.CatwalkCfg.ContextWindow)
+		if cw > 0 && !a.disableAutoSummarize && totalTokens > cw {
+			slog.Warn("Prompt would exceed context window, forcing summarization", "session_id", call.SessionID, "tokens", totalTokens, "window", cw)
+			if summaryErr := a.Summarize(ctx, call.SessionID, a.getCacheControlOptions()); summaryErr != nil {
+				slog.Warn("Failed to force-summarize before overflow", "error", summaryErr)
+			} else {
+				currentSession, err = a.sessions.Get(ctx, call.SessionID)
+				if err != nil {
+					return nil, fmt.Errorf("failed to get session after forced summarization: %w", err)
+				}
+				msgs, err = a.getSessionMessages(ctx, currentSession)
+				if err != nil {
+					return nil, fmt.Errorf("failed to get session messages after forced summarization: %w", err)
+				}
 			}
 		}
 	}
@@ -1758,7 +1777,11 @@ func (a *sessionAgent) getCacheControlOptions() fantasy.ProviderOptions {
 }
 
 func (a *sessionAgent) createUserMessage(ctx context.Context, call SessionAgentCall) (message.Message, error) {
-	parts := []message.ContentPart{message.TextContent{Text: call.Prompt}}
+	prompt := call.UserPrompt
+	if prompt == "" {
+		prompt = call.Prompt
+	}
+	parts := []message.ContentPart{message.TextContent{Text: prompt}}
 	var attachmentParts []message.ContentPart
 	for _, attachment := range call.Attachments {
 		attachmentParts = append(attachmentParts, message.BinaryContent{Path: attachment.FilePath, MIMEType: attachment.MimeType, Data: attachment.Content})

@@ -53,6 +53,7 @@ type Querier interface {
 	UpdateMessage(ctx context.Context, arg UpdateMessageParams) error
 	UpdateSession(ctx context.Context, arg UpdateSessionParams) (Session, error)
 	UpdateSessionTitleAndUsage(ctx context.Context, arg UpdateSessionTitleAndUsageParams) error
+	UpdateStatelessSession(ctx context.Context, arg UpdateStatelessSessionParams) error
 }
 
 var _ Querier = (*Queries)(nil)

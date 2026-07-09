@@ -14,15 +14,14 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
-	tea "charm.land/bubbletea/v2"
 	fang "charm.land/fang/v2"
-	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 	xstrings "github.com/charmbracelet/x/exp/strings"
 	"github.com/charmbracelet/x/term"
@@ -32,13 +31,14 @@ import (
 	"github.com/hackafterdark/phosphor/internal/db"
 	"github.com/hackafterdark/phosphor/internal/lock"
 	phosphorlog "github.com/hackafterdark/phosphor/internal/log"
+	"github.com/hackafterdark/phosphor/internal/platform"
+	"github.com/hackafterdark/phosphor/internal/platform/httpapi"
+	"github.com/hackafterdark/phosphor/internal/platform/tui"
 	"github.com/hackafterdark/phosphor/internal/projects"
 	"github.com/hackafterdark/phosphor/internal/proto"
 	"github.com/hackafterdark/phosphor/internal/server"
 	"github.com/hackafterdark/phosphor/internal/session"
 	"github.com/hackafterdark/phosphor/internal/skills"
-	"github.com/hackafterdark/phosphor/internal/ui/common"
-	ui "github.com/hackafterdark/phosphor/internal/ui/model"
 	"github.com/hackafterdark/phosphor/internal/version"
 	"github.com/hackafterdark/phosphor/internal/workspace"
 	"github.com/spf13/cobra"
@@ -120,23 +120,86 @@ phosphor --continue
 			sessionID = sess.ID
 		}
 
-		com := common.NewCommon(ws, dbConn)
-		model := ui.New(com, sessionID, continueLast)
-
-		inputFilter := ui.NewFilter()
-		var env uv.Environ = os.Environ()
-		program := tea.NewProgram(
-			model,
-			tea.WithEnvironment(env),
-			tea.WithContext(cmd.Context()),
-			tea.WithFilter(inputFilter.Filter),
-		)
-		go ws.Subscribe(program)
-
-		if _, err := program.Run(); err != nil {
-			slog.Error("TUI run error", "error", err)
-			return errors.New("Phosphor crashed. If you'd like to report it, please copy the stacktrace above and open an issue at https://github.com/hackafterdark/phosphor/issues/new?template=bug.yml") //nolint:staticcheck
+		tuiEnabled := true
+		if entry, ok := ws.Config().Services["tui"]; ok {
+			tuiEnabled = entry.Enabled
 		}
+
+		gov := platform.NewGovernance(ws.Config())
+		reg := platform.NewRegistry(slog.Default(), gov)
+
+		var tuiSrv *tui.Service
+		if tuiEnabled && term.IsTerminal(os.Stdin.Fd()) {
+			tuiSrv = tui.NewService(ws, dbConn, sessionID, continueLast, slog.Default())
+			if err := gov.Check(tuiSrv); err != nil {
+				return fmt.Errorf("governance check failed for tui: %w", err)
+			}
+			reg.Register(tuiSrv)
+		}
+
+		if !useClientServer() {
+			if httpApiEntry, ok := ws.Config().Services["http-api"]; ok && httpApiEntry.Enabled {
+				appWs, ok := ws.(*workspace.AppWorkspace)
+				if ok {
+					store := appWs.Store()
+					host := httpApiEntry.Host
+					if host == "" {
+						host = "127.0.0.1"
+					}
+					var hostURL *url.URL
+					if httpApiEntry.Port != 0 {
+						hostURL = &url.URL{
+							Scheme: "tcp",
+							Host:   fmt.Sprintf("%s:%d", host, httpApiEntry.Port),
+						}
+					} else {
+						var err error
+						hostURL, err = server.ParseHostURL(server.DefaultHost())
+						if err != nil {
+							return fmt.Errorf("failed to parse default host: %w", err)
+						}
+					}
+
+					httpSrv := httpapi.NewService(store, hostURL.Scheme, hostURL.Host, ws.WorkingDir(), slog.Default())
+					if err := gov.Check(httpSrv); err != nil {
+						return fmt.Errorf("governance check failed for http-api: %w", err)
+					}
+					reg.Register(httpSrv)
+				}
+			}
+		}
+
+		if err := reg.StartAll(cmd.Context()); err != nil {
+			return fmt.Errorf("failed to start services: %w", err)
+		}
+
+		sigch := make(chan os.Signal, 1)
+		sigs := []os.Signal{os.Interrupt}
+		sigs = append(sigs, addSignals(sigs)...)
+		signal.Notify(sigch, sigs...)
+
+		if tuiSrv != nil {
+			select {
+			case <-sigch:
+				slog.Info("Received interrupt signal...")
+			case <-tuiSrv.Done():
+				slog.Info("TUI exited...")
+			}
+		} else {
+			slog.Info("Running in headless mode...")
+			<-sigch
+			slog.Info("Received interrupt signal...")
+		}
+
+		ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
+		defer cancel()
+
+		slog.Info("Shutting down...")
+		if err := reg.StopAll(ctx); err != nil {
+			slog.Error("Failed to shutdown services", "error", err)
+			return fmt.Errorf("failed to shutdown services: %v", err)
+		}
+
 		return nil
 	},
 }

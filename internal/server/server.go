@@ -225,6 +225,13 @@ func (s *Server) Handler() http.Handler {
 	return s.h.Handler
 }
 
+// Backend returns the server's backend instance. This allows other
+// services (e.g., OpenAI API) to share the same backend and workspace
+// state as the management API.
+func (s *Server) Backend() *backend.Backend {
+	return s.backend
+}
+
 // Serve accepts incoming connections on the listener.
 func (s *Server) Serve(ln net.Listener) error {
 	return s.h.Serve(ln)
@@ -262,6 +269,9 @@ func (s *Server) Close() error {
 // connections.
 func (s *Server) Shutdown(ctx context.Context) error {
 	defer func() { s.closeListener() }()
+	if s.backend != nil {
+		s.backend.ShutdownAll()
+	}
 	return s.h.Shutdown(ctx)
 }
 

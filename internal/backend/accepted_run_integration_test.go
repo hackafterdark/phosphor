@@ -31,10 +31,10 @@ type gatedCoordinator struct {
 	gate    chan struct{}
 }
 
-func (c *gatedCoordinator) RunAccepted(ctx context.Context, accept *agent.AcceptedRun, sessionID, prompt string, attachments ...message.Attachment) (*fantasy.AgentResult, error) {
+func (c *gatedCoordinator) RunAccepted(ctx context.Context, accept *agent.AcceptedRun, sessionID, prompt string, msg *proto.AgentMessage, attachments ...message.Attachment) (*fantasy.AgentResult, error) {
 	close(c.entered)
 	<-c.gate
-	return c.Coordinator.RunAccepted(ctx, accept, sessionID, prompt, attachments...)
+	return c.Coordinator.RunAccepted(ctx, accept, sessionID, prompt, msg, attachments...)
 }
 
 // newRealCoordinator builds a production agent.Coordinator over a

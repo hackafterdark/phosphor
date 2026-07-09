@@ -10,7 +10,9 @@ INSERT INTO sessions (
     summary_message_id,
     current_tokens,
     updated_at,
-    created_at
+    created_at,
+    is_stateless,
+    service
 ) VALUES (
     ?,
     ?,
@@ -22,7 +24,9 @@ INSERT INTO sessions (
     null,
     0,
     strftime('%s', 'now'),
-    strftime('%s', 'now')
+    strftime('%s', 'now'),
+    0,
+    ''
 ) RETURNING *;
 
 -- name: GetSessionByID :one
@@ -75,3 +79,19 @@ WHERE id = ?;
 -- name: DeleteSession :exec
 DELETE FROM sessions
 WHERE id = ?;
+
+-- name: UpdateStatelessSession :exec
+UPDATE sessions
+SET
+    is_stateless = ?,
+    service = ?
+WHERE id = ?;
+
+-- name: ListStatelessSessions :many
+SELECT id, parent_session_id, title, message_count, prompt_tokens, completion_tokens,
+       cost, updated_at, created_at, summary_message_id, todos, current_tokens,
+       is_stateless, service
+FROM sessions
+WHERE is_stateless = 1
+  AND (?1 = '' OR service = ?1)
+ORDER BY created_at DESC;

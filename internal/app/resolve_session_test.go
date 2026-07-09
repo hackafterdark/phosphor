@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hackafterdark/phosphor/internal/pubsub"
 	"github.com/hackafterdark/phosphor/internal/session"
@@ -72,8 +73,24 @@ func (m *mockSessionService) Rename(context.Context, string, string) error {
 	return nil
 }
 
+func (m *mockSessionService) UpdateStateless(context.Context, string, bool, string) error {
+	return nil
+}
+
 func (m *mockSessionService) Delete(context.Context, string) error {
 	return nil
+}
+
+func (m *mockSessionService) ListStatelessSessions(_ context.Context, _ string) ([]session.Session, error) {
+	return nil, nil
+}
+
+func (m *mockSessionService) CountPrunableMessages(_ context.Context, _ string, _ time.Time) (int, error) {
+	return 0, nil
+}
+
+func (m *mockSessionService) PruneMessages(_ context.Context, _ string, _ time.Time) (int, error) {
+	return 0, nil
 }
 
 func (m *mockSessionService) CreateAgentToolSessionID(messageID, toolCallID string) string {

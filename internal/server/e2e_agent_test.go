@@ -175,7 +175,7 @@ func (c *scriptedCoordinator) Run(ctx context.Context, sessionID, prompt string,
 	}
 }
 
-func (c *scriptedCoordinator) RunAccepted(ctx context.Context, accept *agent.AcceptedRun, sessionID, prompt string, attachments ...message.Attachment) (*fantasy.AgentResult, error) {
+func (c *scriptedCoordinator) RunAccepted(ctx context.Context, accept *agent.AcceptedRun, sessionID, prompt string, msg *proto.AgentMessage, attachments ...message.Attachment) (*fantasy.AgentResult, error) {
 	return c.Run(ctx, sessionID, prompt, attachments...)
 }
 

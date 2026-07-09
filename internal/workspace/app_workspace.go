@@ -55,6 +55,20 @@ func (w *AppWorkspace) ListSessions(ctx context.Context) ([]session.Session, err
 	return w.app.Sessions.List(ctx)
 }
 
+func (w *AppWorkspace) ListSessionsFiltered(ctx context.Context) ([]session.Session, error) {
+	all, err := w.app.Sessions.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	filtered := make([]session.Session, 0, len(all))
+	for _, s := range all {
+		if !s.IsStateless {
+			filtered = append(filtered, s)
+		}
+	}
+	return filtered, nil
+}
+
 func (w *AppWorkspace) SaveSession(ctx context.Context, sess session.Session) (session.Session, error) {
 	return w.app.Sessions.Save(ctx, sess)
 }

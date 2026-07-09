@@ -36,9 +36,11 @@ func (b *Backend) SendMessage(workspaceID string, msg proto.AgentMessage) error 
 	}
 
 	if err := agent.ValidateCall(agent.SessionAgentCall{
-		SessionID:   msg.SessionID,
-		Prompt:      msg.Prompt,
-		Attachments: proto.AttachmentsToMessage(msg.Attachments),
+		SessionID:          msg.SessionID,
+		Prompt:             msg.Prompt,
+		IsStateless:        msg.IsStateless,
+		SystemPromptOverride: msg.SystemPrompt,
+		Attachments:        proto.AttachmentsToMessage(msg.Attachments),
 	}); err != nil {
 		return err
 	}
@@ -92,7 +94,7 @@ func (b *Backend) runAgent(ws *Workspace, msg proto.AgentMessage, accept *agent.
 	}
 	ctx = agent.WithRunCompleteMarker(ctx)
 
-	_, err := ws.AgentCoordinator.RunAccepted(ctx, accept, msg.SessionID, msg.Prompt, proto.AttachmentsToMessage(msg.Attachments)...)
+	_, err := ws.AgentCoordinator.RunAccepted(ctx, accept, msg.SessionID, msg.Prompt, &msg, proto.AttachmentsToMessage(msg.Attachments)...)
 	if err == nil || errors.Is(err, context.Canceled) {
 		return
 	}

@@ -446,7 +446,7 @@ func (m *UI) loadInitialSession() tea.Cmd {
 		return m.loadSession(m.initialSessionID)
 	case m.continueLastSession:
 		return func() tea.Msg {
-			sessions, err := m.com.Workspace.ListSessions(context.Background())
+			sessions, err := m.com.Workspace.ListSessionsFiltered(context.Background())
 			if err != nil || len(sessions) == 0 {
 				return nil
 			}
@@ -3901,12 +3901,12 @@ func cancelTimerCmd() tea.Cmd {
 // registerSlashCommands sets up the mapping between slash command names and their TUI handlers.
 func (m *UI) registerSlashCommands() {
 	m.slashHandlers = map[string]slashCommandHandler{
-		"goal":     m.handleGoalSlashCommand,
-		"name":     m.handleNameSlashCommand,
-		"menu":     m.handleMenuSlashCommand,
-		"stats":    m.handleStatsSlashCommand,
-		"learn":    m.handleLearnSlashCommand,
-		"quit":     m.handleQuitSlashCommand,
+		"goal":  m.handleGoalSlashCommand,
+		"name":  m.handleNameSlashCommand,
+		"menu":  m.handleMenuSlashCommand,
+		"stats": m.handleStatsSlashCommand,
+		"learn": m.handleLearnSlashCommand,
+		"quit":  m.handleQuitSlashCommand,
 	}
 	if agent.StructuralSearchAvailable {
 		m.slashHandlers["languages"] = m.handleLanguagesSlashCommand

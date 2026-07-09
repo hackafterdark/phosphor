@@ -61,7 +61,7 @@ func (s *runCoordinator) Run(ctx context.Context, sessionID, prompt string, atta
 	return nil, s.returnFn(ctx)
 }
 
-func (s *runCoordinator) RunAccepted(ctx context.Context, accept *agent.AcceptedRun, sessionID, prompt string, attachments ...message.Attachment) (*fantasy.AgentResult, error) {
+func (s *runCoordinator) RunAccepted(ctx context.Context, accept *agent.AcceptedRun, sessionID, prompt string, msg *proto.AgentMessage, attachments ...message.Attachment) (*fantasy.AgentResult, error) {
 	return s.Run(ctx, sessionID, prompt, attachments...)
 }
 

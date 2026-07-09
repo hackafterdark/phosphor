@@ -417,7 +417,7 @@ type Styles struct {
 		// Checkbox styles for multi-select list items.
 		CheckboxChecked   lipgloss.Style
 		CheckboxUnchecked lipgloss.Style
-		InputPrompt  lipgloss.Style
+		InputPrompt       lipgloss.Style
 
 		List lipgloss.Style
 

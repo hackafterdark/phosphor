@@ -61,7 +61,7 @@ func NewSessions(com *common.Common, selectedSessionID string) (*Session, error)
 	s := new(Session)
 	s.sessionsMode = sessionsModeNormal
 	s.com = com
-	sessions, err := com.Workspace.ListSessions(context.TODO())
+	sessions, err := com.Workspace.ListSessionsFiltered(context.TODO())
 	if err != nil {
 		return nil, err
 	}

@@ -32,6 +32,7 @@ import (
 	"github.com/hackafterdark/phosphor/internal/message"
 	"github.com/hackafterdark/phosphor/internal/oauth/copilot"
 	"github.com/hackafterdark/phosphor/internal/permission"
+	"github.com/hackafterdark/phosphor/internal/proto"
 	"github.com/hackafterdark/phosphor/internal/pubsub"
 	"github.com/hackafterdark/phosphor/internal/session"
 	"github.com/hackafterdark/phosphor/internal/skills"
@@ -111,7 +112,7 @@ type Coordinator interface {
 	// sessionAgent.Run as SessionAgentCall.Accepted, where it is
 	// consumed under dispatchMu once the accepted -> (cancel-on-entry |
 	// queued | active) transition is chosen.
-	RunAccepted(ctx context.Context, accept *AcceptedRun, sessionID, prompt string, attachments ...message.Attachment) (*fantasy.AgentResult, error)
+	RunAccepted(ctx context.Context, accept *AcceptedRun, sessionID, prompt string, msg *proto.AgentMessage, attachments ...message.Attachment) (*fantasy.AgentResult, error)
 	BeginAccepted(sessionID string) *AcceptedRun
 	Cancel(sessionID string)
 	CancelAll()
@@ -258,20 +259,22 @@ func NewCoordinator(
 }
 
 func (c *coordinator) Run(ctx context.Context, sessionID string, prompt string, attachments ...message.Attachment) (*fantasy.AgentResult, error) {
-	return c.run(ctx, nil, sessionID, prompt, attachments...)
+	return c.run(ctx, nil, sessionID, prompt, nil, attachments...)
 }
 
-// RunAccepted implements Coordinator.
-func (c *coordinator) RunAccepted(ctx context.Context, accept *AcceptedRun, sessionID string, prompt string, attachments ...message.Attachment) (*fantasy.AgentResult, error) {
-	return c.run(ctx, accept, sessionID, prompt, attachments...)
+// RunAccepted implements Coordinator. When msg is non-nil, sampling parameters
+// from it override model config defaults (used by the OpenAI-compatible API).
+func (c *coordinator) RunAccepted(ctx context.Context, accept *AcceptedRun, sessionID string, prompt string, msg *proto.AgentMessage, attachments ...message.Attachment) (*fantasy.AgentResult, error) {
+	return c.run(ctx, accept, sessionID, prompt, msg, attachments...)
 }
 
 // run is the shared implementation behind Run and RunAccepted. When
 // accept is non-nil it is threaded onto the SessionAgentCall as
 // Accepted so sessionAgent.Run can consume the accept reservation under
 // dispatchMu; when nil (the in-process/local path) no accept tracking
-// applies.
-func (c *coordinator) run(ctx context.Context, accept *AcceptedRun, sessionID string, prompt string, attachments ...message.Attachment) (*fantasy.AgentResult, error) {
+// applies. When msg is non-nil, sampling parameters are taken from it
+// instead of the model config (used by the OpenAI-compatible API).
+func (c *coordinator) run(ctx context.Context, accept *AcceptedRun, sessionID string, prompt string, msg *proto.AgentMessage, attachments ...message.Attachment) (*fantasy.AgentResult, error) {
 	if err := c.readyWg.Wait(); err != nil {
 		return nil, err
 	}
@@ -305,6 +308,47 @@ func (c *coordinator) run(ctx context.Context, accept *AcceptedRun, sessionID st
 
 	mergedOptions, temp, topP, topK, freqPenalty, presPenalty := mergeCallOptions(model, providerCfg)
 
+	// Apply sampling parameter overrides from the client (e.g. OpenAI-compatible API).
+	// When msg is non-nil, its sampling values take precedence over model config defaults.
+	if msg != nil {
+		if msg.Temperature != nil {
+			temp = msg.Temperature
+		}
+		if msg.MaxOutputTokens > 0 {
+			maxTokens = msg.MaxOutputTokens
+		}
+		if msg.TopP != nil {
+			topP = msg.TopP
+		}
+		if msg.TopK != nil {
+			topK = msg.TopK
+		}
+		if msg.FrequencyPenalty != nil {
+			freqPenalty = msg.FrequencyPenalty
+		}
+		if msg.PresencePenalty != nil {
+			presPenalty = msg.PresencePenalty
+		}
+		if msg.Seed != nil {
+			model.ModelCfg.Seed = msg.Seed
+		}
+		if msg.MinP != nil {
+			model.ModelCfg.MinP = msg.MinP
+		}
+		if msg.RepetitionPenalty != nil {
+			model.ModelCfg.RepetitionPenalty = msg.RepetitionPenalty
+		}
+		if len(msg.Stop) > 0 {
+			model.ModelCfg.Stop = msg.Stop
+		}
+		if msg.TopLogProbs != nil {
+			model.ModelCfg.TopLogProbs = msg.TopLogProbs
+		}
+		if msg.MaxThinkingTokens != nil && *msg.MaxThinkingTokens > 0 {
+			model.ModelCfg.MaxThinkingTokens = msg.MaxThinkingTokens
+		}
+	}
+
 	if err := c.refreshTokenIfExpired(ctx, providerCfg); err != nil {
 		// NOTE(@andreynering): We don't return here because the event handling to ask the user to reauthenticate
 		// depends on the flow below. If refresh fails, proceed with the token we have.
@@ -335,11 +379,16 @@ func (c *coordinator) run(ctx context.Context, accept *AcceptedRun, sessionID st
 	// the coalesce closure publishes the final outcome under that
 	// same correlator.
 	runID := RunIDFromContext(ctx)
+
+	// Check if this session is stateless (agent should skip history loading).
+	isStateless, _ := c.isSessionStateless(ctx, sessionID)
+
 	run := func() (*fantasy.AgentResult, error) {
-		return c.currentAgent.Run(ctx, SessionAgentCall{
+		call := SessionAgentCall{
 			SessionID:         sessionID,
 			RunID:             runID,
 			Prompt:            prompt,
+			IsStateless:       isStateless,
 			Attachments:       attachments,
 			MaxOutputTokens:   maxTokens,
 			ProviderOptions:   mergedOptions,
@@ -356,7 +405,15 @@ func (c *coordinator) run(ctx context.Context, accept *AcceptedRun, sessionID st
 			MaxThinkingTokens: model.ModelCfg.MaxThinkingTokens,
 			OnComplete:        onComplete,
 			Accepted:          accept,
-		})
+		}
+		// Use msg.UserPrompt for persistence if available (OpenAI API path),
+		// otherwise fall back to the stitched prompt.
+		if msg != nil && msg.UserPrompt != "" {
+			call.UserPrompt = msg.UserPrompt
+		} else {
+			call.UserPrompt = prompt
+		}
+		return c.currentAgent.Run(ctx, call)
 	}
 	beforeLoaded := c.skillTracker.LoadedNames()
 	var result *fantasy.AgentResult
@@ -1393,6 +1450,17 @@ func (c *coordinator) IsBusy() bool {
 
 func (c *coordinator) IsSessionBusy(sessionID string) bool {
 	return c.currentAgent.IsSessionBusy(sessionID)
+}
+
+// isSessionStateless checks whether the given session is marked as stateless.
+// Stateless sessions skip history loading — the client already sent full
+// context in the request body (e.g. OpenAI-compatible clients).
+func (c *coordinator) isSessionStateless(ctx context.Context, sessionID string) (bool, error) {
+	sess, err := c.sessions.Get(ctx, sessionID)
+	if err != nil {
+		return false, err
+	}
+	return sess.IsStateless, nil
 }
 
 func (c *coordinator) Model() Model {
