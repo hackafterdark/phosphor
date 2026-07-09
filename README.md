@@ -1,10 +1,12 @@
 # Phosphor
 
+[![Ask DeepWiki]([https://deepwiki.com/badge.svg)](https://deepwiki.com/hackafterdark/phosphor)](https://deepwiki.com/badge.svg)](https://deepwiki.com/hackafterdark/phosphor))
+
 Phosphor is a terminal-based, hardened agentic runtime built in Go. It is a fork of the wonderful [Crush](https://github.com/charmbracelet/crush) agent, designed for developers who demand full visibility, structural intelligence, and uncompromising security in their AI coding tools.
 
 Phosphor is not a general-purpose chat interface. It is a hardened foundation for agentic execution that treats the filesystem as a high-integrity sandbox and code as a structural graph rather than raw text.
 
-> **Important Note:** _This is a personal project._ While the goal is to make it useful for others, it will primarily be driven by my own needs and preferences. It is not recommended for production use and there is no support and no warranties expressed or implied...But I do hope you find it useful!
+> **Important Note:** *This is a personal project.* While the goal is to make it useful for others, it will primarily be driven by my own needs and preferences. It is not recommended for production use and there is no support and no warranties expressed or implied...But I do hope you find it useful!
 
 ## Why Phosphor?
 
