@@ -84,7 +84,7 @@ func NewJobs(com *common.Common) (*Jobs, error) {
 			if err != nil {
 				return err
 			}
-			if !info.IsDir() && filepath.Base(path) == "job.md" {
+			if !info.IsDir() && strings.EqualFold(filepath.Base(path), "job.md") {
 				jobName := filepath.Base(filepath.Dir(path))
 				job, err := loadJobFile(path)
 				if err == nil {
@@ -174,7 +174,7 @@ func (j *Jobs) ID() string {
 // Cursor implements Dialog.
 func (j *Jobs) Cursor() *tea.Cursor {
 	if j.input.Focused() {
-		return j.input.Cursor()
+		return InputCursor(j.com.Styles, j.input.Cursor())
 	}
 	return nil
 }

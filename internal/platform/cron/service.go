@@ -19,17 +19,17 @@ import (
 
 // Service implements the platform.Service interface for the cron service.
 type Service struct {
-	app          *app.App
-	appProvider  func() *app.App
-	cfg          *config.ConfigStore
-	cron         *cron.Cron
-	mu           sync.RWMutex
-	jobs         map[string]*cron.Entry // jobName -> cron entry
-	logger       *slog.Logger
-	stopChan     chan struct{}
-	wg           sync.WaitGroup
+	app           *app.App
+	appProvider   func() *app.App
+	cfg           *config.ConfigStore
+	cron          *cron.Cron
+	mu            sync.RWMutex
+	jobs          map[string]*cron.Entry // jobName -> cron entry
+	logger        *slog.Logger
+	stopChan      chan struct{}
+	wg            sync.WaitGroup
 	failureCounts map[string]int
-	failureMu    sync.Mutex
+	failureMu     sync.Mutex
 }
 
 // NewService creates a new cron service.
@@ -43,12 +43,12 @@ func NewServiceWithProvider(appProvider func() *app.App, cfg *config.ConfigStore
 		logger = slog.Default()
 	}
 	return &Service{
-		appProvider:  appProvider,
-		cfg:          cfg,
-		cron:         cron.New(),
-		logger:       logger,
-		stopChan:     make(chan struct{}),
-		jobs:         make(map[string]*cron.Entry),
+		appProvider:   appProvider,
+		cfg:           cfg,
+		cron:          cron.New(),
+		logger:        logger,
+		stopChan:      make(chan struct{}),
+		jobs:          make(map[string]*cron.Entry),
 		failureCounts: make(map[string]int),
 	}
 }
@@ -126,7 +126,7 @@ func (s *Service) loadJobsFromDir(ctx context.Context, dir string) error {
 		if err != nil {
 			return err
 		}
-		if !info.IsDir() && filepath.Base(path) == "job.md" {
+		if !info.IsDir() && strings.EqualFold(filepath.Base(path), "job.md") {
 			jobDir := filepath.Dir(path)
 			jobName := filepath.Base(jobDir)
 			// Load the job file.
@@ -173,13 +173,13 @@ func (s *Service) loadJobFile(path string) (*Job, error) {
 	prompt := strings.TrimSpace(content)
 
 	return &Job{
-		Name:           fm.Title,
-		Schedule:       fm.Schedule,
-		Prompt:         prompt,
-		SessionMode:    fm.SessionMode,
-		Delivery:       fm.Delivery,
-		SessionID:      fm.SessionID,
-		AllowConcurrent: fm.AllowConcurrent,
+		Name:             fm.Title,
+		Schedule:         fm.Schedule,
+		Prompt:           prompt,
+		SessionMode:      fm.SessionMode,
+		Delivery:         fm.Delivery,
+		SessionID:        fm.SessionID,
+		AllowConcurrent:  fm.AllowConcurrent,
 		FailureThreshold: fm.FailureThreshold,
 	}, nil
 }
@@ -334,24 +334,24 @@ func splitFrontmatter(s string) []string {
 
 // Job represents a scheduled job.
 type Job struct {
-	Name           string
-	Schedule       string
-	Prompt         string
-	SessionMode    string // ephemeral, persistent, per_run
-	Delivery       []string
-	SessionID      string
-	AllowConcurrent bool
+	Name             string
+	Schedule         string
+	Prompt           string
+	SessionMode      string // ephemeral, persistent, per_run
+	Delivery         []string
+	SessionID        string
+	AllowConcurrent  bool
 	FailureThreshold int
 }
 
 // JobFrontMatter represents the frontmatter of a job.md file.
 type JobFrontMatter struct {
-	Title           string   `yaml:"title"`
-	Description     string   `yaml:"description"`
-	Schedule        string   `yaml:"schedule"`
-	SessionMode     string   `yaml:"session_mode"`
-	Delivery        []string `yaml:"delivery"`
-	SessionID       string   `yaml:"session_id"`
-	AllowConcurrent bool     `yaml:"allow_concurrent"`
+	Title            string   `yaml:"title"`
+	Description      string   `yaml:"description"`
+	Schedule         string   `yaml:"schedule"`
+	SessionMode      string   `yaml:"session_mode"`
+	Delivery         []string `yaml:"delivery"`
+	SessionID        string   `yaml:"session_id"`
+	AllowConcurrent  bool     `yaml:"allow_concurrent"`
 	FailureThreshold int      `yaml:"failure_threshold"`
 }
