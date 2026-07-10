@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/robfig/cron/v3"
 	"gopkg.in/yaml.v3"
@@ -283,8 +284,11 @@ func (s *Service) runJob(ctx context.Context, jobName string, job *Job) {
 			s.logger.Error("failed to update session stateless status", "job", jobName, "error", err)
 		}
 	case "ephemeral", "per_run":
-		// Create a new session for each run.
-		session, err := appInst.Sessions.Create(ctx, jobName)
+		// Create a new session for each run, titled with the job name and timestamp
+		// so individual runs can be distinguished if sessions are kept for inspection.
+		ts := time.Now().Format("2006-01-02 15:04:05")
+		sessionTitle := fmt.Sprintf("%s %s", jobName, ts)
+		session, err := appInst.Sessions.Create(ctx, sessionTitle)
 		if err != nil {
 			s.logger.Error("failed to create session", "job", jobName, "error", err)
 			return
@@ -303,6 +307,14 @@ func (s *Service) runJob(ctx context.Context, jobName string, job *Job) {
 		s.logger.Error("unknown session mode", "job", jobName, "mode", job.SessionMode)
 		return
 	}
+
+	// Scheduled jobs run unattended — enable yolo mode so they don't get
+	// stuck on permission prompts.
+	wasYolo := s.cfg.Overrides().SkipPermissionRequests
+	s.cfg.Overrides().SkipPermissionRequests = true
+	defer func() {
+		s.cfg.Overrides().SkipPermissionRequests = wasYolo
+	}()
 
 	// Send the prompt to the agent.
 	var attachments []message.Attachment // TODO: handle attachments if needed
