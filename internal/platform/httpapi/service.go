@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/hackafterdark/phosphor/internal/backend"
 	"github.com/hackafterdark/phosphor/internal/config"
 	"github.com/hackafterdark/phosphor/internal/platform/openai"
 	"github.com/hackafterdark/phosphor/internal/proto"
@@ -73,6 +74,14 @@ func (s *Service) resolveOpenaiConfig() openaiConfig {
 // Name returns the service name "http-api".
 func (s *Service) Name() string {
 	return "http-api"
+}
+
+// Backend returns the underlying backend instance.
+func (s *Service) Backend() *backend.Backend {
+	if s.srv == nil {
+		return nil
+	}
+	return s.srv.Backend()
 }
 
 // Start begins serving the HTTP API and the Echo-powered OpenAI-compatible API.

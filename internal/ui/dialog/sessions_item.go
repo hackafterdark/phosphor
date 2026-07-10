@@ -64,6 +64,9 @@ var _ ListItem = &SessionItem{}
 
 // Filter returns the filterable value of the session.
 func (s *SessionItem) Filter() string {
+	if s.IsStateless && s.Service == "cron" {
+		return "[cron] " + s.Title
+	}
 	return s.Title
 }
 
@@ -130,7 +133,11 @@ func (s *SessionItem) Render(width int) string {
 		}
 	}
 
-	return renderItem(styles, s.Title, info, s.focused, width, s.cache, &s.m)
+	title := s.Title
+	if s.IsStateless && s.Service == "cron" {
+		title = "[cron] " + title
+	}
+	return renderItem(styles, title, info, s.focused, width, s.cache, &s.m)
 }
 
 type ListItemStyles struct {

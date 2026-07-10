@@ -586,6 +586,18 @@ func (c *Config) setDefaults(workingDir, dataDir string) {
 		}
 		c.Services["openai-api"] = entry
 	}
+	if _, exists := c.Services["cron"]; !exists {
+		c.Services["cron"] = ServiceEntry{
+			Enabled:       true,
+			JobsDirectory: ".phosphor/jobs",
+		}
+	} else {
+		entry := c.Services["cron"]
+		if entry.JobsDirectory == "" {
+			entry.JobsDirectory = ".phosphor/jobs"
+		}
+		c.Services["cron"] = entry
+	}
 	if c.Security == nil {
 		c.Security = &SecurityConfig{
 			AllowedEgress: AllowedEgressConfig{

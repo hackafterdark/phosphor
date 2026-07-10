@@ -956,6 +956,7 @@ type ServiceEntry struct {
 	Auth                 AuthConfig `json:"auth,omitempty" jsonschema:"description=Authentication configuration"`
 	AcceptSystemPrompt   bool       `json:"accept_system_prompt,omitempty" jsonschema:"description=Whether to accept system prompts from API clients (OpenAI-compatible API only)"`
 	LogRequestBody       bool       `json:"log_request_body,omitempty" jsonschema:"description=Log raw request bodies at Debug level (useful for debugging client compatibility, contains user prompts)"`
+	JobsDirectory        string     `json:"jobs_directory,omitempty" jsonschema:"description=Directory where cron jobs are stored"`
 }
 
 type AuthConfig struct {

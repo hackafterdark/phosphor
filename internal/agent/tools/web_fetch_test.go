@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -79,6 +80,11 @@ func TestWebFetchHardeningCIDRAllow(t *testing.T) {
 func TestWebFetchHardeningLocalhostAlwaysAllowed(t *testing.T) {
 	t.Parallel()
 
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+
 	allowList = make(map[string]bool)
 	tr := newSecurityTransport(http.DefaultTransport, func(ctx context.Context, host string) (bool, error) {
 		t.Errorf("allowFn should not be called for localhost")
@@ -88,18 +94,19 @@ func TestWebFetchHardeningLocalhostAlwaysAllowed(t *testing.T) {
 	client := &http.Client{Timeout: time.Second}
 	client.Transport = tr
 
-	// Request to 127.0.0.1 should succeed (no server running, but transport allows it).
-	req, err := http.NewRequestWithContext(t.Context(), "GET", "http://127.0.0.1:8080/api", nil)
+	req, err := http.NewRequestWithContext(t.Context(), "GET", ts.URL, nil)
 	if err != nil {
 		t.Fatalf("failed to create request: %v", err)
 	}
 
 	resp, err := client.Do(req)
-	if err == nil {
-		t.Fatal("expected network error for localhost (no server running)")
+	if err != nil {
+		t.Fatalf("expected request to succeed, got: %v", err)
 	}
-	if resp != nil {
-		defer resp.Body.Close()
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected status OK, got %d", resp.StatusCode)
 	}
 	// localhost is always allowed by securityTransport.
 	// If allowFn was called, the test fails.

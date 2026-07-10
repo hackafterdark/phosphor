@@ -116,9 +116,9 @@ func TestCountPrunableMessages(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 2, count)
 
-	// Cutoff in the far past should prune everything.
-	farPast := time.Unix(0, 0)
-	count, err = svc.CountPrunableMessages(ctx, stateless.ID, farPast)
+	// Cutoff in the far future should prune everything.
+	farFuture := time.Now().Add(24 * time.Hour)
+	count, err = svc.CountPrunableMessages(ctx, stateless.ID, farFuture)
 	require.NoError(t, err)
 	require.Equal(t, 3, count)
 }

@@ -11,9 +11,11 @@ import (
 	"time"
 
 	"github.com/charmbracelet/x/term"
+	"github.com/hackafterdark/phosphor/internal/app"
 	"github.com/hackafterdark/phosphor/internal/config"
 	phosphorlog "github.com/hackafterdark/phosphor/internal/log"
 	"github.com/hackafterdark/phosphor/internal/platform"
+	"github.com/hackafterdark/phosphor/internal/platform/cron"
 	"github.com/hackafterdark/phosphor/internal/platform/httpapi"
 	"github.com/hackafterdark/phosphor/internal/server"
 	"github.com/spf13/cobra"
@@ -157,6 +159,32 @@ var serverCmd = &cobra.Command{
 		}
 
 		reg.Register(srv)
+
+		// Instantiate and register the cron service.
+		cronSrv := cron.NewServiceWithProvider(func() *app.App {
+			backend := srv.Backend()
+			if backend == nil {
+				return nil
+			}
+			workspaces := backend.ListWorkspaces()
+			if len(workspaces) == 0 {
+				return nil
+			}
+			ws, err := backend.GetWorkspace(workspaces[0].ID)
+			if err != nil {
+				return nil
+			}
+			return ws.App
+		}, cfg, slog.Default())
+
+		if err := gov.Check(cronSrv); err != nil {
+			if httpLogger != nil {
+				httpLogger.Error("Governance check failed for cron service", "error", err)
+			}
+			return fmt.Errorf("governance check failed for cron service: %w", err)
+		}
+
+		reg.Register(cronSrv)
 
 		// Start all registered services
 		if err := reg.StartAll(cmd.Context()); err != nil {

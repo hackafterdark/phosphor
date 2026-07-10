@@ -126,6 +126,38 @@ func (s *ConfigStore) LoadedPaths() []string {
 	return slices.Clone(s.loadedPaths)
 }
 
+// CronConfig holds the resolved cron service configuration.
+type CronConfig struct {
+	Enabled       bool
+	JobsDirectory string
+}
+
+// CronConfig returns the resolved cron service configuration.
+func (s *ConfigStore) CronConfig() *CronConfig {
+	cfg := s.Config()
+	if cfg == nil || cfg.Services == nil {
+		return &CronConfig{
+			Enabled:       true,
+			JobsDirectory: ".phosphor/jobs",
+		}
+	}
+	entry, ok := cfg.Services["cron"]
+	if !ok {
+		return &CronConfig{
+			Enabled:       true,
+			JobsDirectory: ".phosphor/jobs",
+		}
+	}
+	jobsDir := entry.JobsDirectory
+	if jobsDir == "" {
+		jobsDir = ".phosphor/jobs"
+	}
+	return &CronConfig{
+		Enabled:       entry.Enabled,
+		JobsDirectory: jobsDir,
+	}
+}
+
 // lockConfig acquires both the in-process mutex and a cross-process flock
 // on the config file for the given scope. Callers that need to do I/O
 // between reading and writing (e.g. an HTTP token exchange) must use

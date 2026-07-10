@@ -62,7 +62,7 @@ func (w *AppWorkspace) ListSessionsFiltered(ctx context.Context) ([]session.Sess
 	}
 	filtered := make([]session.Session, 0, len(all))
 	for _, s := range all {
-		if !s.IsStateless {
+		if !s.IsStateless || s.Service == "cron" {
 			filtered = append(filtered, s)
 		}
 	}
