@@ -19,6 +19,9 @@ import (
 // SessionsID is the identifier for the session selector dialog.
 const SessionsID = "session"
 
+// CronSessionsID is the identifier for the scheduled job sessions selector dialog.
+const CronSessionsID = "cron_sessions"
+
 type sessionsMode uint8
 
 // Possible modes a session item can be in
@@ -36,6 +39,7 @@ type Session struct {
 	input              textinput.Model
 	selectedSessionInx int
 	sessions           []session.Session
+	isCron             bool
 
 	sessionsMode sessionsMode
 
@@ -58,12 +62,38 @@ var _ Dialog = (*Session)(nil)
 
 // NewSessions creates a new Session dialog.
 func NewSessions(com *common.Common, selectedSessionID string) (*Session, error) {
+	return NewSessionsWithMode(com, selectedSessionID, false)
+}
+
+// NewCronSessions creates a new Session dialog for cron sessions.
+func NewCronSessions(com *common.Common, selectedSessionID string) (*Session, error) {
+	return NewSessionsWithMode(com, selectedSessionID, true)
+}
+
+// NewSessionsWithMode creates a new Session dialog with the specified isCron flag.
+func NewSessionsWithMode(com *common.Common, selectedSessionID string, isCron bool) (*Session, error) {
 	s := new(Session)
 	s.sessionsMode = sessionsModeNormal
 	s.com = com
-	sessions, err := com.Workspace.ListSessionsFiltered(context.TODO())
-	if err != nil {
-		return nil, err
+	s.isCron = isCron
+
+	var sessions []session.Session
+	var err error
+	if isCron {
+		all, err := com.Workspace.ListSessions(context.TODO())
+		if err != nil {
+			return nil, err
+		}
+		for _, sess := range all {
+			if sess.Service == "cron" {
+				sessions = append(sessions, sess)
+			}
+		}
+	} else {
+		sessions, err = com.Workspace.ListSessionsFiltered(context.TODO())
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	s.sessions = sessions
@@ -135,6 +165,9 @@ func NewSessions(com *common.Common, selectedSessionID string) (*Session, error)
 
 // ID implements Dialog.
 func (s *Session) ID() string {
+	if s.isCron {
+		return CronSessionsID
+	}
 	return SessionsID
 }
 
@@ -254,6 +287,9 @@ func (s *Session) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 	var cur *tea.Cursor
 	rc := NewRenderContext(t, width)
 	rc.Title = "Sessions"
+	if s.isCron {
+		rc.Title = "Scheduled Job Sessions"
+	}
 	switch s.sessionsMode {
 	case sessionsModeDeleting:
 		rc.TitleStyle = t.Dialog.Sessions.DeletingTitle

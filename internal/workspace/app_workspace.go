@@ -62,7 +62,7 @@ func (w *AppWorkspace) ListSessionsFiltered(ctx context.Context) ([]session.Sess
 	}
 	filtered := make([]session.Session, 0, len(all))
 	for _, s := range all {
-		if !s.IsStateless || s.Service == "cron" {
+		if !s.IsStateless && s.Service != "cron" {
 			filtered = append(filtered, s)
 		}
 	}
@@ -79,6 +79,10 @@ func (w *AppWorkspace) DeleteSession(ctx context.Context, sessionID string) erro
 
 func (w *AppWorkspace) RenameSession(ctx context.Context, sessionID, title string) error {
 	return w.app.Sessions.Rename(ctx, sessionID, title)
+}
+
+func (w *AppWorkspace) UpdateStateless(ctx context.Context, sessionID string, stateless bool, service string) error {
+	return w.app.Sessions.UpdateStateless(ctx, sessionID, stateless, service)
 }
 
 func (w *AppWorkspace) CreateAgentToolSessionID(messageID, toolCallID string) string {

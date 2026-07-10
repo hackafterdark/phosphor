@@ -126,7 +126,7 @@ func (w *ClientWorkspace) ListSessionsFiltered(ctx context.Context) ([]session.S
 	}
 	filtered := make([]session.Session, 0, len(all))
 	for _, s := range all {
-		if !s.IsStateless || s.Service == "cron" {
+		if !s.IsStateless && s.Service != "cron" {
 			filtered = append(filtered, s)
 		}
 	}
@@ -147,6 +147,10 @@ func (w *ClientWorkspace) DeleteSession(ctx context.Context, sessionID string) e
 
 func (w *ClientWorkspace) RenameSession(ctx context.Context, sessionID, title string) error {
 	return w.client.RenameSession(ctx, w.workspaceID(), sessionID, title)
+}
+
+func (w *ClientWorkspace) UpdateStateless(ctx context.Context, sessionID string, stateless bool, service string) error {
+	return w.client.UpdateSessionStateless(ctx, w.workspaceID(), sessionID, stateless, service)
 }
 
 func (w *ClientWorkspace) CreateAgentToolSessionID(messageID, toolCallID string) string {

@@ -586,6 +586,37 @@ func (c *controllerV1) handlePostWorkspaceSessionRename(w http.ResponseWriter, r
 	w.WriteHeader(http.StatusOK)
 }
 
+// handlePostWorkspaceSessionStateless updates a session's stateless status.
+//
+//	@Summary		Update session stateless status
+//	@Tags			sessions
+//	@Accept			json
+//	@Param			id		path		string			true	"Workspace ID"
+//	@Param			sid		path		string			true	"Session ID"
+//	@Param			request	body		proto.UpdateStatelessRequest	true	"Stateless update request"
+//	@Success		200
+//	@Failure		400	{object}	proto.Error
+//	@Failure		404	{object}	proto.Error
+//	@Failure		500	{object}	proto.Error
+//	@Router			/workspaces/{id}/sessions/{sid}/stateless [post]
+func (c *controllerV1) handlePostWorkspaceSessionStateless(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	sid := r.PathValue("sid")
+
+	var req proto.UpdateStatelessRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		c.server.logError(r, "Failed to decode stateless request", "error", err)
+		jsonError(w, http.StatusBadRequest, "failed to decode request")
+		return
+	}
+
+	if err := c.backend.UpdateSessionStateless(r.Context(), id, sid, req.Stateless, req.Service); err != nil {
+		c.handleError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
 // handleGetWorkspaceSessionUserMessages returns user messages for a session.
 //
 //	@Summary		Get user messages for session

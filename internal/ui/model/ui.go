@@ -1747,7 +1747,54 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 	// Session dialog messages.
 	case dialog.ActionSelectSession:
 		m.dialog.CloseDialog(dialog.SessionsID)
+		m.dialog.CloseDialog(dialog.CronSessionsID)
 		cmds = append(cmds, m.loadSession(msg.Session.ID))
+
+	case dialog.ActionRunJob:
+		m.dialog.CloseDialog(dialog.CronJobsID)
+		if m.isAgentBusy() {
+			cmds = append(cmds, util.ReportWarn("Agent is busy, please wait..."))
+			break
+		}
+		newSession, err := m.com.Workspace.CreateSession(context.Background(), msg.JobName)
+		if err != nil {
+			cmds = append(cmds, util.ReportError(err))
+			break
+		}
+		if err := m.com.Workspace.UpdateStateless(context.Background(), newSession.ID, false, "cron"); err != nil {
+			slog.Error("failed to mark session as cron", "error", err)
+		}
+		m.session = &newSession
+		cmds = append(cmds, m.loadSession(newSession.ID))
+		m.setState(uiChat, m.focus)
+		prompt := msg.Prompt
+		cmds = append(cmds, func() tea.Msg {
+			err := m.com.Workspace.AgentRun(context.Background(), newSession.ID, prompt)
+			if err != nil {
+				return util.InfoMsg{
+					Type: util.InfoTypeError,
+					Msg:  fmt.Sprintf("%v", err),
+				}
+			}
+			return nil
+		})
+
+	case dialog.ActionEditJob:
+		m.dialog.CloseDialog(dialog.CronJobsID)
+		cmd, err := editor.Command(
+			"phosphor",
+			msg.JobPath,
+		)
+		if err != nil {
+			cmds = append(cmds, util.ReportError(err))
+			break
+		}
+		cmds = append(cmds, tea.ExecProcess(cmd, func(err error) tea.Msg {
+			if err != nil {
+				return util.ReportError(err)()
+			}
+			return nil
+		}))
 
 	// Open dialog message.
 	case dialog.ActionOpenDialog:
@@ -4115,6 +4162,14 @@ func (m *UI) openDialog(id string) tea.Cmd {
 		if cmd := m.openSessionsDialog(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
+	case dialog.CronSessionsID:
+		if cmd := m.openCronSessionsDialog(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	case dialog.CronJobsID:
+		if cmd := m.openCronJobsDialog(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 	case dialog.ModelsID:
 		if cmd := m.openModelsDialog(); cmd != nil {
 			cmds = append(cmds, cmd)
@@ -4300,6 +4355,45 @@ func (m *UI) openSessionsDialog() tea.Cmd {
 	}
 
 	dialog, err := dialog.NewSessions(m.com, selectedSessionID)
+	if err != nil {
+		return util.ReportError(err)
+	}
+
+	m.dialog.OpenDialog(dialog)
+	return nil
+}
+
+// openCronSessionsDialog opens the scheduled job sessions dialog.
+func (m *UI) openCronSessionsDialog() tea.Cmd {
+	if m.dialog.ContainsDialog(dialog.CronSessionsID) {
+		// Bring to front
+		m.dialog.BringToFront(dialog.CronSessionsID)
+		return nil
+	}
+
+	selectedSessionID := ""
+	if m.session != nil {
+		selectedSessionID = m.session.ID
+	}
+
+	dialog, err := dialog.NewCronSessions(m.com, selectedSessionID)
+	if err != nil {
+		return util.ReportError(err)
+	}
+
+	m.dialog.OpenDialog(dialog)
+	return nil
+}
+
+// openCronJobsDialog opens the scheduled jobs dialog.
+func (m *UI) openCronJobsDialog() tea.Cmd {
+	if m.dialog.ContainsDialog(dialog.CronJobsID) {
+		// Bring to front
+		m.dialog.BringToFront(dialog.CronJobsID)
+		return nil
+	}
+
+	dialog, err := dialog.NewJobs(m.com)
 	if err != nil {
 		return util.ReportError(err)
 	}

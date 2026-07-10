@@ -36,3 +36,9 @@ type PruneStatelessSessionResponse struct {
 	SessionID      string `json:"session_id"`
 	MessagesPruned int    `json:"messages_pruned"`
 }
+
+// UpdateStatelessRequest is the request body for updating stateless session info.
+type UpdateStatelessRequest struct {
+	Stateless bool   `json:"stateless"`
+	Service   string `json:"service"`
+}

@@ -265,6 +265,9 @@ func (s *Service) runJob(ctx context.Context, jobName string, job *Job) {
 			}
 			sessionID = session.ID
 		}
+		if err := appInst.Sessions.UpdateStateless(ctx, sessionID, false, "cron"); err != nil {
+			s.logger.Error("failed to update session stateless status", "job", jobName, "error", err)
+		}
 	case "ephemeral", "per_run":
 		// Create a new session for each run.
 		session, err := appInst.Sessions.Create(ctx, jobName)
@@ -273,6 +276,9 @@ func (s *Service) runJob(ctx context.Context, jobName string, job *Job) {
 			return
 		}
 		sessionID = session.ID
+		if err := appInst.Sessions.UpdateStateless(ctx, sessionID, true, "cron"); err != nil {
+			s.logger.Error("failed to update session stateless status", "job", jobName, "error", err)
+		}
 		// We'll delete the session after the run.
 		defer func() {
 			if err := appInst.Sessions.Delete(ctx, sessionID); err != nil {

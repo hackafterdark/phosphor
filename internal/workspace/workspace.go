@@ -69,6 +69,7 @@ type Workspace interface {
 	SaveSession(ctx context.Context, sess session.Session) (session.Session, error)
 	DeleteSession(ctx context.Context, sessionID string) error
 	RenameSession(ctx context.Context, sessionID, title string) error
+	UpdateStateless(ctx context.Context, sessionID string, stateless bool, service string) error
 	CreateAgentToolSessionID(messageID, toolCallID string) string
 	ParseAgentToolSessionID(sessionID string) (messageID string, toolCallID string, ok bool)
 	// SetCurrentSession reports the session this client is currently

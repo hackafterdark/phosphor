@@ -698,6 +698,27 @@ func (c *Client) RenameSession(ctx context.Context, id string, sessionID string,
 	return nil
 }
 
+// UpdateSessionStateless updates a session's stateless status.
+func (c *Client) UpdateSessionStateless(ctx context.Context, id string, sessionID string, stateless bool, service string) error {
+	rsp, err := c.post(ctx,
+		fmt.Sprintf("/workspaces/%s/sessions/%s/stateless", id, sessionID),
+		nil,
+		jsonBody(proto.UpdateStatelessRequest{
+			Stateless: stateless,
+			Service:   service,
+		}),
+		http.Header{"Content-Type": []string{"application/json"}},
+	)
+	if err != nil {
+		return fmt.Errorf("failed to update session stateless status: %w", err)
+	}
+	defer rsp.Body.Close()
+	if rsp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed to update session stateless status: status code %d", rsp.StatusCode)
+	}
+	return nil
+}
+
 // ListUserMessages retrieves user-role messages for a session as proto types.
 func (c *Client) ListUserMessages(ctx context.Context, id string, sessionID string) ([]proto.Message, error) {
 	rsp, err := c.get(ctx, fmt.Sprintf("/workspaces/%s/sessions/%s/messages/user", id, sessionID), nil, nil)
