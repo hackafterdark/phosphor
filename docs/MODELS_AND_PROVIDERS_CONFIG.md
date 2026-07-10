@@ -31,6 +31,15 @@ Phosphor configuration has two main sections for LLM setup:
   }
 }
 ```
+## Configuration Scopes
+
+You can configure models either by editing the `phosphor.json` file (global or workspace) or via the TUI.
+
+When you use the model selection dialog (opened with `/` → "Switch Model" or `Ctrl+L`), the selected model is saved to the **workspace‑local** configuration file (`<project>/.phosphor/phosphor.json`) under the `models.large` or `models.small` key.
+
+The global configuration (`%APPDATA%\phosphor\phosphor.json` or `$XDG_CONFIG_HOME/phosphor/phosphor.json`) can still be edited manually and provides defaults for workspaces that do not have a local override.
+
+Workspace‑scoped settings take precedence over global settings.
 
 ---
 
