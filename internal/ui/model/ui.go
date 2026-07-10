@@ -1756,7 +1756,8 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			cmds = append(cmds, util.ReportWarn("Agent is busy, please wait..."))
 			break
 		}
-		newSession, err := m.com.Workspace.CreateSession(context.Background(), msg.JobName)
+		sessionTitle := msg.JobName + " (manual)"
+		newSession, err := m.com.Workspace.CreateSession(context.Background(), sessionTitle)
 		if err != nil {
 			cmds = append(cmds, util.ReportError(err))
 			break

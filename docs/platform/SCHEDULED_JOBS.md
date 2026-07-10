@@ -106,9 +106,10 @@ The **Scheduled Jobs** dialog (`internal/ui/dialog/jobs.go`) lists all loaded jo
 - **↑↓** — Navigate the job list
 
 ### Accessing from the TUI
-1. Open the command menu (`Ctrl+p` or equivalent).
+1. Open the command menu.
 2. Navigate to the **Scheduled Jobs** section.
 3. Select **Jobs** to manage job definitions or **Job Sessions** to inspect run history.
+4. Press **Enter** on a job to run it on-demand — a new session is created with the suffix ` (manual)` (e.g., `"example (manual)"`).
 
 ## Failure Tracking
 
