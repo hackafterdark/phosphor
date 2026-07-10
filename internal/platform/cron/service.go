@@ -25,6 +25,7 @@ type Service struct {
 	cron          *cron.Cron
 	mu            sync.RWMutex
 	jobs          map[string]*cron.Entry // jobName -> cron entry
+	scheduledJobs map[string]*Job        // jobName -> job metadata
 	logger        *slog.Logger
 	stopChan      chan struct{}
 	wg            sync.WaitGroup
@@ -49,6 +50,7 @@ func NewServiceWithProvider(appProvider func() *app.App, cfg *config.ConfigStore
 		logger:        logger,
 		stopChan:      make(chan struct{}),
 		jobs:          make(map[string]*cron.Entry),
+		scheduledJobs: make(map[string]*Job),
 		failureCounts: make(map[string]int),
 	}
 }
@@ -112,6 +114,17 @@ func (s *Service) Stop(ctx context.Context) error {
 // Describe returns a description of the service.
 func (s *Service) Describe() string {
 	return "Cron service for scheduled jobs"
+}
+
+// GetScheduledJobs returns the list of scheduled job metadata.
+func (s *Service) GetScheduledJobs() []*Job {
+	s.mu.RLock()
+	jobs := make([]*Job, 0, len(s.scheduledJobs))
+	for _, job := range s.scheduledJobs {
+		jobs = append(jobs, job)
+	}
+	s.mu.RUnlock()
+	return jobs
 }
 
 // loadJobsFromDir loads jobs from the given directory.
@@ -191,10 +204,11 @@ func (s *Service) scheduleJob(ctx context.Context, jobName string, job *Job) err
 		s.runJob(ctx, jobName, job)
 	})
 
-	// Store the entry.
-	s.mu.Lock()
-	s.jobs[jobName] = &cron.Entry{ID: entryID}
-	s.mu.Unlock()
+		// Store the entry and job metadata.
+		s.mu.Lock()
+		s.jobs[jobName] = &cron.Entry{ID: entryID}
+		s.scheduledJobs[jobName] = job
+		s.mu.Unlock()
 
 	s.logger.Info("scheduled job", "job", jobName, "schedule", job.Schedule)
 	return nil
