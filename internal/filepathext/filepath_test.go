@@ -3,6 +3,7 @@ package filepathext
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -77,6 +78,69 @@ func TestResolveSearchPath(t *testing.T) {
 
 			if got != tc.want {
 				t.Errorf("ResolveSearchPath(%q, %q) = %q, want %q", tc.workingDir, tc.searchPath, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestHeuristicClean(t *testing.T) {
+	t.Parallel()
+
+	base := "/workspace/project"
+	if runtime.GOOS == "windows" {
+		base = "C:\\workspace\\project"
+	}
+
+	tests := []struct {
+		name   string
+		target string
+		want   string
+	}{
+		{
+			name:   "pure relative path",
+			target: "internal/app/app.go",
+			want:   filepath.Join(base, "internal/app/app.go"),
+		},
+		{
+			name:   "relative path with leading slash",
+			target: "/internal/app/app.go",
+			want:   filepath.Join(base, "internal/app/app.go"),
+		},
+		{
+			name:   "unix-style Windows drive path",
+			target: "/c/internal/app/app.go",
+			want:   filepath.Join(base, "internal/app/app.go"),
+		},
+		{
+			name:   "absolute drive path on Windows",
+			target: "C:/workspace/project/internal/app/app.go",
+			want:   filepath.Join(base, "internal/app/app.go"),
+		},
+		{
+			name:   "absolute drive path with backslashes on Windows",
+			target: "C:\\workspace\\project\\internal\\app\\app.go",
+			want:   filepath.Join(base, "internal/app/app.go"),
+		},
+		{
+			name:   "absolute drive path not in workspace gets corrected",
+			target: "D:/internal/app/app.go",
+			want:   filepath.Join(base, "internal/app/app.go"),
+		},
+		{
+			name:   "empty target returns base",
+			target: "",
+			want:   base,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := HeuristicClean(base, tc.target)
+			wantCleaned := filepath.Clean(tc.want)
+			gotCleaned := filepath.Clean(got)
+			if gotCleaned != wantCleaned {
+				t.Errorf("HeuristicClean(%q, %q) = %q, want %q", base, tc.target, gotCleaned, wantCleaned)
 			}
 		})
 	}

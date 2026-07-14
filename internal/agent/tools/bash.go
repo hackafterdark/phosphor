@@ -261,6 +261,45 @@ var ioCommandRegex = regexp.MustCompile(
 // pathRegex extracts file paths from commands
 var pathRegex = regexp.MustCompile(`['"]?([A-Za-z]:)?[/\\][^\s'"]+['"]?`)
 
+// CorrectCommandPaths extracts path-like arguments matching pathRegex and resolves them
+// relative to the workspace using HeuristicClean. It replaces them in the command
+// with corrected, slash-normalized absolute paths.
+func CorrectCommandPaths(command string, absWorkingDir string) string {
+	matches := pathRegex.FindAllStringIndex(command, -1)
+	if len(matches) == 0 {
+		return command
+	}
+
+	var sb strings.Builder
+	lastIdx := 0
+
+	for _, match := range matches {
+		start, end := match[0], match[1]
+		sb.WriteString(command[lastIdx:start])
+
+		rawPathWithQuotes := command[start:end]
+		hasSingleQuote := strings.HasPrefix(rawPathWithQuotes, "'") && strings.HasSuffix(rawPathWithQuotes, "'")
+		hasDoubleQuote := strings.HasPrefix(rawPathWithQuotes, "\"") && strings.HasSuffix(rawPathWithQuotes, "\"")
+
+		rawPath := strings.Trim(rawPathWithQuotes, "'\"")
+
+		corrected := filepathext.HeuristicClean(absWorkingDir, rawPath)
+		corrected = filepath.ToSlash(corrected)
+
+		if hasSingleQuote {
+			corrected = "'" + corrected + "'"
+		} else if hasDoubleQuote {
+			corrected = "\"" + corrected + "\""
+		}
+
+		sb.WriteString(corrected)
+		lastIdx = end
+	}
+
+	sb.WriteString(command[lastIdx:])
+	return sb.String()
+}
+
 // validateCommandPaths checks if any file paths in the command are outside the workspace
 func validateCommandPaths(command string, absWorkingDir string) error {
 	// Skip cd commands entirely — they change directory, not access files.
@@ -353,6 +392,9 @@ func NewBashTool(permissions permission.Service, workingDir string, bashCfg conf
 			if !filepathext.IsInside(absExecDir, absWorkingDir) {
 				return fantasy.NewTextErrorResponse(fmt.Sprintf("Security violation: working directory %s is outside workspace", absExecDir)), nil
 			}
+
+			// Correct paths using heuristics in command before validating or executing
+			params.Command = CorrectCommandPaths(params.Command, absWorkingDir)
 
 			// Command Parser Guard: Validate file paths in I/O commands
 			if err := validateCommandPaths(params.Command, absWorkingDir); err != nil {

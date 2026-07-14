@@ -3,6 +3,7 @@ package tools
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/hackafterdark/phosphor/internal/filepathext"
@@ -194,5 +195,58 @@ func TestValidateCommandPaths_PathTraversalBlocked(t *testing.T) {
 		joined := filepath.Clean(filepath.Join(workspace, normalized))
 		require.False(t, filepathext.IsInside(joined, workspace),
 			"path %q -> joined %q should be outside workspace", path, joined)
+	}
+}
+
+func TestCorrectCommandPaths(t *testing.T) {
+	t.Parallel()
+
+	workspace := `/workspace/project`
+	if runtime.GOOS == "windows" {
+		workspace = `C:\workspace\project`
+	}
+
+	tests := []struct {
+		name    string
+		command string
+		want    string
+	}{
+		{
+			name:    "command with leading slash path",
+			command: "cat /internal/app/app.go",
+			want:    "cat " + filepath.ToSlash(filepath.Join(workspace, "internal/app/app.go")),
+		},
+		{
+			name:    "command with double quoted leading slash path",
+			command: `cat "/internal/app/app.go"`,
+			want:    `cat "` + filepath.ToSlash(filepath.Join(workspace, "internal/app/app.go")) + `"`,
+		},
+		{
+			name:    "command with single quoted leading slash path",
+			command: `cat '/internal/app/app.go'`,
+			want:    `cat '` + filepath.ToSlash(filepath.Join(workspace, "internal/app/app.go")) + `'`,
+		},
+		{
+			name:    "command with unix-style Windows drive path",
+			command: "grep func /c/internal/app/app.go",
+			want:    "grep func " + filepath.ToSlash(filepath.Join(workspace, "internal/app/app.go")),
+		},
+		{
+			name:    "command with absolute drive path on Windows",
+			command: "type D:/internal/app/app.go",
+			want:    "type " + filepath.ToSlash(filepath.Join(workspace, "internal/app/app.go")),
+		},
+		{
+			name:    "command with multiple paths",
+			command: "diff /internal/app/app.go /c/internal/cmd/run.go",
+			want:    "diff " + filepath.ToSlash(filepath.Join(workspace, "internal/app/app.go")) + " " + filepath.ToSlash(filepath.Join(workspace, "internal/cmd/run.go")),
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := CorrectCommandPaths(tc.command, workspace)
+			require.Equal(t, tc.want, got)
+		})
 	}
 }
