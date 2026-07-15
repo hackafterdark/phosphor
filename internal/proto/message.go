@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"charm.land/catwalk/pkg/catwalk"
-	"github.com/hackafterdark/phosphor/internal/message"
+	"github.com/hackafterdark/phosphor/pkg/message"
 )
 
 // CreateMessageParams represents parameters for creating a message.

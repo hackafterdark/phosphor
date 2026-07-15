@@ -5,10 +5,10 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	mcptools "github.com/hackafterdark/phosphor/internal/agent/tools/mcp"
 	"github.com/hackafterdark/phosphor/internal/app"
-	"github.com/hackafterdark/phosphor/internal/config"
-	"github.com/hackafterdark/phosphor/internal/pubsub"
+	mcptools "github.com/hackafterdark/phosphor/pkg/agent/tools/mcp"
+	"github.com/hackafterdark/phosphor/pkg/config"
+	"github.com/hackafterdark/phosphor/pkg/pubsub"
 )
 
 // SubscribeEvents returns a per-caller event channel for a workspace.

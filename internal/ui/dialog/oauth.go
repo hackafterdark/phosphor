@@ -12,10 +12,10 @@ import (
 	"charm.land/catwalk/pkg/catwalk"
 	"charm.land/lipgloss/v2"
 	uv "github.com/charmbracelet/ultraviolet"
-	"github.com/hackafterdark/phosphor/internal/config"
 	"github.com/hackafterdark/phosphor/internal/oauth"
 	"github.com/hackafterdark/phosphor/internal/ui/common"
 	"github.com/hackafterdark/phosphor/internal/ui/util"
+	"github.com/hackafterdark/phosphor/pkg/config"
 	"github.com/pkg/browser"
 )
 

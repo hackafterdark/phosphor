@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2/tree"
-	"github.com/hackafterdark/phosphor/internal/config"
+	"github.com/hackafterdark/phosphor/pkg/config"
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
 )

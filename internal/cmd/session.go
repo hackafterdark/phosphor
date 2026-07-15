@@ -19,13 +19,13 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/exp/charmtone"
 	"github.com/charmbracelet/x/term"
-	"github.com/hackafterdark/phosphor/internal/agent/tools"
-	"github.com/hackafterdark/phosphor/internal/config"
-	"github.com/hackafterdark/phosphor/internal/db"
-	"github.com/hackafterdark/phosphor/internal/message"
-	"github.com/hackafterdark/phosphor/internal/session"
 	"github.com/hackafterdark/phosphor/internal/ui/chat"
 	"github.com/hackafterdark/phosphor/internal/ui/styles"
+	"github.com/hackafterdark/phosphor/pkg/agent/tools"
+	"github.com/hackafterdark/phosphor/pkg/config"
+	"github.com/hackafterdark/phosphor/pkg/db"
+	"github.com/hackafterdark/phosphor/pkg/message"
+	"github.com/hackafterdark/phosphor/pkg/session"
 	"github.com/spf13/cobra"
 )
 

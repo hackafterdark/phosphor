@@ -7,7 +7,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/exp/charmtone"
-	"github.com/hackafterdark/phosphor/internal/session"
+	"github.com/hackafterdark/phosphor/pkg/session"
 	"github.com/spf13/cobra"
 )
 
@@ -118,11 +118,11 @@ func runSessionPrune(cmd *cobra.Command, args []string) error {
 
 	if sessionPruneJSON {
 		return outputSessionPruneJSON(out, map[string]any{
-			"session_id":        session.HashID(sess.ID),
-			"session_title":     sess.Title,
-			"service":           sess.Service,
-			"messages_pruned":   count,
-			"cutoff":            cutoff.Format(time.RFC3339),
+			"session_id":      session.HashID(sess.ID),
+			"session_title":   sess.Title,
+			"service":         sess.Service,
+			"messages_pruned": count,
+			"cutoff":          cutoff.Format(time.RFC3339),
 		})
 	}
 

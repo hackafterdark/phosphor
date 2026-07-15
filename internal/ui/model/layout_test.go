@@ -6,9 +6,9 @@ import (
 	"testing"
 
 	"charm.land/bubbles/v2/textarea"
-	"github.com/hackafterdark/phosphor/internal/session"
 	"github.com/hackafterdark/phosphor/internal/ui/chat"
 	"github.com/hackafterdark/phosphor/internal/ui/common"
+	"github.com/hackafterdark/phosphor/pkg/session"
 )
 
 // testMessageItem is a minimal chat item used to populate the chat list

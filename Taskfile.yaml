@@ -49,9 +49,9 @@ tasks:
     sources:
       - ./**/*.go
       - go.mod
-      - internal/agent/**/*.md
-      - internal/agent/**/*.md.tpl
-      - internal/agent/hyper/provider.json
+      - pkg/agent/**/*.md
+      - pkg/agent/**/*.md.tpl
+      - pkg/agent/hyper/provider.json
     generates:
       - phosphor{{exeExt}}
 
@@ -88,8 +88,8 @@ tasks:
     desc: Run tests and record all VCR cassettes again
     aliases: [record]
     cmds:
-      - rm -r internal/agent/testdata
-      - go test -v -count=1 -timeout=1h ./internal/agent
+      - rm -r pkg/agent/testdata
+      - go test -v -count=1 -timeout=1h ./pkg/agent
 
   fmt:
     desc: Run gofumpt
@@ -123,9 +123,9 @@ tasks:
     sources:
       - ./**/*.go
       - go.mod
-      - internal/agent/**/*.md
-      - internal/agent/**/*.md.tpl
-      - internal/agent/hyper/provider.json
+      - pkg/agent/**/*.md
+      - pkg/agent/**/*.md.tpl
+      - pkg/agent/hyper/provider.json
 
   profile:cpu:
     desc: 10s CPU profile
@@ -153,9 +153,9 @@ tasks:
   hyper:
     desc: Update Hyper embedded provider.json
     cmds:
-      - go generate ./internal/agent/hyper/...
+      - go generate ./pkg/agent/hyper/...
     generates:
-      - ./internal/agent/hyper/provider.json
+      - ./pkg/agent/hyper/provider.json
 
   release:
     desc: Create and push a new tag following semver

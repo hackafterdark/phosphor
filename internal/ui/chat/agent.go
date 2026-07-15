@@ -7,10 +7,10 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"charm.land/lipgloss/v2/tree"
-	"github.com/hackafterdark/phosphor/internal/agent"
-	"github.com/hackafterdark/phosphor/internal/message"
 	"github.com/hackafterdark/phosphor/internal/ui/anim"
 	"github.com/hackafterdark/phosphor/internal/ui/styles"
+	"github.com/hackafterdark/phosphor/pkg/agent"
+	"github.com/hackafterdark/phosphor/pkg/message"
 )
 
 // -----------------------------------------------------------------------------

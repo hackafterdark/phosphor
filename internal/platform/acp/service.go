@@ -15,14 +15,14 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/google/uuid"
-	notify "github.com/hackafterdark/phosphor/internal/agent/notify"
 	"github.com/hackafterdark/phosphor/internal/backend"
-	"github.com/hackafterdark/phosphor/internal/config"
-	"github.com/hackafterdark/phosphor/internal/message"
-	"github.com/hackafterdark/phosphor/internal/permission"
 	"github.com/hackafterdark/phosphor/internal/platform"
 	"github.com/hackafterdark/phosphor/internal/proto"
-	"github.com/hackafterdark/phosphor/internal/pubsub"
+	notify "github.com/hackafterdark/phosphor/pkg/agent/notify"
+	"github.com/hackafterdark/phosphor/pkg/config"
+	"github.com/hackafterdark/phosphor/pkg/message"
+	"github.com/hackafterdark/phosphor/pkg/permission"
+	"github.com/hackafterdark/phosphor/pkg/pubsub"
 )
 
 // Service implements the ACP v1 agent server over stdio JSON-RPC.

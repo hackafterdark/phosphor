@@ -10,16 +10,16 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/catwalk/pkg/catwalk"
-	mcptools "github.com/hackafterdark/phosphor/internal/agent/tools/mcp"
-	"github.com/hackafterdark/phosphor/internal/config"
-	"github.com/hackafterdark/phosphor/internal/goal"
-	"github.com/hackafterdark/phosphor/internal/history"
-	"github.com/hackafterdark/phosphor/internal/lsp"
-	"github.com/hackafterdark/phosphor/internal/message"
 	"github.com/hackafterdark/phosphor/internal/oauth"
-	"github.com/hackafterdark/phosphor/internal/permission"
-	"github.com/hackafterdark/phosphor/internal/session"
-	"github.com/hackafterdark/phosphor/internal/skills"
+	mcptools "github.com/hackafterdark/phosphor/pkg/agent/tools/mcp"
+	"github.com/hackafterdark/phosphor/pkg/config"
+	"github.com/hackafterdark/phosphor/pkg/goal"
+	"github.com/hackafterdark/phosphor/pkg/history"
+	"github.com/hackafterdark/phosphor/pkg/lsp"
+	"github.com/hackafterdark/phosphor/pkg/message"
+	"github.com/hackafterdark/phosphor/pkg/permission"
+	"github.com/hackafterdark/phosphor/pkg/session"
+	"github.com/hackafterdark/phosphor/pkg/skills"
 )
 
 // LSPClientInfo holds information about an LSP client's state. This is

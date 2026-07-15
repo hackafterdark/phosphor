@@ -6,15 +6,16 @@ import (
 	"encoding/json"
 	"log/slog"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/hackafterdark/phosphor/internal/app"
 	"github.com/hackafterdark/phosphor/internal/backend"
-	"github.com/hackafterdark/phosphor/internal/message"
-	"github.com/hackafterdark/phosphor/internal/permission"
-	"github.com/hackafterdark/phosphor/internal/pubsub"
+	"github.com/hackafterdark/phosphor/pkg/message"
+	"github.com/hackafterdark/phosphor/pkg/permission"
+	"github.com/hackafterdark/phosphor/pkg/pubsub"
 	"github.com/stretchr/testify/require"
 )
 
@@ -902,11 +903,34 @@ func TestExtractPromptAndAttachments(t *testing.T) {
 }
 
 type chanWriter struct {
-	ch chan []byte
+	mu  *sync.Mutex
+	buf *bytes.Buffer
+	ch  chan []byte
+}
+
+func newChanWriter(ch chan []byte) chanWriter {
+	return chanWriter{
+		mu:  &sync.Mutex{},
+		buf: &bytes.Buffer{},
+		ch:  ch,
+	}
 }
 
 func (cw chanWriter) Write(p []byte) (int, error) {
-	cw.ch <- p
+	cw.mu.Lock()
+	defer cw.mu.Unlock()
+	cw.buf.Write(p)
+	for {
+		b := cw.buf.Bytes()
+		idx := bytes.IndexByte(b, '\n')
+		if idx == -1 {
+			break
+		}
+		line := make([]byte, idx+1)
+		copy(line, b[:idx+1])
+		cw.buf.Next(idx + 1)
+		cw.ch <- line
+	}
 	return len(p), nil
 }
 
@@ -914,7 +938,7 @@ func TestSendRequest(t *testing.T) {
 	t.Parallel()
 
 	ch := make(chan []byte, 10)
-	cw := chanWriter{ch: ch}
+	cw := newChanWriter(ch)
 
 	s := &Service{
 		logger:         slog.Default(),
@@ -952,7 +976,7 @@ func TestHandlePermissionRequest_Allow(t *testing.T) {
 	t.Parallel()
 
 	ch := make(chan []byte, 10)
-	cw := chanWriter{ch: ch}
+	cw := newChanWriter(ch)
 
 	ctx := context.Background()
 	b := backend.New(ctx, nil, nil)
@@ -1042,7 +1066,7 @@ func TestHandlePermissionRequest_Deny(t *testing.T) {
 	t.Parallel()
 
 	ch := make(chan []byte, 10)
-	cw := chanWriter{ch: ch}
+	cw := newChanWriter(ch)
 
 	ctx := context.Background()
 	b := backend.New(ctx, nil, nil)
@@ -1132,7 +1156,7 @@ func TestHandlePermissionRequest_WithParams(t *testing.T) {
 	t.Parallel()
 
 	ch := make(chan []byte, 10)
-	cw := chanWriter{ch: ch}
+	cw := newChanWriter(ch)
 
 	ctx := context.Background()
 	b := backend.New(ctx, nil, nil)

@@ -8,10 +8,10 @@ import (
 
 	"charm.land/lipgloss/v2"
 	"charm.land/lipgloss/v2/table"
-	"github.com/hackafterdark/phosphor/internal/config"
-	"github.com/hackafterdark/phosphor/internal/message"
 	"github.com/hackafterdark/phosphor/internal/stringext"
 	"github.com/hackafterdark/phosphor/internal/ui/styles"
+	"github.com/hackafterdark/phosphor/pkg/config"
+	"github.com/hackafterdark/phosphor/pkg/message"
 )
 
 // DockerMCPToolMessageItem is a message item that represents a Docker MCP tool call.

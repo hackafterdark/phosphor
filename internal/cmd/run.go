@@ -17,14 +17,14 @@ import (
 	"github.com/charmbracelet/x/term"
 	"github.com/google/uuid"
 	"github.com/hackafterdark/phosphor/internal/client"
-	"github.com/hackafterdark/phosphor/internal/config"
 	"github.com/hackafterdark/phosphor/internal/format"
 	"github.com/hackafterdark/phosphor/internal/proto"
-	"github.com/hackafterdark/phosphor/internal/pubsub"
-	"github.com/hackafterdark/phosphor/internal/session"
 	"github.com/hackafterdark/phosphor/internal/ui/anim"
 	"github.com/hackafterdark/phosphor/internal/ui/styles"
 	"github.com/hackafterdark/phosphor/internal/workspace"
+	"github.com/hackafterdark/phosphor/pkg/config"
+	"github.com/hackafterdark/phosphor/pkg/pubsub"
+	"github.com/hackafterdark/phosphor/pkg/session"
 	"github.com/spf13/cobra"
 )
 

@@ -12,11 +12,11 @@ import (
 
 	"github.com/hackafterdark/phosphor/internal/backend"
 	"github.com/hackafterdark/phosphor/internal/client"
-	"github.com/hackafterdark/phosphor/internal/config"
 	phosphorlog "github.com/hackafterdark/phosphor/internal/log"
 	"github.com/hackafterdark/phosphor/internal/platform"
 	"github.com/hackafterdark/phosphor/internal/platform/acp"
 	"github.com/hackafterdark/phosphor/internal/server"
+	"github.com/hackafterdark/phosphor/pkg/config"
 	"github.com/spf13/cobra"
 )
 

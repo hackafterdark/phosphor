@@ -5,10 +5,10 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
-	"github.com/hackafterdark/phosphor/internal/agent/tools/mcp"
-	"github.com/hackafterdark/phosphor/internal/config"
 	"github.com/hackafterdark/phosphor/internal/ui/common"
 	"github.com/hackafterdark/phosphor/internal/ui/styles"
+	"github.com/hackafterdark/phosphor/pkg/agent/tools/mcp"
+	"github.com/hackafterdark/phosphor/pkg/config"
 )
 
 // mcpInfo renders the MCP status section showing active MCP clients and their

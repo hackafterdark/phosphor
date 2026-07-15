@@ -6,11 +6,11 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	"github.com/hackafterdark/phosphor/internal/message"
 	"github.com/hackafterdark/phosphor/internal/ui/attachments"
 	"github.com/hackafterdark/phosphor/internal/ui/common"
 	"github.com/hackafterdark/phosphor/internal/ui/list"
 	"github.com/hackafterdark/phosphor/internal/ui/styles"
+	"github.com/hackafterdark/phosphor/pkg/message"
 )
 
 // skillInvocation represents the XML structure for a loaded skill.

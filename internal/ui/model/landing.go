@@ -11,12 +11,12 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/dustin/go-humanize"
-	"github.com/hackafterdark/phosphor/internal/agent/tools/mcp"
-	"github.com/hackafterdark/phosphor/internal/config"
-	"github.com/hackafterdark/phosphor/internal/lsp"
-	"github.com/hackafterdark/phosphor/internal/session"
 	"github.com/hackafterdark/phosphor/internal/ui/common"
 	"github.com/hackafterdark/phosphor/internal/workspace"
+	"github.com/hackafterdark/phosphor/pkg/agent/tools/mcp"
+	"github.com/hackafterdark/phosphor/pkg/config"
+	"github.com/hackafterdark/phosphor/pkg/lsp"
+	"github.com/hackafterdark/phosphor/pkg/session"
 )
 
 type loadRecentSessionsMsg []session.Session

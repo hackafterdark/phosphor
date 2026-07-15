@@ -10,10 +10,10 @@ import (
 	tea "charm.land/bubbletea/v2"
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/hackafterdark/phosphor/internal/clipboard"
-	"github.com/hackafterdark/phosphor/internal/config"
 	"github.com/hackafterdark/phosphor/internal/ui/styles"
 	"github.com/hackafterdark/phosphor/internal/ui/util"
 	"github.com/hackafterdark/phosphor/internal/workspace"
+	"github.com/hackafterdark/phosphor/pkg/config"
 )
 
 // MaxAttachmentSize defines the maximum allowed size for file attachments (5 MB).

@@ -3,8 +3,8 @@ package model
 import (
 	"testing"
 
-	"github.com/hackafterdark/phosphor/internal/permission"
 	"github.com/hackafterdark/phosphor/internal/ui/dialog"
+	"github.com/hackafterdark/phosphor/pkg/permission"
 	"github.com/stretchr/testify/require"
 )
 

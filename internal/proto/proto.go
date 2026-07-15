@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"charm.land/catwalk/pkg/catwalk"
-	"github.com/hackafterdark/phosphor/internal/config"
-	"github.com/hackafterdark/phosphor/internal/lsp"
+	"github.com/hackafterdark/phosphor/pkg/config"
+	"github.com/hackafterdark/phosphor/pkg/lsp"
 )
 
 // Workspace represents a running app.App workspace with its associated
@@ -132,7 +132,7 @@ func (a AgentInfo) IsZero() bool {
 type AgentMessage struct {
 	SessionID         string       `json:"session_id"`
 	RunID             string       `json:"run_id,omitempty"`
-	Prompt            string       `json:"prompt"`              // full stitched prompt for agent context
+	Prompt            string       `json:"prompt"`                // full stitched prompt for agent context
 	UserPrompt        string       `json:"user_prompt,omitempty"` // original last user message for persistence
 	Attachments       []Attachment `json:"attachments,omitempty"`
 	IsStateless       bool         `json:"is_stateless,omitempty"`

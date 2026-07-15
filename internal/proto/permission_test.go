@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/hackafterdark/phosphor/internal/agent/tools"
 	"github.com/hackafterdark/phosphor/internal/proto"
+	"github.com/hackafterdark/phosphor/pkg/agent/tools"
 	"github.com/stretchr/testify/require"
 )
 

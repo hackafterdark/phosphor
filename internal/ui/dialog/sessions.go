@@ -10,10 +10,10 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	uv "github.com/charmbracelet/ultraviolet"
-	"github.com/hackafterdark/phosphor/internal/session"
 	"github.com/hackafterdark/phosphor/internal/ui/common"
 	"github.com/hackafterdark/phosphor/internal/ui/list"
 	"github.com/hackafterdark/phosphor/internal/ui/util"
+	"github.com/hackafterdark/phosphor/pkg/session"
 )
 
 // SessionsID is the identifier for the session selector dialog.

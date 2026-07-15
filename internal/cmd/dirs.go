@@ -8,7 +8,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/exp/charmtone"
 	"github.com/charmbracelet/x/term"
-	"github.com/hackafterdark/phosphor/internal/config"
+	"github.com/hackafterdark/phosphor/pkg/config"
 	"github.com/spf13/cobra"
 )
 

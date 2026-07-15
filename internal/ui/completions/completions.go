@@ -12,9 +12,9 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/exp/ordered"
-	"github.com/hackafterdark/phosphor/internal/agent/tools/mcp"
 	"github.com/hackafterdark/phosphor/internal/fsext"
 	"github.com/hackafterdark/phosphor/internal/ui/list"
+	"github.com/hackafterdark/phosphor/pkg/agent/tools/mcp"
 )
 
 const (

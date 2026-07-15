@@ -6,15 +6,15 @@ import (
 
 	"charm.land/catwalk/pkg/catwalk"
 	"charm.land/lipgloss/v2"
-	"github.com/hackafterdark/phosphor/internal/config"
-	"github.com/hackafterdark/phosphor/internal/csync"
-	"github.com/hackafterdark/phosphor/internal/message"
-	"github.com/hackafterdark/phosphor/internal/session"
 	"github.com/hackafterdark/phosphor/internal/ui/common"
 	"github.com/hackafterdark/phosphor/internal/ui/completions"
 	"github.com/hackafterdark/phosphor/internal/ui/dialog"
 	uistyles "github.com/hackafterdark/phosphor/internal/ui/styles"
 	"github.com/hackafterdark/phosphor/internal/workspace"
+	"github.com/hackafterdark/phosphor/pkg/config"
+	"github.com/hackafterdark/phosphor/pkg/csync"
+	"github.com/hackafterdark/phosphor/pkg/message"
+	"github.com/hackafterdark/phosphor/pkg/session"
 	"github.com/stretchr/testify/require"
 )
 

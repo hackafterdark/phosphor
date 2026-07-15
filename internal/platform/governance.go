@@ -3,7 +3,7 @@ package platform
 import (
 	"fmt"
 
-	"github.com/hackafterdark/phosphor/internal/config"
+	"github.com/hackafterdark/phosphor/pkg/config"
 )
 
 // Governance enforces security policies and validates service start-up

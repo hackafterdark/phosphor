@@ -16,8 +16,8 @@ import (
 
 	"github.com/hackafterdark/phosphor/internal/ui/logo"
 
-	"github.com/hackafterdark/phosphor/internal/config"
-	"github.com/hackafterdark/phosphor/internal/db"
+	"github.com/hackafterdark/phosphor/pkg/config"
+	"github.com/hackafterdark/phosphor/pkg/db"
 	"github.com/pkg/browser"
 	"github.com/spf13/cobra"
 )

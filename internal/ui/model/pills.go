@@ -7,10 +7,10 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	"github.com/hackafterdark/phosphor/internal/goal"
-	"github.com/hackafterdark/phosphor/internal/session"
 	"github.com/hackafterdark/phosphor/internal/ui/chat"
 	"github.com/hackafterdark/phosphor/internal/ui/styles"
+	"github.com/hackafterdark/phosphor/pkg/goal"
+	"github.com/hackafterdark/phosphor/pkg/session"
 )
 
 // pillStyle returns the appropriate style for a pill based on focus state.

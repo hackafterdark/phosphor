@@ -9,10 +9,10 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/hackafterdark/phosphor/internal/agent/notify"
 	"github.com/hackafterdark/phosphor/internal/backend"
-	"github.com/hackafterdark/phosphor/internal/message"
-	"github.com/hackafterdark/phosphor/internal/pubsub"
+	"github.com/hackafterdark/phosphor/pkg/agent/notify"
+	"github.com/hackafterdark/phosphor/pkg/message"
+	"github.com/hackafterdark/phosphor/pkg/pubsub"
 )
 
 // streamHandler manages an OpenAI-compatible SSE stream for a single

@@ -3,8 +3,8 @@ package model
 import (
 	"testing"
 
-	"github.com/hackafterdark/phosphor/internal/message"
 	"github.com/hackafterdark/phosphor/internal/ui/chat"
+	"github.com/hackafterdark/phosphor/pkg/message"
 	"github.com/stretchr/testify/require"
 )
 

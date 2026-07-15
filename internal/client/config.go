@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/hackafterdark/phosphor/internal/config"
 	"github.com/hackafterdark/phosphor/internal/oauth"
 	"github.com/hackafterdark/phosphor/internal/proto"
+	"github.com/hackafterdark/phosphor/pkg/config"
 )
 
 // SetConfigField sets a config key/value pair on the server.

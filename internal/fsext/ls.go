@@ -13,8 +13,8 @@ import (
 	"github.com/charlievieth/fastwalk"
 	gitconfig "github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing/format/gitignore"
-	"github.com/hackafterdark/phosphor/internal/csync"
 	"github.com/hackafterdark/phosphor/internal/home"
+	"github.com/hackafterdark/phosphor/pkg/csync"
 )
 
 // fastIgnoreDirs is a set of directory names that are always ignored.

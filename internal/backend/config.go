@@ -5,14 +5,14 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/hackafterdark/phosphor/internal/agent"
-	mcptools "github.com/hackafterdark/phosphor/internal/agent/tools/mcp"
 	"github.com/hackafterdark/phosphor/internal/commands"
-	"github.com/hackafterdark/phosphor/internal/config"
 	"github.com/hackafterdark/phosphor/internal/oauth"
 	"github.com/hackafterdark/phosphor/internal/proto"
-	"github.com/hackafterdark/phosphor/internal/pubsub"
-	"github.com/hackafterdark/phosphor/internal/skills"
+	"github.com/hackafterdark/phosphor/pkg/agent"
+	mcptools "github.com/hackafterdark/phosphor/pkg/agent/tools/mcp"
+	"github.com/hackafterdark/phosphor/pkg/config"
+	"github.com/hackafterdark/phosphor/pkg/pubsub"
+	"github.com/hackafterdark/phosphor/pkg/skills"
 )
 
 // publishConfigChanged publishes a ConfigChanged event on the workspace's

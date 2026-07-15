@@ -9,14 +9,14 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/catwalk/pkg/catwalk"
 	"github.com/hackafterdark/phosphor/internal/commands"
-	"github.com/hackafterdark/phosphor/internal/config"
-	"github.com/hackafterdark/phosphor/internal/message"
 	"github.com/hackafterdark/phosphor/internal/oauth"
-	"github.com/hackafterdark/phosphor/internal/permission"
-	"github.com/hackafterdark/phosphor/internal/session"
-	"github.com/hackafterdark/phosphor/internal/skills"
 	"github.com/hackafterdark/phosphor/internal/ui/common"
 	"github.com/hackafterdark/phosphor/internal/ui/util"
+	"github.com/hackafterdark/phosphor/pkg/config"
+	"github.com/hackafterdark/phosphor/pkg/message"
+	"github.com/hackafterdark/phosphor/pkg/permission"
+	"github.com/hackafterdark/phosphor/pkg/session"
+	"github.com/hackafterdark/phosphor/pkg/skills"
 )
 
 // ActionClose is a message to close the current dialog.

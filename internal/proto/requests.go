@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/hackafterdark/phosphor/internal/config"
 	"github.com/hackafterdark/phosphor/internal/oauth"
+	"github.com/hackafterdark/phosphor/pkg/config"
 )
 
 // ConfigSetRequest represents a request to set a config field.

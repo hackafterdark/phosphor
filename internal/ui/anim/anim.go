@@ -15,7 +15,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/lucasb-eyer/go-colorful"
 
-	"github.com/hackafterdark/phosphor/internal/csync"
+	"github.com/hackafterdark/phosphor/pkg/csync"
 )
 
 const (

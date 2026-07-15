@@ -10,9 +10,9 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/x/editor"
+	"github.com/hackafterdark/phosphor/internal/app"
 	"github.com/robfig/cron/v3"
 	"github.com/spf13/cobra"
-	"github.com/hackafterdark/phosphor/internal/app"
 )
 
 // NewJobCommand creates the job command with subcommands.
@@ -62,7 +62,7 @@ func newJobRemoveCommand() *cobra.Command {
 		Use:   "remove <name>",
 		Short: "Remove a job",
 		Long:  `Remove a scheduled job and its configuration files.`,
-		Args: cobra.ExactArgs(1),
+		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
 			return removeJob(name)
@@ -75,7 +75,7 @@ func newJobEditCommand() *cobra.Command {
 		Use:   "edit <name>",
 		Short: "Edit a job",
 		Long:  `Open a job's configuration file in the editor for modification.`,
-		Args: cobra.ExactArgs(1),
+		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
 			return editJob(name)
@@ -139,9 +139,9 @@ func createJob(name string, stdin io.Reader, stdout io.Writer) error {
 
 	// Validate session mode
 	validModes := map[string]bool{
-		"ephemeral": true,
+		"ephemeral":  true,
 		"persistent": true,
-		"per_run": true,
+		"per_run":    true,
 	}
 	if !validModes[sessionMode] {
 		return fmt.Errorf("invalid session mode: %s", sessionMode)

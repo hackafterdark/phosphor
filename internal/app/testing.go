@@ -5,9 +5,9 @@ import (
 	"sync"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/hackafterdark/phosphor/internal/agent/notify"
-	"github.com/hackafterdark/phosphor/internal/permission"
-	"github.com/hackafterdark/phosphor/internal/pubsub"
+	"github.com/hackafterdark/phosphor/pkg/agent/notify"
+	"github.com/hackafterdark/phosphor/pkg/permission"
+	"github.com/hackafterdark/phosphor/pkg/pubsub"
 )
 
 // NewForTest constructs a minimal [App] suitable for in-process tests

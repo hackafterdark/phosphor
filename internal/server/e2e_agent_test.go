@@ -14,13 +14,13 @@ import (
 
 	"charm.land/fantasy"
 	"github.com/google/uuid"
-	"github.com/hackafterdark/phosphor/internal/agent"
 	"github.com/hackafterdark/phosphor/internal/app"
 	"github.com/hackafterdark/phosphor/internal/backend"
-	"github.com/hackafterdark/phosphor/internal/goal"
-	"github.com/hackafterdark/phosphor/internal/message"
 	"github.com/hackafterdark/phosphor/internal/proto"
-	"github.com/hackafterdark/phosphor/internal/pubsub"
+	"github.com/hackafterdark/phosphor/pkg/agent"
+	"github.com/hackafterdark/phosphor/pkg/goal"
+	"github.com/hackafterdark/phosphor/pkg/message"
+	"github.com/hackafterdark/phosphor/pkg/pubsub"
 	"github.com/stretchr/testify/require"
 )
 

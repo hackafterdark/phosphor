@@ -21,30 +21,30 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/exp/charmtone"
 	"github.com/charmbracelet/x/term"
-	"github.com/hackafterdark/phosphor/internal/agent"
-	"github.com/hackafterdark/phosphor/internal/agent/notify"
-	"github.com/hackafterdark/phosphor/internal/agent/parser"
-	"github.com/hackafterdark/phosphor/internal/agent/tools/mcp"
 	"github.com/hackafterdark/phosphor/internal/clipboard"
-	"github.com/hackafterdark/phosphor/internal/config"
-	"github.com/hackafterdark/phosphor/internal/db"
-	"github.com/hackafterdark/phosphor/internal/filetracker"
 	"github.com/hackafterdark/phosphor/internal/format"
-	"github.com/hackafterdark/phosphor/internal/goal"
-	"github.com/hackafterdark/phosphor/internal/history"
 	"github.com/hackafterdark/phosphor/internal/log"
-	"github.com/hackafterdark/phosphor/internal/lsp"
-	"github.com/hackafterdark/phosphor/internal/message"
-	"github.com/hackafterdark/phosphor/internal/otel"
-	"github.com/hackafterdark/phosphor/internal/permission"
-	"github.com/hackafterdark/phosphor/internal/pubsub"
-	"github.com/hackafterdark/phosphor/internal/session"
-	"github.com/hackafterdark/phosphor/internal/shell"
-	"github.com/hackafterdark/phosphor/internal/skills"
 	"github.com/hackafterdark/phosphor/internal/ui/anim"
 	"github.com/hackafterdark/phosphor/internal/ui/styles"
 	"github.com/hackafterdark/phosphor/internal/update"
 	"github.com/hackafterdark/phosphor/internal/version"
+	"github.com/hackafterdark/phosphor/pkg/agent"
+	"github.com/hackafterdark/phosphor/pkg/agent/notify"
+	"github.com/hackafterdark/phosphor/pkg/agent/parser"
+	"github.com/hackafterdark/phosphor/pkg/agent/tools/mcp"
+	"github.com/hackafterdark/phosphor/pkg/config"
+	"github.com/hackafterdark/phosphor/pkg/db"
+	"github.com/hackafterdark/phosphor/pkg/filetracker"
+	"github.com/hackafterdark/phosphor/pkg/goal"
+	"github.com/hackafterdark/phosphor/pkg/history"
+	"github.com/hackafterdark/phosphor/pkg/lsp"
+	"github.com/hackafterdark/phosphor/pkg/message"
+	"github.com/hackafterdark/phosphor/pkg/otel"
+	"github.com/hackafterdark/phosphor/pkg/permission"
+	"github.com/hackafterdark/phosphor/pkg/pubsub"
+	"github.com/hackafterdark/phosphor/pkg/session"
+	"github.com/hackafterdark/phosphor/pkg/shell"
+	"github.com/hackafterdark/phosphor/pkg/skills"
 )
 
 // UpdateAvailableMsg is sent when a new version is available.
@@ -142,10 +142,15 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore, skillsMgr
 
 	// Release the shared database connection on shutdown. The pool
 	// closes the underlying *sql.DB when the last reference is released.
-	dataDir := cfg.Options.DataDirectory
+	if !store.Overrides().SkipDBRelease {
+		dataDir := cfg.Options.DataDirectory
+		app.cleanupFuncs = append(
+			app.cleanupFuncs,
+			func(context.Context) error { return db.Release(dataDir) },
+		)
+	}
 	app.cleanupFuncs = append(
 		app.cleanupFuncs,
-		func(context.Context) error { return db.Release(dataDir) },
 		func(ctx context.Context) error { return mcp.Close(ctx) },
 		func(context.Context) error {
 			parser.CloseWatcher()

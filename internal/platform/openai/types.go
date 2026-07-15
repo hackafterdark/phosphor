@@ -15,22 +15,22 @@ import (
 
 // ChatCompletionRequest represents an OpenAI chat completions request.
 type ChatCompletionRequest struct {
-	Model         string         `json:"model"`
-	Messages      []ChatMessage  `json:"messages"`
-	Stream        bool           `json:"stream"`
-	StreamOptions *StreamOptions `json:"stream_options,omitempty"`
-	Temperature   *float64       `json:"temperature,omitempty"`
-	MaxTokens     *int           `json:"max_tokens,omitempty"`
-	TopP          *float64       `json:"top_p,omitempty"`
-	TopK          *int64         `json:"top_k,omitempty"`
-	FrequencyPenalty *float64    `json:"frequency_penalty,omitempty"`
-	PresencePenalty  *float64    `json:"presence_penalty,omitempty"`
-	Seed          *int64         `json:"seed,omitempty"`
-	MinP          *float64       `json:"min_p,omitempty"`
-	RepetitionPenalty *float64   `json:"repetition_penalty,omitempty"`
-	Stop          []string       `json:"stop,omitempty"`
-	TopLogProbs   *int64         `json:"top_logprobs,omitempty"`
-	MaxThinkingTokens *int64    `json:"max_thinking_tokens,omitempty"`
+	Model             string         `json:"model"`
+	Messages          []ChatMessage  `json:"messages"`
+	Stream            bool           `json:"stream"`
+	StreamOptions     *StreamOptions `json:"stream_options,omitempty"`
+	Temperature       *float64       `json:"temperature,omitempty"`
+	MaxTokens         *int           `json:"max_tokens,omitempty"`
+	TopP              *float64       `json:"top_p,omitempty"`
+	TopK              *int64         `json:"top_k,omitempty"`
+	FrequencyPenalty  *float64       `json:"frequency_penalty,omitempty"`
+	PresencePenalty   *float64       `json:"presence_penalty,omitempty"`
+	Seed              *int64         `json:"seed,omitempty"`
+	MinP              *float64       `json:"min_p,omitempty"`
+	RepetitionPenalty *float64       `json:"repetition_penalty,omitempty"`
+	Stop              []string       `json:"stop,omitempty"`
+	TopLogProbs       *int64         `json:"top_logprobs,omitempty"`
+	MaxThinkingTokens *int64         `json:"max_thinking_tokens,omitempty"`
 
 	// SessionID is the optional session identifier for persistent
 	// conversations. Populated from the X-Phosphor-Session-Id header or

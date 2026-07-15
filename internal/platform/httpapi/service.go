@@ -11,10 +11,10 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/hackafterdark/phosphor/internal/backend"
-	"github.com/hackafterdark/phosphor/internal/config"
 	"github.com/hackafterdark/phosphor/internal/platform/openai"
 	"github.com/hackafterdark/phosphor/internal/proto"
 	"github.com/hackafterdark/phosphor/internal/server"
+	"github.com/hackafterdark/phosphor/pkg/config"
 	"github.com/labstack/echo/v5"
 )
 
@@ -44,11 +44,11 @@ func NewService(cfgStore *config.ConfigStore, scheme, host, workspace string, lo
 
 // openaiConfig holds the resolved OpenAI API service configuration.
 type openaiConfig struct {
-	enabled              bool
-	host                 string
-	port                 int
-	acceptSystemPrompt   bool
-	logRequestBody       bool
+	enabled            bool
+	host               string
+	port               int
+	acceptSystemPrompt bool
+	logRequestBody     bool
 }
 
 // resolveOpenaiConfig reads the openai-api service entry from config and

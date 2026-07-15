@@ -27,8 +27,6 @@ import (
 	"github.com/charmbracelet/x/term"
 	"github.com/hackafterdark/phosphor/internal/app"
 	"github.com/hackafterdark/phosphor/internal/client"
-	"github.com/hackafterdark/phosphor/internal/config"
-	"github.com/hackafterdark/phosphor/internal/db"
 	"github.com/hackafterdark/phosphor/internal/lock"
 	phosphorlog "github.com/hackafterdark/phosphor/internal/log"
 	"github.com/hackafterdark/phosphor/internal/platform"
@@ -37,10 +35,12 @@ import (
 	"github.com/hackafterdark/phosphor/internal/projects"
 	"github.com/hackafterdark/phosphor/internal/proto"
 	"github.com/hackafterdark/phosphor/internal/server"
-	"github.com/hackafterdark/phosphor/internal/session"
-	"github.com/hackafterdark/phosphor/internal/skills"
 	"github.com/hackafterdark/phosphor/internal/version"
 	"github.com/hackafterdark/phosphor/internal/workspace"
+	"github.com/hackafterdark/phosphor/pkg/config"
+	"github.com/hackafterdark/phosphor/pkg/db"
+	"github.com/hackafterdark/phosphor/pkg/session"
+	"github.com/hackafterdark/phosphor/pkg/skills"
 	"github.com/spf13/cobra"
 )
 

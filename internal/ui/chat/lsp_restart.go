@@ -3,9 +3,9 @@ package chat
 import (
 	"encoding/json"
 
-	"github.com/hackafterdark/phosphor/internal/agent/tools"
-	"github.com/hackafterdark/phosphor/internal/message"
 	"github.com/hackafterdark/phosphor/internal/ui/styles"
+	"github.com/hackafterdark/phosphor/pkg/agent/tools"
+	"github.com/hackafterdark/phosphor/pkg/message"
 )
 
 // LSPRestartToolMessageItem is a message item that represents a lsprestart tool call.

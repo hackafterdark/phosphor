@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hackafterdark/phosphor/internal/pubsub"
-	"github.com/hackafterdark/phosphor/internal/session"
+	"github.com/hackafterdark/phosphor/pkg/pubsub"
+	"github.com/hackafterdark/phosphor/pkg/session"
 	"github.com/stretchr/testify/require"
 )
 

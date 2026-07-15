@@ -4,9 +4,9 @@ import (
 	"context"
 	"time"
 
-	"github.com/hackafterdark/phosphor/internal/csync"
-	"github.com/hackafterdark/phosphor/internal/lsp"
-	"github.com/hackafterdark/phosphor/internal/pubsub"
+	"github.com/hackafterdark/phosphor/pkg/csync"
+	"github.com/hackafterdark/phosphor/pkg/lsp"
+	"github.com/hackafterdark/phosphor/pkg/pubsub"
 )
 
 // LSPEventType represents the type of LSP event

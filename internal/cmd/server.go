@@ -12,12 +12,12 @@ import (
 
 	"github.com/charmbracelet/x/term"
 	"github.com/hackafterdark/phosphor/internal/app"
-	"github.com/hackafterdark/phosphor/internal/config"
 	phosphorlog "github.com/hackafterdark/phosphor/internal/log"
 	"github.com/hackafterdark/phosphor/internal/platform"
 	"github.com/hackafterdark/phosphor/internal/platform/cron"
 	"github.com/hackafterdark/phosphor/internal/platform/httpapi"
 	"github.com/hackafterdark/phosphor/internal/server"
+	"github.com/hackafterdark/phosphor/pkg/config"
 	"github.com/spf13/cobra"
 )
 

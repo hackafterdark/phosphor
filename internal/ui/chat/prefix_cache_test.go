@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hackafterdark/phosphor/internal/message"
 	"github.com/hackafterdark/phosphor/internal/ui/attachments"
 	"github.com/hackafterdark/phosphor/internal/ui/styles"
+	"github.com/hackafterdark/phosphor/pkg/message"
 	"github.com/stretchr/testify/require"
 )
 

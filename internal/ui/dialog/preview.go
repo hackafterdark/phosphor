@@ -12,9 +12,9 @@ import (
 	"charm.land/lipgloss/v2"
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/hackafterdark/phosphor/internal/message"
 	"github.com/hackafterdark/phosphor/internal/stringext"
 	"github.com/hackafterdark/phosphor/internal/ui/common"
+	"github.com/hackafterdark/phosphor/pkg/message"
 )
 
 // Preview dialog sizing constants.

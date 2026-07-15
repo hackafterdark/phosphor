@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/hackafterdark/phosphor/internal/session"
+	"github.com/hackafterdark/phosphor/pkg/session"
 	"github.com/labstack/echo/v5"
 )
 

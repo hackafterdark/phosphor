@@ -11,17 +11,17 @@ import (
 	"charm.land/lipgloss/v2"
 	"charm.land/lipgloss/v2/tree"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/hackafterdark/phosphor/internal/agent"
-	"github.com/hackafterdark/phosphor/internal/agent/tools"
 	"github.com/hackafterdark/phosphor/internal/diff"
 	"github.com/hackafterdark/phosphor/internal/fsext"
-	"github.com/hackafterdark/phosphor/internal/hooks"
-	"github.com/hackafterdark/phosphor/internal/message"
 	"github.com/hackafterdark/phosphor/internal/stringext"
 	"github.com/hackafterdark/phosphor/internal/ui/anim"
 	"github.com/hackafterdark/phosphor/internal/ui/common"
 	"github.com/hackafterdark/phosphor/internal/ui/list"
 	"github.com/hackafterdark/phosphor/internal/ui/styles"
+	"github.com/hackafterdark/phosphor/pkg/agent"
+	"github.com/hackafterdark/phosphor/pkg/agent/tools"
+	"github.com/hackafterdark/phosphor/pkg/hooks"
+	"github.com/hackafterdark/phosphor/pkg/message"
 )
 
 // responseContextHeight limits the number of lines displayed in tool output.

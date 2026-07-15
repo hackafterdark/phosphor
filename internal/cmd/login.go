@@ -11,10 +11,10 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/hackafterdark/phosphor/internal/client"
 	"github.com/hackafterdark/phosphor/internal/clipboard"
-	"github.com/hackafterdark/phosphor/internal/config"
 	"github.com/hackafterdark/phosphor/internal/oauth"
 	"github.com/hackafterdark/phosphor/internal/oauth/copilot"
 	"github.com/hackafterdark/phosphor/internal/oauth/hyper"
+	"github.com/hackafterdark/phosphor/pkg/config"
 	"github.com/pkg/browser"
 	"github.com/spf13/cobra"
 )

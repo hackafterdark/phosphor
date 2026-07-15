@@ -11,11 +11,11 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/hackafterdark/phosphor/internal/app"
-	"github.com/hackafterdark/phosphor/internal/config"
-	"github.com/hackafterdark/phosphor/internal/db"
-	"github.com/hackafterdark/phosphor/internal/projects"
-	"github.com/hackafterdark/phosphor/internal/skills"
 	"github.com/hackafterdark/phosphor/internal/platform/cron"
+	"github.com/hackafterdark/phosphor/internal/projects"
+	"github.com/hackafterdark/phosphor/pkg/config"
+	"github.com/hackafterdark/phosphor/pkg/db"
+	"github.com/hackafterdark/phosphor/pkg/skills"
 )
 
 // NewCronCommand returns a new command for running the cron service.

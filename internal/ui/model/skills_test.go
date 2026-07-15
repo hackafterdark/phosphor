@@ -3,10 +3,10 @@ package model
 import (
 	"testing"
 
-	"github.com/hackafterdark/phosphor/internal/config"
-	"github.com/hackafterdark/phosphor/internal/skills"
 	"github.com/hackafterdark/phosphor/internal/ui/common"
 	uistyles "github.com/hackafterdark/phosphor/internal/ui/styles"
+	"github.com/hackafterdark/phosphor/pkg/config"
+	"github.com/hackafterdark/phosphor/pkg/skills"
 	"github.com/stretchr/testify/require"
 )
 

@@ -6,13 +6,13 @@ import (
 	"time"
 
 	"charm.land/fantasy"
-	"github.com/hackafterdark/phosphor/internal/agent"
-	"github.com/hackafterdark/phosphor/internal/agent/agenttest"
-	"github.com/hackafterdark/phosphor/internal/agent/parser"
-	"github.com/hackafterdark/phosphor/internal/db"
-	"github.com/hackafterdark/phosphor/internal/message"
 	"github.com/hackafterdark/phosphor/internal/proto"
-	"github.com/hackafterdark/phosphor/internal/session"
+	"github.com/hackafterdark/phosphor/pkg/agent"
+	"github.com/hackafterdark/phosphor/pkg/agent/agenttest"
+	"github.com/hackafterdark/phosphor/pkg/agent/parser"
+	"github.com/hackafterdark/phosphor/pkg/db"
+	"github.com/hackafterdark/phosphor/pkg/message"
+	"github.com/hackafterdark/phosphor/pkg/session"
 	"github.com/stretchr/testify/require"
 )
 

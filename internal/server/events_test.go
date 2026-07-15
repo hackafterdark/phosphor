@@ -5,11 +5,11 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/hackafterdark/phosphor/internal/agent/notify"
-	"github.com/hackafterdark/phosphor/internal/message"
 	"github.com/hackafterdark/phosphor/internal/proto"
-	"github.com/hackafterdark/phosphor/internal/pubsub"
-	"github.com/hackafterdark/phosphor/internal/skills"
+	"github.com/hackafterdark/phosphor/pkg/agent/notify"
+	"github.com/hackafterdark/phosphor/pkg/message"
+	"github.com/hackafterdark/phosphor/pkg/pubsub"
+	"github.com/hackafterdark/phosphor/pkg/skills"
 	"github.com/stretchr/testify/require"
 )
 

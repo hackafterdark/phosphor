@@ -15,13 +15,13 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/hackafterdark/phosphor/internal/app"
-	"github.com/hackafterdark/phosphor/internal/config"
-	"github.com/hackafterdark/phosphor/internal/csync"
-	"github.com/hackafterdark/phosphor/internal/db"
 	"github.com/hackafterdark/phosphor/internal/proto"
-	"github.com/hackafterdark/phosphor/internal/skills"
 	"github.com/hackafterdark/phosphor/internal/ui/util"
 	"github.com/hackafterdark/phosphor/internal/version"
+	"github.com/hackafterdark/phosphor/pkg/config"
+	"github.com/hackafterdark/phosphor/pkg/csync"
+	"github.com/hackafterdark/phosphor/pkg/db"
+	"github.com/hackafterdark/phosphor/pkg/skills"
 )
 
 // Common errors returned by backend operations.

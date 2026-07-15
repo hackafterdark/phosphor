@@ -5,9 +5,9 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/hackafterdark/phosphor/internal/message"
 	"github.com/hackafterdark/phosphor/internal/proto"
-	"github.com/hackafterdark/phosphor/internal/session"
+	"github.com/hackafterdark/phosphor/pkg/message"
+	"github.com/hackafterdark/phosphor/pkg/session"
 )
 
 // CreateSession creates a new session in the given workspace.

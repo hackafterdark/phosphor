@@ -9,11 +9,11 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/hackafterdark/phosphor/internal/client"
-	"github.com/hackafterdark/phosphor/internal/config"
 	"github.com/hackafterdark/phosphor/internal/proto"
-	"github.com/hackafterdark/phosphor/internal/pubsub"
 	"github.com/hackafterdark/phosphor/internal/server"
 	"github.com/hackafterdark/phosphor/internal/workspace"
+	"github.com/hackafterdark/phosphor/pkg/config"
+	"github.com/hackafterdark/phosphor/pkg/pubsub"
 	"github.com/stretchr/testify/require"
 )
 

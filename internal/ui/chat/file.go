@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/hackafterdark/phosphor/internal/agent/tools"
 	"github.com/hackafterdark/phosphor/internal/fsext"
-	"github.com/hackafterdark/phosphor/internal/message"
 	"github.com/hackafterdark/phosphor/internal/ui/styles"
+	"github.com/hackafterdark/phosphor/pkg/agent/tools"
+	"github.com/hackafterdark/phosphor/pkg/message"
 )
 
 // -----------------------------------------------------------------------------

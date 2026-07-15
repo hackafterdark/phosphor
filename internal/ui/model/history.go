@@ -6,7 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/hackafterdark/phosphor/internal/message"
+	"github.com/hackafterdark/phosphor/pkg/message"
 )
 
 // promptHistoryLoadedMsg is sent when prompt history is loaded.

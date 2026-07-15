@@ -13,8 +13,8 @@ import (
 	"time"
 
 	"github.com/hackafterdark/phosphor/internal/backend"
-	"github.com/hackafterdark/phosphor/internal/config"
 	"github.com/hackafterdark/phosphor/internal/proto"
+	"github.com/hackafterdark/phosphor/pkg/config"
 	"github.com/labstack/echo/v5"
 )
 
@@ -128,13 +128,18 @@ func (h *Handler) HandleChatCompletions(c *echo.Context) error {
 
 	// Dispatch to backend
 	msg := proto.AgentMessage{
-		SessionID:         sessionID,
-		Prompt:            prompt,
-		UserPrompt:        userPrompt,
-		RunID:             runID,
-		SystemPrompt:      systemPrompt,
-		Temperature:       req.Temperature,
-		MaxOutputTokens: func() int64 { if req.MaxTokens != nil { return int64(*req.MaxTokens) }; return 0 }(),
+		SessionID:    sessionID,
+		Prompt:       prompt,
+		UserPrompt:   userPrompt,
+		RunID:        runID,
+		SystemPrompt: systemPrompt,
+		Temperature:  req.Temperature,
+		MaxOutputTokens: func() int64 {
+			if req.MaxTokens != nil {
+				return int64(*req.MaxTokens)
+			}
+			return 0
+		}(),
 		TopP:              req.TopP,
 		TopK:              req.TopK,
 		FrequencyPenalty:  req.FrequencyPenalty,

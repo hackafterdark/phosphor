@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hackafterdark/phosphor/internal/config"
+	"github.com/hackafterdark/phosphor/pkg/config"
 )
 
 const projectsFileName = "projects.json"

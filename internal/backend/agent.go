@@ -4,11 +4,11 @@ import (
 	"context"
 	"errors"
 
-	"github.com/hackafterdark/phosphor/internal/agent"
-	"github.com/hackafterdark/phosphor/internal/agent/notify"
-	"github.com/hackafterdark/phosphor/internal/config"
 	"github.com/hackafterdark/phosphor/internal/proto"
-	"github.com/hackafterdark/phosphor/internal/pubsub"
+	"github.com/hackafterdark/phosphor/pkg/agent"
+	"github.com/hackafterdark/phosphor/pkg/agent/notify"
+	"github.com/hackafterdark/phosphor/pkg/config"
+	"github.com/hackafterdark/phosphor/pkg/pubsub"
 )
 
 // SendMessage validates and accepts a prompt for the workspace's agent,
@@ -36,11 +36,11 @@ func (b *Backend) SendMessage(workspaceID string, msg proto.AgentMessage) error 
 	}
 
 	if err := agent.ValidateCall(agent.SessionAgentCall{
-		SessionID:          msg.SessionID,
-		Prompt:             msg.Prompt,
-		IsStateless:        msg.IsStateless,
+		SessionID:            msg.SessionID,
+		Prompt:               msg.Prompt,
+		IsStateless:          msg.IsStateless,
 		SystemPromptOverride: msg.SystemPrompt,
-		Attachments:        proto.AttachmentsToMessage(msg.Attachments),
+		Attachments:          proto.AttachmentsToMessage(msg.Attachments),
 	}); err != nil {
 		return err
 	}

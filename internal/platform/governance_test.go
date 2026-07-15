@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"testing"
 
-	"github.com/hackafterdark/phosphor/internal/config"
+	"github.com/hackafterdark/phosphor/pkg/config"
 	"github.com/stretchr/testify/assert"
 )
 

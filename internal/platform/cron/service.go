@@ -14,8 +14,8 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/hackafterdark/phosphor/internal/app"
-	"github.com/hackafterdark/phosphor/internal/config"
-	"github.com/hackafterdark/phosphor/internal/message"
+	"github.com/hackafterdark/phosphor/pkg/config"
+	"github.com/hackafterdark/phosphor/pkg/message"
 )
 
 // Service implements the platform.Service interface for the cron service.
@@ -205,11 +205,11 @@ func (s *Service) scheduleJob(ctx context.Context, jobName string, job *Job) err
 		s.runJob(ctx, jobName, job)
 	})
 
-		// Store the entry and job metadata.
-		s.mu.Lock()
-		s.jobs[jobName] = &cron.Entry{ID: entryID}
-		s.scheduledJobs[jobName] = job
-		s.mu.Unlock()
+	// Store the entry and job metadata.
+	s.mu.Lock()
+	s.jobs[jobName] = &cron.Entry{ID: entryID}
+	s.scheduledJobs[jobName] = job
+	s.mu.Unlock()
 
 	s.logger.Info("scheduled job", "job", jobName, "schedule", job.Schedule)
 	return nil

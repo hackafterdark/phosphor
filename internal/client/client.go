@@ -13,9 +13,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/hackafterdark/phosphor/internal/config"
 	"github.com/hackafterdark/phosphor/internal/proto"
 	"github.com/hackafterdark/phosphor/internal/server"
+	"github.com/hackafterdark/phosphor/pkg/config"
 )
 
 // DummyHost is used to satisfy the http.Client's requirement for a URL.

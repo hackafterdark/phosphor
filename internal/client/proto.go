@@ -14,10 +14,10 @@ import (
 	"time"
 
 	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
-	"github.com/hackafterdark/phosphor/internal/config"
-	"github.com/hackafterdark/phosphor/internal/message"
 	"github.com/hackafterdark/phosphor/internal/proto"
-	"github.com/hackafterdark/phosphor/internal/pubsub"
+	"github.com/hackafterdark/phosphor/pkg/config"
+	"github.com/hackafterdark/phosphor/pkg/message"
+	"github.com/hackafterdark/phosphor/pkg/pubsub"
 )
 
 // ListWorkspaces retrieves all workspaces from the server.

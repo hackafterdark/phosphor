@@ -9,9 +9,9 @@ import (
 
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/hackafterdark/phosphor/internal/agent/hyper"
 	"github.com/hackafterdark/phosphor/internal/home"
 	"github.com/hackafterdark/phosphor/internal/ui/styles"
+	"github.com/hackafterdark/phosphor/pkg/agent/hyper"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
 )

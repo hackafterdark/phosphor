@@ -6,7 +6,7 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/hackafterdark/phosphor/internal/skills"
+	"github.com/hackafterdark/phosphor/pkg/skills"
 	"github.com/stretchr/testify/require"
 )
 

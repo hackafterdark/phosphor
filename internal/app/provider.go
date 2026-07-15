@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	xstrings "github.com/charmbracelet/x/exp/strings"
-	"github.com/hackafterdark/phosphor/internal/config"
+	"github.com/hackafterdark/phosphor/pkg/config"
 )
 
 // parseModelStr parses a model string into provider filter and model ID.

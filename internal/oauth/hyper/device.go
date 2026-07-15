@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hackafterdark/phosphor/internal/agent/hyper"
 	"github.com/hackafterdark/phosphor/internal/oauth"
+	"github.com/hackafterdark/phosphor/pkg/agent/hyper"
 )
 
 // DeviceAuthResponse contains the response from the device authorization endpoint.

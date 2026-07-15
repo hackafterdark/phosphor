@@ -14,8 +14,8 @@ import (
 	"strings"
 
 	"github.com/hackafterdark/phosphor/internal/backend"
-	"github.com/hackafterdark/phosphor/internal/config"
 	_ "github.com/hackafterdark/phosphor/internal/swagger"
+	"github.com/hackafterdark/phosphor/pkg/config"
 	httpswagger "github.com/swaggo/http-swagger/v2"
 )
 

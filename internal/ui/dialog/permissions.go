@@ -11,12 +11,12 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	uv "github.com/charmbracelet/ultraviolet"
-	"github.com/hackafterdark/phosphor/internal/agent/tools"
 	"github.com/hackafterdark/phosphor/internal/fsext"
-	"github.com/hackafterdark/phosphor/internal/permission"
 	"github.com/hackafterdark/phosphor/internal/stringext"
 	"github.com/hackafterdark/phosphor/internal/ui/common"
 	"github.com/hackafterdark/phosphor/internal/ui/styles"
+	"github.com/hackafterdark/phosphor/pkg/agent/tools"
+	"github.com/hackafterdark/phosphor/pkg/permission"
 )
 
 // PermissionsID is the identifier for the permissions dialog.

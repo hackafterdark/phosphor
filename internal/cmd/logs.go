@@ -13,7 +13,7 @@ import (
 	"charm.land/log/v2"
 	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/x/term"
-	"github.com/hackafterdark/phosphor/internal/config"
+	"github.com/hackafterdark/phosphor/pkg/config"
 	"github.com/nxadm/tail"
 	"github.com/spf13/cobra"
 )

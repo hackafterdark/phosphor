@@ -7,9 +7,9 @@ import (
 
 	"charm.land/lipgloss/v2"
 	uv "github.com/charmbracelet/ultraviolet"
-	"github.com/hackafterdark/phosphor/internal/config"
 	"github.com/hackafterdark/phosphor/internal/ui/common"
 	"github.com/hackafterdark/phosphor/internal/ui/logo"
+	"github.com/hackafterdark/phosphor/pkg/config"
 )
 
 // modelInfo renders the current model information including reasoning

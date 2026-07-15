@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hackafterdark/phosphor/internal/agent/tools/mcp"
-	"github.com/hackafterdark/phosphor/internal/config"
 	"github.com/hackafterdark/phosphor/internal/home"
-	"github.com/hackafterdark/phosphor/internal/skills"
+	"github.com/hackafterdark/phosphor/pkg/agent/tools/mcp"
+	"github.com/hackafterdark/phosphor/pkg/config"
+	"github.com/hackafterdark/phosphor/pkg/skills"
 )
 
 var namedArgPattern = regexp.MustCompile(`\$([A-Z][A-Z0-9_]*)`)

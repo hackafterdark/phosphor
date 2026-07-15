@@ -15,8 +15,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/hackafterdark/phosphor/internal/csync"
 	"github.com/hackafterdark/phosphor/internal/proto"
+	"github.com/hackafterdark/phosphor/pkg/csync"
 	"github.com/stretchr/testify/require"
 )
 

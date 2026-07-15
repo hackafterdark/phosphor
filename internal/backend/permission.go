@@ -1,8 +1,8 @@
 package backend
 
 import (
-	"github.com/hackafterdark/phosphor/internal/permission"
 	"github.com/hackafterdark/phosphor/internal/proto"
+	"github.com/hackafterdark/phosphor/pkg/permission"
 )
 
 // GrantPermission grants, denies, or persistently grants a permission

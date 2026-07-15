@@ -13,11 +13,11 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/hackafterdark/phosphor/internal/diff"
 	"github.com/hackafterdark/phosphor/internal/fsext"
-	"github.com/hackafterdark/phosphor/internal/history"
-	"github.com/hackafterdark/phosphor/internal/session"
 	"github.com/hackafterdark/phosphor/internal/ui/common"
 	"github.com/hackafterdark/phosphor/internal/ui/styles"
 	"github.com/hackafterdark/phosphor/internal/ui/util"
+	"github.com/hackafterdark/phosphor/pkg/history"
+	"github.com/hackafterdark/phosphor/pkg/session"
 )
 
 // loadSessionMsg is a message indicating that a session and its files have

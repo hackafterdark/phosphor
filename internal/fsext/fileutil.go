@@ -12,8 +12,8 @@ import (
 
 	"github.com/bmatcuk/doublestar/v4"
 	"github.com/charlievieth/fastwalk"
-	"github.com/hackafterdark/phosphor/internal/csync"
 	"github.com/hackafterdark/phosphor/internal/home"
+	"github.com/hackafterdark/phosphor/pkg/csync"
 )
 
 type FileInfo struct {

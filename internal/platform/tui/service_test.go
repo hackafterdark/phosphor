@@ -8,10 +8,10 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/hackafterdark/phosphor/internal/config"
-	"github.com/hackafterdark/phosphor/internal/csync"
 	"github.com/hackafterdark/phosphor/internal/platform/tui"
 	"github.com/hackafterdark/phosphor/internal/workspace"
+	"github.com/hackafterdark/phosphor/pkg/config"
+	"github.com/hackafterdark/phosphor/pkg/csync"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

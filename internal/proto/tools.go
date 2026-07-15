@@ -5,7 +5,7 @@ package proto
 // there is exactly one source of truth and so values survive a
 // round-trip across the client/server boundary as the same Go type
 // the UI asserts on.
-import "github.com/hackafterdark/phosphor/internal/agent/tools"
+import "github.com/hackafterdark/phosphor/pkg/agent/tools"
 
 // ToolResponseType represents the type of tool response.
 type ToolResponseType string
