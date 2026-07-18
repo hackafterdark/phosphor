@@ -424,6 +424,7 @@ type Options struct {
 	DebugLSP             bool        `json:"debug_lsp,omitempty" jsonschema:"description=Enable debug logging for LSP servers,default=false"`
 	DisableAutoSummarize bool        `json:"disable_auto_summarize,omitempty" jsonschema:"description=Disable automatic conversation summarization,default=false"`
 	SummarizeThreshold   float64     `json:"summarize_threshold,omitempty" jsonschema:"description=Fraction of context window at which to trigger auto-summarization (0-1, default=0.8),default=0.8"`
+	SummarizeModel       string      `json:"summarize_model,omitempty" jsonschema:"description=Model to use for summarization: 'main'/'large' (default), 'small', or 'embedded' (local dlgo model),default=main"`
 	// DataDirectory is where Phosphor keeps per-project state such as
 	// the SQLite database and workspace overrides. Relative paths are
 	// resolved against the working directory; absolute paths are used
@@ -448,6 +449,51 @@ type Options struct {
 	// Agent holds agent-specific runtime configuration such as reflection
 	// and turn limits. When nil, sensible defaults are applied at use time.
 	Agent *AgentConfig `json:"agent,omitempty" jsonschema:"description=Agent runtime configuration"`
+}
+
+// EmbeddedModels holds the configuration for both inference and embedding models.
+type EmbeddedModels struct {
+	Inference *InferenceModel `json:"inference,omitempty" jsonschema:"description=Configuration for the dlgo inference model (GGUF)"`
+	Embedding *EmbeddingModel `json:"embedding,omitempty" jsonschema:"description=Configuration for the goformer embedding model (Safetensors)"`
+}
+
+// InferenceModel configures the dlgo GGUF model used for local inference.
+type InferenceModel struct {
+	// Enabled toggles the inference model.
+	Enabled bool `json:"enabled,omitempty" jsonschema:"description=Enable the embedded inference model,default=true"`
+	// ModelPath is the filesystem path to the GGUF model file.
+	ModelPath string `json:"model_path,omitempty" jsonschema:"description=Path to the GGUF model file,example=data/models/Qwen3.5-0.8B.Q4_K_M.gguf"`
+	// ModelURL is an optional direct download URL for the model.
+	ModelURL string `json:"model_url,omitempty" jsonschema:"description=Optional direct download URL for the model file"`
+	// ModelRepo is an optional HuggingFace repo ID for auto-download.
+	ModelRepo string `json:"model_repo,omitempty" jsonschema:"description=HuggingFace repo ID for auto-downloading the model,example=Qwen/Qwen3.5-0.8B"`
+	// GPU enables Vulkan GPU acceleration (requires -tags vulkan build).
+	GPU bool `json:"gpu,omitempty" jsonschema:"description=Enable GPU acceleration (requires vulkan build tag),default=false"`
+	// Options holds inference sampling parameters.
+	Options *InferOptions `json:"options,omitempty" jsonschema:"description=Inference sampling parameters"`
+}
+
+// InferOptions holds sampling parameters for dlgo inference.
+type InferOptions struct {
+	Temperature float32 `json:"temperature,omitempty" jsonschema:"description=Sampling temperature,default=0.3"`
+	TopP        float32 `json:"top_p,omitempty" jsonschema:"description=Nucleus sampling threshold,default=0.9"`
+	TopK        int32   `json:"top_k,omitempty" jsonschema:"description=Top-K sampling,default=40"`
+	MaxTokens   int32   `json:"max_tokens,omitempty" jsonschema:"description=Maximum output tokens,default=2048"`
+	Seed        int64   `json:"seed,omitempty" jsonschema:"description=Random seed for reproducibility,default=42"`
+}
+
+// EmbeddingModel configures the goformer Safetensors model used for embeddings.
+type EmbeddingModel struct {
+	// Enabled toggles the embedding model.
+	Enabled bool `json:"enabled,omitempty" jsonschema:"description=Enable the embedded embedding model,default=true"`
+	// ModelPath is the filesystem path to the Safetensors model directory.
+	ModelPath string `json:"model_path,omitempty" jsonschema:"description=Path to the Safetensors model directory,example=data/models/bge-small-en-v1.5"`
+	// ModelURL is an optional direct download URL for the model.
+	ModelURL string `json:"model_url,omitempty" jsonschema:"description=Optional direct download URL for the model"`
+	// ModelRepo is an optional HuggingFace repo ID for auto-download.
+	ModelRepo string `json:"model_repo,omitempty" jsonschema:"description=HuggingFace repo ID for auto-downloading the embedding model"`
+	// Dimensions is the embedding vector dimensionality.
+	Dimensions int32 `json:"dimensions,omitempty" jsonschema:"description=Embedding vector dimensions,default=384"`
 }
 
 // AgentConfig controls agent-specific runtime behavior.
@@ -929,6 +975,10 @@ type Config struct {
 	LSP LSPs `json:"lsp,omitempty" jsonschema:"description=Language Server Protocol configurations"`
 
 	Options *Options `json:"options,omitempty" jsonschema:"description=General application options"`
+
+	// EmbeddedModels holds configuration for local embedded models (dlgo for
+	// inference, goformer for embeddings).
+	EmbeddedModels *EmbeddedModels `json:"embedded_models,omitempty" jsonschema:"description=Configuration for embedded local models (dlgo inference and goformer embeddings)"`
 
 	Permissions *Permissions `json:"permissions,omitempty" jsonschema:"description=Permission settings for tool usage"`
 

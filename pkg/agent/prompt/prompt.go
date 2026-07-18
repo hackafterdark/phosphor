@@ -38,6 +38,9 @@ var defaultDecisionMaking []byte
 //go:embed templates/coding.md.tpl
 var defaultCodingProtocol []byte
 
+//go:embed templates/summarization.md.tpl
+var defaultSummarization []byte
+
 // Prompt represents a template-based prompt generator.
 type Prompt struct {
 	name                      string
@@ -69,6 +72,7 @@ type PromptDat struct {
 	InteractionGating         string
 	DecisionMaking            string
 	CodingProtocol            string
+	Summarization             string
 }
 
 type ContextFile struct {
@@ -126,6 +130,12 @@ type CodingProtocolView struct {
 	GitStatus                 string
 	Platform                  string
 	StructuralSearchAvailable bool
+}
+
+// SummarizationView is the data exposed to summarization.md.tpl partials.
+type SummarizationView struct {
+	Platform string
+	Date     string
 }
 
 type Option func(*Prompt)
@@ -278,6 +288,13 @@ func (p *Prompt) Build(ctx context.Context, provider, model string, store *confi
 	if err != nil {
 		return "", err
 	}
+	summarizationRendered, err := p.renderProfileTemplate(profileName, "summarization.md.tpl", workingDir, defaultSummarization, SummarizationView{
+		Platform: d.Platform,
+		Date:     d.Date,
+	})
+	if err != nil {
+		return "", err
+	}
 
 	d.CriticalRules = rulesRendered
 	d.CommunicationStyle = styleRendered
@@ -285,6 +302,7 @@ func (p *Prompt) Build(ctx context.Context, provider, model string, store *confi
 	d.InteractionGating = interactionGatingRendered
 	d.DecisionMaking = decisionMakingRendered
 	d.CodingProtocol = codingProtocolRendered
+	d.Summarization = summarizationRendered
 
 	mainTmpl, err := resolveProfileTemplate(profileName, p.name+".md.tpl", workingDir, []byte(p.template))
 	if err != nil {

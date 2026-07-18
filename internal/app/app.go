@@ -34,6 +34,7 @@ import (
 	"github.com/hackafterdark/phosphor/pkg/agent/tools/mcp"
 	"github.com/hackafterdark/phosphor/pkg/config"
 	"github.com/hackafterdark/phosphor/pkg/db"
+	"github.com/hackafterdark/phosphor/pkg/embedded"
 	"github.com/hackafterdark/phosphor/pkg/filetracker"
 	"github.com/hackafterdark/phosphor/pkg/goal"
 	"github.com/hackafterdark/phosphor/pkg/history"
@@ -639,7 +640,54 @@ func (app *App) InitSystemAgent(ctx context.Context) error {
 		return err
 	}
 	app.GoalRuntime = app.AgentCoordinator.GoalRuntime()
+
+	// Proactively download embedded model if configured.
+	app.ensureEmbeddedModel(ctx)
 	return nil
+}
+
+// ensureEmbeddedModel checks for an embedded model config and downloads
+// the model file from HuggingFace if needed.
+func (app *App) ensureEmbeddedModel(ctx context.Context) {
+	cfg := app.config.Config()
+	if cfg.EmbeddedModels == nil {
+		slog.Debug("Embedded models not configured, skipping download")
+		return
+	}
+
+	em := cfg.EmbeddedModels
+	if em.Inference == nil || !em.Inference.Enabled {
+		slog.Debug("Embedded inference model not enabled, skipping download")
+		return
+	}
+
+	if em.Inference.ModelPath == "" && em.Inference.ModelRepo == "" {
+		slog.Debug("No model_path or model_repo set, skipping download")
+		return
+	}
+
+	// If model_path is already set and the file exists, skip.
+	if em.Inference.ModelPath != "" {
+		if _, err := os.Stat(em.Inference.ModelPath); err == nil {
+			slog.Info("Embedded model already exists locally", "path", em.Inference.ModelPath)
+			return
+		}
+	}
+
+	// Download from HuggingFace if model_repo is set.
+	if em.Inference.ModelRepo != "" {
+		downloader := embedded.NewModelDownloader("")
+		slog.Info("Resolved global models directory", "dir", downloader.ModelsDir())
+		registry := embedded.DefaultRegistry()
+
+		slog.Info("Starting embedded model download/resolution", "repo", em.Inference.ModelRepo)
+		path, err := embedded.ResolveAndDownload(ctx, downloader, registry, em.Inference.ModelRepo)
+		if err != nil {
+			slog.Error("Failed to download embedded model", "repo", em.Inference.ModelRepo, "error", err)
+			return
+		}
+		slog.Info("Embedded model resolved and ready", "path", path)
+	}
 }
 
 // Subscribe sends events to the TUI as tea.Msgs.
