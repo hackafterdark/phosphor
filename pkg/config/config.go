@@ -424,7 +424,9 @@ type Options struct {
 	DebugLSP             bool        `json:"debug_lsp,omitempty" jsonschema:"description=Enable debug logging for LSP servers,default=false"`
 	DisableAutoSummarize bool        `json:"disable_auto_summarize,omitempty" jsonschema:"description=Disable automatic conversation summarization,default=false"`
 	SummarizeThreshold   float64     `json:"summarize_threshold,omitempty" jsonschema:"description=Fraction of context window at which to trigger auto-summarization (0-1, default=0.8),default=0.8"`
-	SummarizeModel       string      `json:"summarize_model,omitempty" jsonschema:"description=Model to use for summarization: 'main'/'large' (default), 'small', or 'embedded' (local dlgo model),default=main"`
+	SummarizeModel        string      `json:'summarize_model,omitempty' jsonschema:'description=Model to use for summarization: 'main'/'large' (default), 'small', or 'embedded' (local dlgo model),default=main'`
+	SummarizePruneChars   int         `json:'summarize_prune_chars,omitempty' jsonschema:'description=Number of chars to keep for each tool output during compaction pruning,default=200'`
+	SummarizePruneAggressiveChars int `json:'summarize_prune_aggressive_chars,omitempty' jsonschema:'description=Number of chars to keep for aggressive overflow recovery pruning,default=50'`
 	// DataDirectory is where Phosphor keeps per-project state such as
 	// the SQLite database and workspace overrides. Relative paths are
 	// resolved against the working directory; absolute paths are used

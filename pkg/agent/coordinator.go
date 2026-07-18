@@ -1619,8 +1619,20 @@ summaryMsgs, err := c.messages.List(ctx, sessionID)
 		systemPrompt = summarizationPrompt + "\n\n" + systemPrompt
 	}
 
-	// Build pruned conversation text (tool outputs truncated to 200 chars).
-	convText := PruneAndBuild(summaryMsgs, 200)
+	opts := c.cfg.Config().Options
+	pruneChars := 200
+	aggressiveChars := 50
+	if opts != nil {
+		if opts.SummarizePruneChars > 0 {
+			pruneChars = opts.SummarizePruneChars
+		}
+		if opts.SummarizePruneAggressiveChars > 0 {
+			aggressiveChars = opts.SummarizePruneAggressiveChars
+		}
+	}
+
+	// Build pruned conversation text (tool outputs truncated to configurable chars).
+	convText := PruneAndBuild(summaryMsgs, pruneChars)
 
 	// Attempt summary with pruned text.
 	summaryText, err := dlgoModel.Generate(systemPrompt + "\n" + convText)
@@ -1638,7 +1650,7 @@ summaryMsgs, err := c.messages.List(ctx, sessionID)
 		// Overflow recovery: retry with aggressive pruning.
 		if isOverflowError(err) {
 			slog.Info("Overflow detected, retrying with aggressive pruning")
-			convText = AggressiveBuild(summaryMsgs)
+			convText = AggressiveBuild(summaryMsgs, aggressiveChars)
 			summaryText, err = dlgoModel.Generate(systemPrompt + "\n" + convText)
 		}
 		if err != nil {

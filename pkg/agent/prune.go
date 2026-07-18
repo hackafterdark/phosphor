@@ -7,11 +7,6 @@ import (
 	"github.com/hackafterdark/phosphor/pkg/message"
 )
 
-const (
-	defaultPruneChars = 200
-	aggressiveChars   = 50
-)
-
 // pruneToolOutputs truncates verbose tool results to keepChars.
 func pruneToolOutputs(msgs []message.Message, keepChars int) []message.Message {
 	pruned := make([]message.Message, 0, len(msgs))
@@ -59,6 +54,6 @@ func PruneAndBuild(msgs []message.Message, keepChars int) string {
 }
 
 // AggressiveBuild prunes aggressively for overflow recovery.
-func AggressiveBuild(msgs []message.Message) string {
-	return PruneAndBuild(msgs, aggressiveChars)
+func AggressiveBuild(msgs []message.Message, keepChars int) string {
+	return PruneAndBuild(msgs, keepChars)
 }

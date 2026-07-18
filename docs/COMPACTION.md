@@ -14,24 +14,42 @@ itself.
 The `summarize_model` option in `phosphor.json` controls which model handles
 compaction. Valid values:
 
-| Value | Behavior |
-|---|---|
-| `"main"` (default) | Use the session's large model |
-| `"large"` | Use the configured large model |
-| `"small"` | Use the configured small model |
-| `"embedded"` | Use the local dlgo GGUF model (requires `embedded_models` config) |
+
+| Value                               | Behavior                                                          |
+| ----------------------------------- | ----------------------------------------------------------------- |
+| `"main"` (default, alias for large) | Use the session's large model                                     |
+| `"large"`                           | Use the configured large model                                    |
+| `"small"`                           | Use the configured small model                                    |
+| `"embedded"`                        | Use the local dlgo GGUF model (requires `embedded_models` config) |
+
 
 These live in `phosphor.json` under the `options` key:
 
-```json
+```
 {
   "options": {
     "disable_auto_summarize": false,
     "summarize_threshold": 0.8,
-    "summarize_model": "main"
+    "summarize_model": "main",
+    "summarize_prune_chars": 200,
+    "summarize_prune_aggressive_chars": 50
   }
 }
 ```
+
+### `summarize_prune_chars`
+
+Number of characters to keep for each tool output during standard pre-compaction
+pruning. Defaults to **200**. Tool results longer than this value are truncated
+and appended with `\n... [truncated]`. Non-tool messages are passed through
+unchanged. Lower values produce more aggressive context reduction; higher values
+retain more tool output detail.
+
+### `summarize_prune_aggressive_chars`
+
+Number of characters to keep during overflow recovery pruning. Defaults to **50**.
+Used as a fallback when the standard pruned input still exceeds the model's context
+window — the engine retries with this more aggressive truncation.
 
 ### `embedded_models`
 
@@ -48,10 +66,10 @@ These live in `phosphor.json` under the `options` key:
 ```
 
 - `model_repo`: HuggingFace repo ID for auto-download (e.g., `"Qwen3.5-0.8B"`,
-  `"Phi-3-mini"`, `"Gemma-2-2B"`)
+`"Phi-3-mini"`, `"Gemma-2-2B"`)
 - `model_path`: Local path to a GGUF file (alternative to `model_repo`)
 - `gpu`: Enable GPU acceleration (requires build with Vulkan support); falls
-  back to CPU if GPU is unavailable.
+back to CPU if GPU is unavailable.
 
 ## Trigger Conditions
 
@@ -88,29 +106,31 @@ the conversation past the model's limit.
 When triggered, `SessionAgent.Summarize()` executes:
 
 1. **Loads conversation history** via `getSessionMessages()`.
-2. **Prunes tool outputs** — verbose tool results are truncated to 200 characters
-   (`pkg/agent/prune.go`) to reduce context pressure before summarization.
+2. **Prunes tool outputs** — verbose tool results are truncated to
+ `summarize_prune_chars` (default 200) characters (`pkg/agent/prune.go`) to
+ reduce context pressure before summarization.
 3. **Loads summary prompt** from the profile system
-   (`pkg/agent/prompt/templates/summarization.md.tpl`), with optional iterative
-   context (previous summary prepended).
+ (`pkg/agent/prompt/templates/summarization.md.tpl`), with optional iterative
+ context (previous summary prepended).
 4. **Creates a summary message** (`IsSummaryMessage: true`) in the session.
-5. **Sends the pruned history** to the configured model (main, embedded, or cloud).
+5. **Sends the pruned history** to the configured model (main/large, small, or embedded).
 6. **Streams the summary** — text deltas are appended to the summary message in
-   real-time.
+ real-time.
 7. **Updates session state**:
-   - `SummaryMessageID` is set to the new summary message's ID.
-   - `CurrentTokens` is recalculated from the summary content using
-     `approxTokenCount()`.
-   - `CompletionTokens` is updated from the response usage.
-   - `PromptTokens` is reset to 0 (the summary replaces the full history).
+  - `SummaryMessageID` is set to the new summary message's ID.
+  - `CurrentTokens` is recalculated from the summary content using
+  `approxTokenCount()`.
+  - `CompletionTokens` is updated from the response usage.
+  - `PromptTokens` is reset to 0 (the summary replaces the full history).
 8. **Processes queued messages** — if user sent new prompts during summarization,
-   the first queued message is processed immediately after.
+ the first queued message is processed immediately after.
 
 ### Overflow Recovery
 
 If the model rejects the request due to context overflow, the compaction engine
-retries with **aggressive pruning** (tool outputs truncated to 50 characters). This
-handles edge cases where the standard pruning wasn't enough.
+retries with **aggressive pruning** (tool outputs truncated to
+'summarize_prune_aggressive_chars', default 50). This handles edge cases where the
+standard pruning wasn't enough.
 
 ### Iterative Summaries
 
@@ -120,14 +140,13 @@ allowing the model to compound knowledge across multiple summarization passes.
 ### Embedded Model Path
 
 When `summarize_model: "embedded"`, the `summarizeEmbedded()` path handles:
-handles:
 
 1. **Model download**: Auto-downloads GGUF models from HuggingFace at startup
-   (`ensureEmbeddedModel`).
+ (`ensureEmbeddedModel`).
 2. **GPU acceleration**: If `gpu: true`, attempts Vulkan GPU offload; falls back
-   to CPU if no GPU is available.
+ to CPU if no GPU is available.
 3. **Otel instrumentation**: Tracks `gen_ai.usage.input_tokens` and
-   `gen_ai.usage.output_tokens` for observability.
+ `gen_ai.usage.output_tokens` for observability.
 
 ## Profile-Based Prompt Customization
 

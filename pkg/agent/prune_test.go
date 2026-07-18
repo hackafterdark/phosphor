@@ -119,8 +119,8 @@ func TestAggressiveBuild_Truncation(t *testing.T) {
 		newMessage("tool", longText),
 	}
 
-	result := AggressiveBuild(msgs)
-	require.True(t, strings.Contains(result, "[tool] " + longText[:aggressiveChars]))
+	result := AggressiveBuild(msgs, 50)
+	require.True(t, strings.Contains(result, "[tool] " + longText[:50]))
 	require.True(t, strings.Contains(result, "\n... [truncated]"))
 }
 
