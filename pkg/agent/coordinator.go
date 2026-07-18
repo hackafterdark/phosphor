@@ -1620,19 +1620,19 @@ summaryMsgs, err := c.messages.List(ctx, sessionID)
 	}
 
 	opts := c.cfg.Config().Options
-	pruneChars := 200
+	toolOutputChars := 200
 	aggressiveChars := 50
 	if opts != nil {
-		if opts.SummarizePruneChars > 0 {
-			pruneChars = opts.SummarizePruneChars
+		if opts.SummarizeToolOutputChars > 0 {
+			toolOutputChars = opts.SummarizeToolOutputChars
 		}
-		if opts.SummarizePruneAggressiveChars > 0 {
-			aggressiveChars = opts.SummarizePruneAggressiveChars
+		if opts.SummarizeToolOutputAggressiveChars > 0 {
+			aggressiveChars = opts.SummarizeToolOutputAggressiveChars
 		}
 	}
 
 	// Build pruned conversation text (tool outputs truncated to configurable chars).
-	convText := PruneAndBuild(summaryMsgs, pruneChars)
+	convText := PruneAndBuild(summaryMsgs, toolOutputChars)
 
 	// Attempt summary with pruned text.
 	summaryText, err := dlgoModel.Generate(systemPrompt + "\n" + convText)

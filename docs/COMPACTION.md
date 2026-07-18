@@ -31,13 +31,13 @@ These live in `phosphor.json` under the `options` key:
     "disable_auto_summarize": false,
     "summarize_threshold": 0.8,
     "summarize_model": "main",
-    "summarize_prune_chars": 200,
-    "summarize_prune_aggressive_chars": 50
+    "summarize_tool_output_chars": 200,
+    "summarize_tool_output_aggressive_chars": 50
   }
 }
 ```
 
-### `summarize_prune_chars`
+### `summarize_tool_output_chars`
 
 Number of characters to keep for each tool output during standard pre-compaction
 pruning. Defaults to **200**. Tool results longer than this value are truncated
@@ -45,7 +45,7 @@ and appended with `\n... [truncated]`. Non-tool messages are passed through
 unchanged. Lower values produce more aggressive context reduction; higher values
 retain more tool output detail.
 
-### `summarize_prune_aggressive_chars`
+### `summarize_tool_output_aggressive_chars`
 
 Number of characters to keep during overflow recovery pruning. Defaults to **50**.
 Used as a fallback when the standard pruned input still exceeds the model's context
@@ -107,7 +107,7 @@ When triggered, `SessionAgent.Summarize()` executes:
 
 1. **Loads conversation history** via `getSessionMessages()`.
 2. **Prunes tool outputs** — verbose tool results are truncated to
- `summarize_prune_chars` (default 200) characters (`pkg/agent/prune.go`) to
+ `summarize_tool_output_chars` (default 200) characters (`pkg/agent/prune.go`) to
  reduce context pressure before summarization.
 3. **Loads summary prompt** from the profile system
  (`pkg/agent/prompt/templates/summarization.md.tpl`), with optional iterative
@@ -129,7 +129,7 @@ When triggered, `SessionAgent.Summarize()` executes:
 
 If the model rejects the request due to context overflow, the compaction engine
 retries with **aggressive pruning** (tool outputs truncated to
-'summarize_prune_aggressive_chars', default 50). This handles edge cases where the
+'summarize_tool_output_aggressive_chars', default 50). This handles edge cases where the
 standard pruning wasn't enough.
 
 ### Iterative Summaries
