@@ -1873,19 +1873,35 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		m.attachments.Reset()
 		m.dialog.CloseDialog(dialog.CommandsID)
 	case dialog.ActionPruneSessions:
+		// Deprecated: prune now goes through the PruneDays dialog.
+		// Kept for backwards compatibility.
 		if m.isAgentBusy() {
 			cmds = append(cmds, util.ReportWarn("Agent is busy, please wait..."))
 			break
 		}
 		cmds = append(cmds, func() tea.Msg {
-			cutoff := time.Now().AddDate(0, 0, -7)
+			cutoff := time.Now().AddDate(0, 0, -30)
 			count, err := m.com.Workspace.BulkDeleteSessions(context.Background(), cutoff)
 			if err != nil {
-				return util.ReportError(err)()
+				return util.ReportError(err)
 			}
-			return util.ReportInfo(fmt.Sprintf("Pruned %d sessions older than 7 days", count))
+			return util.ReportInfo(fmt.Sprintf("Pruned %d sessions older than 30 days", count))
 		})
 		m.dialog.CloseDialog(dialog.CommandsID)
+	case dialog.ActionPruneDays:
+		if m.isAgentBusy() {
+			cmds = append(cmds, util.ReportWarn("Agent is busy, please wait..."))
+			break
+		}
+		cmds = append(cmds, func() tea.Msg {
+			cutoff := time.Now().AddDate(0, 0, -msg.Days)
+			count, err := m.com.Workspace.BulkDeleteSessions(context.Background(), cutoff)
+			if err != nil {
+				return util.ReportError(err)
+			}
+			return util.ReportInfo(fmt.Sprintf("Pruned %d sessions older than %d days", count, msg.Days))
+		})
+		m.dialog.CloseDialog(dialog.PruneDaysID)
 	case dialog.ActionToggleHelp:
 		m.status.ToggleHelp()
 		m.dialog.CloseDialog(dialog.CommandsID)
@@ -4238,6 +4254,10 @@ func (m *UI) openDialog(id string) tea.Cmd {
 		if cmd := m.openUsageStatsDialog(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
+	case dialog.PruneDaysID:
+		if cmd := m.openPruneDaysDialog(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 	default:
 		// Unknown dialog
 		break
@@ -4353,6 +4373,23 @@ func (m *UI) openUsageStatsDialog() tea.Cmd {
 	return func() tea.Msg {
 		return dialog.LoadUsageDataMsg{}
 	}
+}
+
+// openPruneDaysDialog opens the prune days selection dialog.
+func (m *UI) openPruneDaysDialog() tea.Cmd {
+	if m.dialog.ContainsDialog(dialog.PruneDaysID) {
+		m.dialog.BringToFront(dialog.PruneDaysID)
+		return nil
+	}
+
+	pruneDialog, err := dialog.NewPruneDays(m.com)
+	if err != nil {
+		return func() tea.Msg {
+			return util.ReportError(err)
+		}
+	}
+	m.dialog.OpenDialog(pruneDialog)
+	return nil
 }
 
 // openNotificationsDialog opens the notification style picker dialog.

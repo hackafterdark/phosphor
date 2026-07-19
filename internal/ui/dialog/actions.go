@@ -115,6 +115,11 @@ type (
 	}
 	// ActionPruneSessions is a message to bulk delete old sessions.
 	ActionPruneSessions struct{}
+	// ActionPruneDays is a message to bulk delete old sessions with a specific
+	// number of days.
+	ActionPruneDays struct {
+		Days int
+	}
 )
 
 // Messages for API key input dialog.
