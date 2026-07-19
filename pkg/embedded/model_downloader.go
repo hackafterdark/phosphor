@@ -142,6 +142,60 @@ func copyFile(src, dst string) error {
 	return err
 }
 
+// DownloadModelDirectory downloads all files for an embedding model directory.
+// Safetensors models consist of multiple files (config.json, tokenizer.json,
+// model.safetensors, etc.) that must all live in the same directory.
+func (d *ModelDownloader) DownloadModelDirectory(ctx context.Context, repoID string, filenames []string) (string, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	dirName := filepath.Base(repoID)
+	if dirName == "" {
+		dirName = repoID
+	}
+	destDir := filepath.Join(d.modelsDir, dirName)
+
+	// Check if directory already exists with all files present.
+	exists := true
+	for _, fname := range filenames {
+		if _, err := os.Stat(filepath.Join(destDir, fname)); os.IsNotExist(err) {
+			exists = false
+			break
+		}
+	}
+	if exists {
+		return destDir, nil
+	}
+
+	slog.Info("Downloading embedding model directory from HuggingFace", "repo", repoID)
+
+	hfCacheDir := filepath.Join(d.modelsDir, "hf-cache")
+	repo := hub.New(repoID).WithCacheDir(hfCacheDir)
+	if token := os.Getenv("HF_TOKEN"); token != "" {
+		repo.WithAuth(token)
+	}
+
+	if err := os.MkdirAll(destDir, 0o755); err != nil {
+		return "", fmt.Errorf("failed to create model directory %s: %w", destDir, err)
+	}
+
+	for _, fname := range filenames {
+		downloadedPath, err := repo.DownloadFile(fname)
+		if err != nil {
+			return "", fmt.Errorf("failed to download %s from %s: %w", fname, repoID, err)
+		}
+		destPath := filepath.Join(destDir, fname)
+		if downloadedPath != destPath {
+			if err := copyFile(downloadedPath, destPath); err != nil {
+				return "", fmt.Errorf("failed to copy %s to %s: %w", fname, destPath, err)
+			}
+		}
+	}
+
+	slog.Info("Embedding model directory downloaded", "path", destDir)
+	return destDir, nil
+}
+
 // ResolveAndDownload resolves the repoID against the model registry.
 // If the repoID matches a model in the registry (by name or repo ID), it downloads that model.
 // If it's not in the registry, it falls back to repoID and a derived filename.

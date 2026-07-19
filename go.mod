@@ -14,6 +14,7 @@ require (
 	charm.land/x/vcr v0.1.1
 	github.com/Arize-ai/openinference/go/openinference-semantic-conventions v0.1.1
 	github.com/JohannesKaufmann/html-to-markdown v1.6.0
+	github.com/MichaelAyles/goformer v0.1.0
 	github.com/Microsoft/go-winio v0.6.2
 	github.com/NimbleMarkets/ntcharts v0.5.1
 	github.com/PuerkitoBio/goquery v1.12.0

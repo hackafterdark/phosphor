@@ -195,7 +195,7 @@ func TestEnsureEmbeddedModel_NoConfig(t *testing.T) {
 	}
 
 	// Should not panic and return immediately.
-	app.ensureEmbeddedModel(t.Context())
+	app.ensureEmbeddedModels(t.Context())
 }
 
 // TestEnsureEmbeddedModel_DisabledInference verifies that ensureEmbeddedModel
@@ -214,7 +214,7 @@ func TestEnsureEmbeddedModel_DisabledInference(t *testing.T) {
 		config: store,
 	}
 
-	app.ensureEmbeddedModel(t.Context())
+	app.ensureEmbeddedModels(t.Context())
 }
 
 // TestEnsureEmbeddedModel_NoModelPathRepo verifies that ensureEmbeddedModel
@@ -233,7 +233,7 @@ func TestEnsureEmbeddedModel_NoModelPathRepo(t *testing.T) {
 		config: store,
 	}
 
-	app.ensureEmbeddedModel(t.Context())
+	app.ensureEmbeddedModels(t.Context())
 }
 
 // TestEnsureEmbeddedModel_ModelExists verifies that ensureEmbeddedModel
@@ -260,6 +260,6 @@ func TestEnsureEmbeddedModel_ModelExists(t *testing.T) {
 		config: store,
 	}
 
-	app.ensureEmbeddedModel(t.Context())
+	app.ensureEmbeddedModels(t.Context())
 	// No error, returns immediately.
 }

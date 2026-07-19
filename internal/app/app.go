@@ -641,14 +641,14 @@ func (app *App) InitSystemAgent(ctx context.Context) error {
 	}
 	app.GoalRuntime = app.AgentCoordinator.GoalRuntime()
 
-	// Proactively download embedded model if configured.
-	app.ensureEmbeddedModel(ctx)
+	// Proactively download embedded models in background so startup is not blocked.
+	go app.ensureEmbeddedModels(app.globalCtx)
 	return nil
 }
 
-// ensureEmbeddedModel checks for an embedded model config and downloads
-// the model file from HuggingFace if needed.
-func (app *App) ensureEmbeddedModel(ctx context.Context) {
+// ensureEmbeddedModels checks for embedded model configs and downloads
+// the model files from HuggingFace if needed.
+func (app *App) ensureEmbeddedModels(ctx context.Context) {
 	cfg := app.config.Config()
 	if cfg.EmbeddedModels == nil {
 		slog.Debug("Embedded models not configured, skipping download")
@@ -656,37 +656,62 @@ func (app *App) ensureEmbeddedModel(ctx context.Context) {
 	}
 
 	em := cfg.EmbeddedModels
-	if em.Inference == nil || !em.Inference.Enabled {
-		slog.Debug("Embedded inference model not enabled, skipping download")
-		return
+
+	// Handle inference model (dlgo).
+	if em.Inference != nil && em.Inference.Enabled {
+		app.ensureInferenceModel(ctx, em.Inference)
 	}
 
-	if em.Inference.ModelPath == "" && em.Inference.ModelRepo == "" {
-		slog.Debug("No model_path or model_repo set, skipping download")
-		return
+	// Handle embedding model (goformer).
+	if em.Embedding != nil && em.Embedding.Enabled {
+		app.ensureEmbeddingModel(em.Embedding)
 	}
+}
 
-	// If model_path is already set and the file exists, skip.
-	if em.Inference.ModelPath != "" {
-		if _, err := os.Stat(em.Inference.ModelPath); err == nil {
-			slog.Info("Embedded model already exists locally", "path", em.Inference.ModelPath)
+// ensureInferenceModel downloads the dlgo inference model if needed.
+func (app *App) ensureInferenceModel(ctx context.Context, inf *config.InferenceModel) {
+	if inf.ModelPath != "" {
+		if _, err := os.Stat(inf.ModelPath); err == nil {
+			slog.Info("Inference model already exists locally", "path", inf.ModelPath)
 			return
 		}
 	}
 
-	// Download from HuggingFace if model_repo is set.
-	if em.Inference.ModelRepo != "" {
+	if inf.ModelRepo != "" {
 		downloader := embedded.NewModelDownloader("")
 		slog.Info("Resolved global models directory", "dir", downloader.ModelsDir())
 		registry := embedded.DefaultRegistry()
 
-		slog.Info("Starting embedded model download/resolution", "repo", em.Inference.ModelRepo)
-		path, err := embedded.ResolveAndDownload(ctx, downloader, registry, em.Inference.ModelRepo)
+		slog.Info("Starting inference model download/resolution", "repo", inf.ModelRepo)
+		path, err := embedded.ResolveAndDownload(ctx, downloader, registry, inf.ModelRepo)
 		if err != nil {
-			slog.Error("Failed to download embedded model", "repo", em.Inference.ModelRepo, "error", err)
+			slog.Error("Failed to download inference model", "repo", inf.ModelRepo, "error", err)
 			return
 		}
-		slog.Info("Embedded model resolved and ready", "path", path)
+		slog.Info("Inference model resolved and ready", "path", path)
+	}
+}
+
+// ensureEmbeddingModel downloads the goformer embedding model if needed.
+func (app *App) ensureEmbeddingModel(emb *config.EmbeddingModel) {
+	if emb.ModelPath != "" {
+		if _, err := os.Stat(emb.ModelPath); err == nil {
+			slog.Info("Embedding model already exists locally", "path", emb.ModelPath)
+			return
+		}
+	}
+
+	if emb.ModelRepo != "" {
+		downloader := embedded.NewModelDownloader("")
+		registry := embedded.DefaultRegistry()
+
+		slog.Info("Starting embedding model download/resolution", "repo", emb.ModelRepo)
+		path, err := registry.DownloadEmbedding(downloader, emb.ModelRepo)
+		if err != nil {
+			slog.Error("Failed to download embedding model", "repo", emb.ModelRepo, "error", err)
+			return
+		}
+		slog.Info("Embedding model resolved and ready", "path", path)
 	}
 }
 

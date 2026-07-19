@@ -42,6 +42,8 @@ github.com/KyleBanks/depth v1.2.1 h1:5h8fQADFrWtarTdtDudMmGsC7GPbOAu6RVB3ffsVFHc
 github.com/KyleBanks/depth v1.2.1/go.mod h1:jzSb9d0L43HxTQfT+oSA1EEp2q+ne2uh6XgeJcm8brE=
 github.com/MakeNowJust/heredoc v1.0.0 h1:cXCdzVdstXyiTqTvfqk9SDHpKNjxuom+DOlyEeQ4pzQ=
 github.com/MakeNowJust/heredoc v1.0.0/go.mod h1:mG5amYoWBHf8vpLOuehzbGGw0EHxpZZ6lCpQ4fNJ8LE=
+github.com/MichaelAyles/goformer v0.1.0 h1:RyJPAxHgcMEZi27PuxjdKL9vCVzfk7tjAxOmQBMB48U=
+github.com/MichaelAyles/goformer v0.1.0/go.mod h1:c30AXYSJkUT5jfXOvO1jTr0Mu63/g8FsZyVfocUhn9g=
 github.com/Microsoft/go-winio v0.6.2 h1:F2VQgta7ecxGYO8k3ZZz3RS8fVIXVxONVUPlNERoyfY=
 github.com/Microsoft/go-winio v0.6.2/go.mod h1:yd8OoFMLzJbo9gZq8j5qaps8bJ9aShtEA8Ipt1oGCvU=
 github.com/NimbleMarkets/ntcharts v0.5.1 h1:HWtekubEXfESwi24pyFynwGo2Hulbb9fPh7INMUc1dg=

@@ -158,7 +158,7 @@ const listSessions = `-- name: ListSessions :many
 SELECT id, parent_session_id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, summary_message_id, todos, current_tokens, is_stateless, service, is_pinned
 FROM sessions
 WHERE parent_session_id is NULL
-ORDER BY updated_at DESC
+ORDER BY is_pinned DESC, updated_at DESC
 `
 
 func (q *Queries) ListSessions(ctx context.Context) ([]Session, error) {

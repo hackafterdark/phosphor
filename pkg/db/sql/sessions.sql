@@ -45,8 +45,8 @@ LIMIT 1;
 -- name: ListSessions :many
 SELECT *
 FROM sessions
-WHERE parent_session_id is NULL
-ORDER BY updated_at DESC;
+WHERE parent_session_id IS NULL
+ORDER BY is_pinned DESC, updated_at DESC;
 
 -- name: UpdateSession :one
 UPDATE sessions
