@@ -85,6 +85,22 @@ func (w *AppWorkspace) UpdateStateless(ctx context.Context, sessionID string, st
 	return w.app.Sessions.UpdateStateless(ctx, sessionID, stateless, service)
 }
 
+func (w *AppWorkspace) PinSession(ctx context.Context, sessionID string) error {
+	return w.app.Sessions.Pin(ctx, sessionID)
+}
+
+func (w *AppWorkspace) UnpinSession(ctx context.Context, sessionID string) error {
+	return w.app.Sessions.Unpin(ctx, sessionID)
+}
+
+func (w *AppWorkspace) ListPrunableSessions(ctx context.Context, before time.Time) ([]session.Session, error) {
+	return w.app.Sessions.ListPrunableSessions(ctx, before)
+}
+
+func (w *AppWorkspace) BulkDeleteSessions(ctx context.Context, before time.Time) (int, error) {
+	return w.app.Sessions.BulkDeleteSessions(ctx, before)
+}
+
 func (w *AppWorkspace) CreateAgentToolSessionID(messageID, toolCallID string) string {
 	return w.app.Sessions.CreateAgentToolSessionID(messageID, toolCallID)
 }

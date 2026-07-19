@@ -473,6 +473,7 @@ func (c *Commands) defaultCommands() []*CommandItem {
 		NewCommandItem(c.com.Styles, "switch_cron_session", "Scheduled Job Sessions", "", ActionOpenDialog{CronSessionsID}),
 		NewCommandItem(c.com.Styles, "switch_cron_jobs", "Scheduled Jobs", "", ActionOpenDialog{CronJobsID}),
 		NewCommandItem(c.com.Styles, "switch_model", "Switch Model", "ctrl+l", ActionOpenDialog{ModelsID}),
+		NewCommandItem(c.com.Styles, "prune_sessions", "Prune Old Sessions", "", ActionPruneSessions{}),
 		NewCommandItem(c.com.Styles, "clear_prompt", "Clear Prompt", "ctrl+x", ActionClearPrompt{}),
 	}
 

@@ -70,6 +70,10 @@ type Workspace interface {
 	DeleteSession(ctx context.Context, sessionID string) error
 	RenameSession(ctx context.Context, sessionID, title string) error
 	UpdateStateless(ctx context.Context, sessionID string, stateless bool, service string) error
+	PinSession(ctx context.Context, sessionID string) error
+	UnpinSession(ctx context.Context, sessionID string) error
+	ListPrunableSessions(ctx context.Context, before time.Time) ([]session.Session, error)
+	BulkDeleteSessions(ctx context.Context, before time.Time) (int, error)
 	CreateAgentToolSessionID(messageID, toolCallID string) string
 	ParseAgentToolSessionID(sessionID string) (messageID string, toolCallID string, ok bool)
 	// SetCurrentSession reports the session this client is currently

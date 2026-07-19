@@ -24,7 +24,8 @@ INSERT INTO sessions (
     updated_at,
     created_at,
     is_stateless,
-    service
+    service,
+    is_pinned
 ) VALUES (
     ?,
     ?,
@@ -38,8 +39,9 @@ INSERT INTO sessions (
     strftime('%s', 'now'),
     strftime('%s', 'now'),
     0,
-    ''
-) RETURNING id, parent_session_id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, summary_message_id, todos, current_tokens, is_stateless, service
+    '',
+    0
+) RETURNING id, parent_session_id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, summary_message_id, todos, current_tokens, is_stateless, service, is_pinned
 `
 
 type CreateSessionParams struct {
@@ -78,6 +80,7 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) (S
 		&i.CurrentTokens,
 		&i.IsStateless,
 		&i.Service,
+		&i.IsPinned,
 	)
 	return i, err
 }
@@ -93,7 +96,7 @@ func (q *Queries) DeleteSession(ctx context.Context, id string) error {
 }
 
 const getLastSession = `-- name: GetLastSession :one
-SELECT id, parent_session_id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, summary_message_id, todos, current_tokens, is_stateless, service
+SELECT id, parent_session_id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, summary_message_id, todos, current_tokens, is_stateless, service, is_pinned
 FROM sessions
 ORDER BY updated_at DESC
 LIMIT 1
@@ -117,12 +120,13 @@ func (q *Queries) GetLastSession(ctx context.Context) (Session, error) {
 		&i.CurrentTokens,
 		&i.IsStateless,
 		&i.Service,
+		&i.IsPinned,
 	)
 	return i, err
 }
 
 const getSessionByID = `-- name: GetSessionByID :one
-SELECT id, parent_session_id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, summary_message_id, todos, current_tokens, is_stateless, service
+SELECT id, parent_session_id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, summary_message_id, todos, current_tokens, is_stateless, service, is_pinned
 FROM sessions
 WHERE id = ? LIMIT 1
 `
@@ -145,12 +149,13 @@ func (q *Queries) GetSessionByID(ctx context.Context, id string) (Session, error
 		&i.CurrentTokens,
 		&i.IsStateless,
 		&i.Service,
+		&i.IsPinned,
 	)
 	return i, err
 }
 
 const listSessions = `-- name: ListSessions :many
-SELECT id, parent_session_id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, summary_message_id, todos, current_tokens, is_stateless, service
+SELECT id, parent_session_id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, summary_message_id, todos, current_tokens, is_stateless, service, is_pinned
 FROM sessions
 WHERE parent_session_id is NULL
 ORDER BY updated_at DESC
@@ -177,10 +182,11 @@ func (q *Queries) ListSessions(ctx context.Context) ([]Session, error) {
 			&i.CreatedAt,
 			&i.SummaryMessageID,
 			&i.Todos,
-			&i.CurrentTokens,
-			&i.IsStateless,
-			&i.Service,
-		); err != nil {
+				&i.CurrentTokens,
+				&i.IsStateless,
+				&i.Service,
+				&i.IsPinned,
+			); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -222,7 +228,7 @@ SET
     todos = ?,
     current_tokens = ?
 WHERE id = ?
-RETURNING id, parent_session_id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, summary_message_id, todos, current_tokens, is_stateless, service
+RETURNING id, parent_session_id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, summary_message_id, todos, current_tokens, is_stateless, service, is_pinned
 `
 
 type UpdateSessionParams struct {
@@ -263,6 +269,7 @@ func (q *Queries) UpdateSession(ctx context.Context, arg UpdateSessionParams) (S
 		&i.CurrentTokens,
 		&i.IsStateless,
 		&i.Service,
+		&i.IsPinned,
 	)
 	return i, err
 }
@@ -319,9 +326,10 @@ func (q *Queries) UpdateStatelessSession(ctx context.Context, arg UpdateStateles
 	)
 	return err
 }
-
 const listStatelessSessions = `-- name: ListStatelessSessions :many
-SELECT id, parent_session_id, title, message_count, prompt_tokens, completion_tokens, cost, updated_at, created_at, summary_message_id, todos, current_tokens, is_stateless, service
+SELECT id, parent_session_id, title, message_count, prompt_tokens, completion_tokens,
+       cost, updated_at, created_at, summary_message_id, todos, current_tokens,
+       is_stateless, service, is_pinned
 FROM sessions
 WHERE is_stateless = 1 AND (?1 = '' OR service = ?1)
 ORDER BY created_at DESC
@@ -352,9 +360,76 @@ func (q *Queries) ListStatelessSessions(ctx context.Context, arg ListStatelessSe
 			&i.CreatedAt,
 			&i.SummaryMessageID,
 			&i.Todos,
+				&i.CurrentTokens,
+				&i.IsStateless,
+				&i.Service,
+				&i.IsPinned,
+			); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+const updatePinned = `-- name: UpdatePinned :exec
+UPDATE sessions
+SET
+    is_pinned = ?
+WHERE id = ?
+`
+
+type UpdatePinnedParams struct {
+	IsPinned int64  `json:"is_pinned"`
+	ID        string `json:"id"`
+}
+
+func (q *Queries) UpdatePinned(ctx context.Context, arg UpdatePinnedParams) error {
+	_, err := q.exec(ctx, q.updatePinnedStmt, updatePinned, arg.IsPinned, arg.ID)
+	return err
+}
+
+const listPrunableSessions = `-- name: ListPrunableSessions :many
+SELECT id, parent_session_id, title, message_count, prompt_tokens, completion_tokens,
+       cost, updated_at, created_at, summary_message_id, todos, current_tokens,
+       is_stateless, service, is_pinned
+FROM sessions
+WHERE parent_session_id IS NULL
+  AND is_pinned = 0
+  AND updated_at <= ?1
+ORDER BY updated_at ASC
+`
+
+func (q *Queries) ListPrunableSessions(ctx context.Context, updatedAt int64) ([]Session, error) {
+	rows, err := q.query(ctx, q.listPrunableSessionsStmt, listPrunableSessions, updatedAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Session{}
+	for rows.Next() {
+		var i Session
+		if err := rows.Scan(
+			&i.ID,
+			&i.ParentSessionID,
+			&i.Title,
+			&i.MessageCount,
+			&i.PromptTokens,
+			&i.CompletionTokens,
+			&i.Cost,
+			&i.UpdatedAt,
+			&i.CreatedAt,
+			&i.SummaryMessageID,
+			&i.Todos,
 			&i.CurrentTokens,
 			&i.IsStateless,
 			&i.Service,
+			&i.IsPinned,
 		); err != nil {
 			return nil, err
 		}
@@ -367,4 +442,16 @@ func (q *Queries) ListStatelessSessions(ctx context.Context, arg ListStatelessSe
 		return nil, err
 	}
 	return items, nil
+}
+
+const bulkDeleteSessions = `-- name: BulkDeleteSessions :exec
+DELETE FROM sessions
+WHERE parent_session_id IS NULL
+  AND is_pinned = 0
+  AND updated_at <= ?
+`
+
+func (q *Queries) BulkDeleteSessions(ctx context.Context, updatedAt int64) error {
+	_, err := q.exec(ctx, q.bulkDeleteSessionsStmt, bulkDeleteSessions, updatedAt)
+	return err
 }

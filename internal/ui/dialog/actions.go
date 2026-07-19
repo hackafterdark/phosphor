@@ -113,6 +113,8 @@ type (
 	ActionSetStructuralSearchLanguages struct {
 		Languages []string
 	}
+	// ActionPruneSessions is a message to bulk delete old sessions.
+	ActionPruneSessions struct{}
 )
 
 // Messages for API key input dialog.

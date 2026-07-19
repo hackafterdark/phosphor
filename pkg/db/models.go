@@ -62,6 +62,7 @@ type Session struct {
 	CurrentTokens    int64          `json:"current_tokens"`
 	IsStateless      int64          `json:"is_stateless"`
 	Service          string         `json:"service"`
+	IsPinned         int64          `json:"is_pinned"`
 }
 
 type TokenUsage struct {

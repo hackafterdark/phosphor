@@ -1872,6 +1872,20 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		m.textarea.Reset()
 		m.attachments.Reset()
 		m.dialog.CloseDialog(dialog.CommandsID)
+	case dialog.ActionPruneSessions:
+		if m.isAgentBusy() {
+			cmds = append(cmds, util.ReportWarn("Agent is busy, please wait..."))
+			break
+		}
+		cmds = append(cmds, func() tea.Msg {
+			cutoff := time.Now().AddDate(0, 0, -7)
+			count, err := m.com.Workspace.BulkDeleteSessions(context.Background(), cutoff)
+			if err != nil {
+				return util.ReportError(err)()
+			}
+			return util.ReportInfo(fmt.Sprintf("Pruned %d sessions older than 7 days", count))
+		})
+		m.dialog.CloseDialog(dialog.CommandsID)
 	case dialog.ActionToggleHelp:
 		m.status.ToggleHelp()
 		m.dialog.CloseDialog(dialog.CommandsID)
@@ -3956,6 +3970,7 @@ func (m *UI) registerSlashCommands() {
 		"learn": m.handleLearnSlashCommand,
 		"quit":  m.handleQuitSlashCommand,
 	}
+	m.slashHandlers["pin"] = m.handlePinSlashCommand
 	if agent.StructuralSearchAvailable {
 		m.slashHandlers["languages"] = m.handleLanguagesSlashCommand
 	}
@@ -4043,6 +4058,30 @@ func (m *UI) handleQuitSlashCommand(args []string) tea.Cmd {
 		m.dialog.OpenDialog(dialog.NewQuit(m.com))
 	}
 	return func() tea.Msg { return nil }
+}
+
+// handlePinSlashCommand handles the "/pin" slash command.
+// Toggles the pinned state of the current session.
+func (m *UI) handlePinSlashCommand(args []string) tea.Cmd {
+	if !m.hasSession() {
+		return util.ReportWarn("Start a session first.")
+	}
+	if m.session.IsPinned {
+		return func() tea.Msg {
+			if err := m.com.Workspace.UnpinSession(context.Background(), m.session.ID); err != nil {
+				return util.ReportError(err)
+			}
+			m.session.IsPinned = false
+			return util.ReportInfo("Session unpinned.")
+		}
+	}
+	return func() tea.Msg {
+		if err := m.com.Workspace.PinSession(context.Background(), m.session.ID); err != nil {
+			return util.ReportError(err)
+		}
+		m.session.IsPinned = true
+		return util.ReportInfo("Session pinned.")
+	}
 }
 
 // handleLanguagesSlashCommand handles the "/languages" slash command.

@@ -40,6 +40,10 @@ var SlashCommands = []SlashCommand{
 		Name:        "languages",
 		Description: "Configure structural search languages",
 	},
+	{
+		Name:        "pin",
+		Description: "Pin or unpin the current session",
+	},
 }
 
 // GetSlashCommands returns all registered slash commands.

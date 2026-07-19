@@ -54,6 +54,9 @@ type Querier interface {
 	UpdateSession(ctx context.Context, arg UpdateSessionParams) (Session, error)
 	UpdateSessionTitleAndUsage(ctx context.Context, arg UpdateSessionTitleAndUsageParams) error
 	UpdateStatelessSession(ctx context.Context, arg UpdateStatelessSessionParams) error
+	UpdatePinned(ctx context.Context, arg UpdatePinnedParams) error
+	ListPrunableSessions(ctx context.Context, updatedAt int64) ([]Session, error)
+	BulkDeleteSessions(ctx context.Context, updatedAt int64) error
 }
 
 var _ Querier = (*Queries)(nil)

@@ -190,7 +190,11 @@ func (m *UI) renderSidebarComponent(cfg config.SidebarComponentConfig, width int
 		}
 		return ""
 	case "session_title":
-		return t.Sidebar.SessionTitle.Width(width).MaxHeight(2).Render(m.session.Title)
+		title := m.session.Title
+		if m.session.IsPinned {
+			title = "★ " + title
+		}
+		return t.Sidebar.SessionTitle.Width(width).MaxHeight(2).Render(title)
 	case "working_dir":
 		return common.PrettyPath(t, m.com.Workspace.WorkingDir(), width)
 	case "active_llm":

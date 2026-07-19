@@ -223,3 +223,138 @@ func TestPruneMessagesNoOpWhenNonePrunable(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 0, deleted)
 }
+func TestPinUnpin(t *testing.T) {
+	t.Parallel()
+
+	dataDir := t.TempDir()
+	t.Cleanup(func() {
+		require.NoError(t, db.Release(dataDir))
+		db.ResetPool()
+	})
+
+	conn, err := db.Connect(t.Context(), dataDir)
+	require.NoError(t, err)
+
+	svc := NewService(db.New(conn), conn)
+	ctx := context.Background()
+
+	// Create a session and pin it.
+	sess, err := svc.Create(ctx, "pinned session")
+	require.NoError(t, err)
+	require.NoError(t, svc.Pin(ctx, sess.ID))
+
+	// Verify the session is pinned.
+	updated, err := svc.Get(ctx, sess.ID)
+	require.NoError(t, err)
+	require.True(t, updated.IsPinned)
+
+	// Unpin it.
+	require.NoError(t, svc.Unpin(ctx, sess.ID))
+
+	updated, err = svc.Get(ctx, sess.ID)
+	require.NoError(t, err)
+	require.False(t, updated.IsPinned)
+}
+
+func TestBulkDeleteSessions(t *testing.T) {
+	t.Parallel()
+
+	dataDir := t.TempDir()
+	t.Cleanup(func() {
+		require.NoError(t, db.Release(dataDir))
+		db.ResetPool()
+	})
+
+	conn, err := db.Connect(t.Context(), dataDir)
+	require.NoError(t, err)
+
+	svc := NewService(db.New(conn), conn)
+	ctx := context.Background()
+
+	// Create 3 sessions.
+	for i := 0; i < 3; i++ {
+		_, err := svc.Create(ctx, "old session")
+		require.NoError(t, err)
+	}
+
+	// Pin one session (it should be protected from bulk delete).
+	sessions, err := svc.List(ctx)
+	require.NoError(t, err)
+	require.NoError(t, svc.Pin(ctx, sessions[0].ID))
+
+	// List prunable sessions (non-pinned sessions before a cutoff).
+	cutoff := time.Now()
+	prunable, err := svc.ListPrunableSessions(ctx, cutoff)
+	require.NoError(t, err)
+	// 2 sessions should be prunable (the 2 non-pinned sessions)
+	require.Len(t, prunable, 2)
+
+	// Bulk delete should delete only non-pinned sessions.
+	count, err := svc.BulkDeleteSessions(ctx, cutoff)
+	require.NoError(t, err)
+	require.Equal(t, 2, count)
+
+	// Verify only the pinned session remains.
+	remaining, err := svc.List(ctx)
+	require.NoError(t, err)
+	require.Len(t, remaining, 1)
+	require.True(t, remaining[0].IsPinned)
+}
+
+func TestBulkDeleteSessions_NoPinned(t *testing.T) {
+	t.Parallel()
+
+	dataDir := t.TempDir()
+	t.Cleanup(func() {
+		require.NoError(t, db.Release(dataDir))
+		db.ResetPool()
+	})
+
+	conn, err := db.Connect(t.Context(), dataDir)
+	require.NoError(t, err)
+
+	svc := NewService(db.New(conn), conn)
+	ctx := context.Background()
+
+	// Create 5 sessions.
+	for i := 0; i < 5; i++ {
+		_, err := svc.Create(ctx, "old session")
+		require.NoError(t, err)
+	}
+
+	cutoff := time.Now()
+	count, err := svc.BulkDeleteSessions(ctx, cutoff)
+	require.NoError(t, err)
+	require.Equal(t, 5, count)
+
+	remaining, err := svc.List(ctx)
+	require.NoError(t, err)
+	require.Len(t, remaining, 0)
+}
+
+func TestPruneDryRun_NoOpWhenNonePrunable(t *testing.T) {
+	t.Parallel()
+
+	dataDir := t.TempDir()
+	t.Cleanup(func() {
+		require.NoError(t, db.Release(dataDir))
+		db.ResetPool()
+	})
+
+	conn, err := db.Connect(t.Context(), dataDir)
+	require.NoError(t, err)
+
+	svc := NewService(db.New(conn), conn)
+	ctx := context.Background()
+
+	// Create a session.
+	sess, err := svc.Create(ctx, "pinned session")
+	require.NoError(t, err)
+	require.NoError(t, svc.Pin(ctx, sess.ID))
+
+	// Only pinned sessions exist, so none should be prunable.
+	cutoff := time.Now()
+	prunable, err := svc.ListPrunableSessions(ctx, cutoff)
+	require.NoError(t, err)
+	require.Len(t, prunable, 0)
+}

@@ -153,6 +153,22 @@ func (w *ClientWorkspace) UpdateStateless(ctx context.Context, sessionID string,
 	return w.client.UpdateSessionStateless(ctx, w.workspaceID(), sessionID, stateless, service)
 }
 
+func (w *ClientWorkspace) PinSession(ctx context.Context, sessionID string) error {
+	return fmt.Errorf("not implemented for remote workspaces")
+}
+
+func (w *ClientWorkspace) UnpinSession(ctx context.Context, sessionID string) error {
+	return fmt.Errorf("not implemented for remote workspaces")
+}
+
+func (w *ClientWorkspace) ListPrunableSessions(ctx context.Context, before time.Time) ([]session.Session, error) {
+	return nil, fmt.Errorf("not implemented for remote workspaces")
+}
+
+func (w *ClientWorkspace) BulkDeleteSessions(ctx context.Context, before time.Time) (int, error) {
+	return 0, fmt.Errorf("not implemented for remote workspaces")
+}
+
 func (w *ClientWorkspace) CreateAgentToolSessionID(messageID, toolCallID string) string {
 	return fmt.Sprintf("%s$$%s", messageID, toolCallID)
 }

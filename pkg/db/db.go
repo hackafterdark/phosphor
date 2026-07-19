@@ -168,6 +168,15 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.pruneSessionMessagesStmt, err = db.PrepareContext(ctx, pruneSessionMessages); err != nil {
 		return nil, fmt.Errorf("error preparing query PruneSessionMessages: %w", err)
 	}
+	if q.updatePinnedStmt, err = db.PrepareContext(ctx, updatePinned); err != nil {
+		return nil, fmt.Errorf("error preparing query UpdatePinned: %w", err)
+	}
+	if q.listPrunableSessionsStmt, err = db.PrepareContext(ctx, listPrunableSessions); err != nil {
+		return nil, fmt.Errorf("error preparing query ListPrunableSessions: %w", err)
+	}
+	if q.bulkDeleteSessionsStmt, err = db.PrepareContext(ctx, bulkDeleteSessions); err != nil {
+		return nil, fmt.Errorf("error preparing query BulkDeleteSessions: %w", err)
+	}
 	return &q, nil
 }
 
@@ -413,6 +422,21 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing pruneSessionMessagesStmt: %w", cerr)
 		}
 	}
+	if q.updatePinnedStmt != nil {
+		if cerr := q.updatePinnedStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing updatePinnedStmt: %w", cerr)
+		}
+	}
+	if q.listPrunableSessionsStmt != nil {
+		if cerr := q.listPrunableSessionsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listPrunableSessionsStmt: %w", cerr)
+		}
+	}
+	if q.bulkDeleteSessionsStmt != nil {
+		if cerr := q.bulkDeleteSessionsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing bulkDeleteSessionsStmt: %w", cerr)
+		}
+	}
 	return err
 }
 
@@ -500,6 +524,9 @@ type Queries struct {
 	updateSessionStmt              *sql.Stmt
 	updateSessionTitleAndUsageStmt *sql.Stmt
 	updateStatelessSessionStmt     *sql.Stmt
+	updatePinnedStmt               *sql.Stmt
+	listPrunableSessionsStmt       *sql.Stmt
+	bulkDeleteSessionsStmt         *sql.Stmt
 }
 
 func (q *Queries) WithTx(tx *sql.Tx) *Queries {
@@ -552,6 +579,9 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		updateSessionTitleAndUsageStmt: q.updateSessionTitleAndUsageStmt,
 		updateStatelessSessionStmt:     q.updateStatelessSessionStmt,
 		listStatelessSessionsStmt:      q.listStatelessSessionsStmt,
+		updatePinnedStmt:               q.updatePinnedStmt,
+		listPrunableSessionsStmt:       q.listPrunableSessionsStmt,
+		bulkDeleteSessionsStmt:         q.bulkDeleteSessionsStmt,
 		countPrunableMessagesStmt:      q.countPrunableMessagesStmt,
 		pruneSessionMessagesStmt:       q.pruneSessionMessagesStmt,
 	}

@@ -12,7 +12,8 @@ INSERT INTO sessions (
     updated_at,
     created_at,
     is_stateless,
-    service
+    service,
+    is_pinned
 ) VALUES (
     ?,
     ?,
@@ -26,7 +27,8 @@ INSERT INTO sessions (
     strftime('%s', 'now'),
     strftime('%s', 'now'),
     0,
-    ''
+    '',
+    0
 ) RETURNING *;
 
 -- name: GetSessionByID :one
@@ -90,8 +92,29 @@ WHERE id = ?;
 -- name: ListStatelessSessions :many
 SELECT id, parent_session_id, title, message_count, prompt_tokens, completion_tokens,
        cost, updated_at, created_at, summary_message_id, todos, current_tokens,
-       is_stateless, service
+       is_stateless, service, is_pinned
 FROM sessions
 WHERE is_stateless = 1
   AND (?1 = '' OR service = ?1)
 ORDER BY created_at DESC;
+-- name: UpdatePinned :exec
+UPDATE sessions
+SET
+    is_pinned = ?
+WHERE id = ?;
+
+-- name: ListPrunableSessions :many
+SELECT id, parent_session_id, title, message_count, prompt_tokens, completion_tokens,
+       cost, updated_at, created_at, summary_message_id, todos, current_tokens,
+       is_stateless, service, is_pinned
+FROM sessions
+WHERE parent_session_id IS NULL
+  AND is_pinned = 0
+  AND updated_at <= ?1
+ORDER BY updated_at ASC;
+
+-- name: BulkDeleteSessions :exec
+DELETE FROM sessions
+WHERE parent_session_id IS NULL
+  AND is_pinned = 0
+  AND updated_at <= ?;

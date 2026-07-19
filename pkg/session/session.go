@@ -63,6 +63,7 @@ type Session struct {
 	CurrentTokens    int64
 	IsStateless      bool
 	Service          string
+	IsPinned         bool
 }
 
 type Service interface {
@@ -91,6 +92,18 @@ type Service interface {
 	// PruneMessages removes messages older than cutoff from a session and
 	// returns the number of messages deleted.
 	PruneMessages(ctx context.Context, sessionID string, cutoff time.Time) (int, error)
+
+	// Pin marks a session as pinned to protect it from bulk deletion.
+	Pin(ctx context.Context, sessionID string) error
+
+	// Unpin removes the pinned status from a session.
+	Unpin(ctx context.Context, sessionID string) error
+
+	// ListPrunableSessions returns all non-pinned sessions older than the cutoff.
+	ListPrunableSessions(ctx context.Context, before time.Time) ([]Session, error)
+
+	// BulkDeleteSessions deletes all non-pinned sessions older than the cutoff.
+	BulkDeleteSessions(ctx context.Context, before time.Time) (int, error)
 
 	// Agent tool session management
 	CreateAgentToolSessionID(messageID, toolCallID string) string
@@ -407,6 +420,7 @@ func (s *service) fromDBItem(item db.Session) Session {
 		CurrentTokens:    item.CurrentTokens,
 		IsStateless:      item.IsStateless != 0,
 		Service:          item.Service,
+		IsPinned:         item.IsPinned != 0,
 	}
 }
 
@@ -437,6 +451,53 @@ func unmarshalTodos(data string) ([]Todo, error) {
 		return []Todo{}, err
 	}
 	return todos, nil
+}
+
+// Pin marks a session as pinned to protect it from bulk deletion.
+func (s *service) Pin(ctx context.Context, sessionID string) error {
+	return s.q.UpdatePinned(ctx, db.UpdatePinnedParams{
+		ID:       sessionID,
+		IsPinned: 1,
+	})
+}
+
+// Unpin removes the pinned status from a session.
+func (s *service) Unpin(ctx context.Context, sessionID string) error {
+	return s.q.UpdatePinned(ctx, db.UpdatePinnedParams{
+		ID:       sessionID,
+		IsPinned: 0,
+	})
+}
+
+// ListPrunableSessions returns all non-pinned sessions older than the cutoff.
+func (s *service) ListPrunableSessions(ctx context.Context, before time.Time) ([]Session, error) {
+	dbSessions, err := s.q.ListPrunableSessions(ctx, before.Unix())
+	if err != nil {
+		return nil, err
+	}
+	sessions := make([]Session, len(dbSessions))
+	for i, dbSession := range dbSessions {
+		sessions[i] = s.fromDBItem(dbSession)
+	}
+	return sessions, nil
+}
+
+// BulkDeleteSessions deletes all non-pinned sessions older than the cutoff.
+func (s *service) BulkDeleteSessions(ctx context.Context, before time.Time) (int, error) {
+	// First count how many sessions would be deleted.
+	sessions, err := s.ListPrunableSessions(ctx, before)
+	if err != nil {
+		return 0, err
+	}
+
+	if err := s.q.BulkDeleteSessions(ctx, before.Unix()); err != nil {
+		return 0, fmt.Errorf("bulk deleting sessions: %w", err)
+	}
+
+	for _, session := range sessions {
+		s.Publish(pubsub.DeletedEvent, session)
+	}
+	return len(sessions), nil
 }
 
 func NewService(q *db.Queries, conn *sql.DB) Service {

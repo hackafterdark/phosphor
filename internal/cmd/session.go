@@ -201,6 +201,7 @@ type sessionMutationResult struct {
 	Title   string `json:"title"`
 	Deleted bool   `json:"deleted,omitempty"`
 	Renamed bool   `json:"renamed,omitempty"`
+	Pinned  bool   `json:"pinned,omitempty"`
 }
 
 // resolveSessionID resolves a session ID that can be a UUID, full hash, or hash prefix.

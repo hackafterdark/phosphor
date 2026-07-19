@@ -110,6 +110,22 @@ func (m *mockSessionService) IsAgentToolSession(sessionID string) bool {
 	return ok
 }
 
+func (m *mockSessionService) Pin(context.Context, string) error {
+	return nil
+}
+
+func (m *mockSessionService) Unpin(context.Context, string) error {
+	return nil
+}
+
+func (m *mockSessionService) ListPrunableSessions(context.Context, time.Time) ([]session.Session, error) {
+	return nil, nil
+}
+
+func (m *mockSessionService) BulkDeleteSessions(context.Context, time.Time) (int, error) {
+	return 0, nil
+}
+
 func newTestApp(sessions session.Service) *App {
 	return &App{Sessions: sessions}
 }

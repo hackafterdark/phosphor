@@ -2,6 +2,7 @@ package dialog
 
 import (
 	"context"
+	"slices"
 	"strings"
 
 	"charm.land/bubbles/v2/help"
@@ -97,6 +98,16 @@ func NewSessionsWithMode(com *common.Common, selectedSessionID string, isCron bo
 	}
 
 	s.sessions = sessions
+	// Sort so pinned sessions float to the top.
+	slices.SortFunc(sessions, func(a, b session.Session) int {
+		if a.IsPinned == b.IsPinned {
+			return 0
+		}
+		if a.IsPinned {
+			return -1
+		}
+		return 1
+	})
 	for i, sess := range sessions {
 		if sess.ID == selectedSessionID {
 			s.selectedSessionInx = i

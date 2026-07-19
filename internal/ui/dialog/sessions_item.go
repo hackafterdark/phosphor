@@ -137,6 +137,9 @@ func (s *SessionItem) Render(width int) string {
 	if s.IsStateless && s.Service == "cron" {
 		title = "[cron] " + title
 	}
+	if s.IsPinned {
+		title = "★ " + title
+	}
 	return renderItem(styles, title, info, s.focused, width, s.cache, &s.m)
 }
 
