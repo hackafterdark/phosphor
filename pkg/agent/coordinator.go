@@ -14,8 +14,6 @@ import (
 	"slices"
 	"strings"
 
-	"go.opentelemetry.io/otel/attribute"
-
 	"charm.land/catwalk/pkg/catwalk"
 	"charm.land/fantasy"
 	"github.com/hackafterdark/phosphor/internal/discover"
@@ -28,7 +26,6 @@ import (
 	"github.com/hackafterdark/phosphor/pkg/agent/prompt"
 	"github.com/hackafterdark/phosphor/pkg/agent/tools"
 	"github.com/hackafterdark/phosphor/pkg/config"
-	"github.com/hackafterdark/phosphor/pkg/embedded"
 	"github.com/hackafterdark/phosphor/pkg/filetracker"
 	"github.com/hackafterdark/phosphor/pkg/goal"
 	"github.com/hackafterdark/phosphor/pkg/history"
@@ -36,7 +33,6 @@ import (
 	"github.com/hackafterdark/phosphor/pkg/lsp"
 	"github.com/hackafterdark/phosphor/pkg/message"
 	"github.com/hackafterdark/phosphor/pkg/permission"
-	"github.com/hackafterdark/phosphor/pkg/otel"
 	"github.com/hackafterdark/phosphor/pkg/pubsub"
 	"github.com/hackafterdark/phosphor/pkg/session"
 	"github.com/hackafterdark/phosphor/pkg/skills"
@@ -1529,7 +1525,6 @@ func (c *coordinator) QueuedPromptsList(sessionID string) []string {
 }
 
 func (c *coordinator) Summarize(ctx context.Context, sessionID string) error {
-	// Check if we should use the embedded model for summarization.
 	opts := c.cfg.Config().Options
 	sumModel := "main"
 	if opts != nil && opts.SummarizeModel != "" {
@@ -1537,148 +1532,11 @@ func (c *coordinator) Summarize(ctx context.Context, sessionID string) error {
 	}
 
 	switch sumModel {
-	case "embedded":
-		return c.summarizeEmbedded(ctx, sessionID)
 	case "small":
 		return c.summarizeWithModel(ctx, sessionID, c.smallModel)
 	default: // "main", "large"
 		return c.summarizeWithModel(ctx, sessionID, c.largeModel)
 	}
-}
-
-// summarizeEmbedded generates a session summary using the embedded dlgo model.
-func (c *coordinator) summarizeEmbedded(ctx context.Context, sessionID string) error {
-	if c.currentAgent.IsSessionBusy(sessionID) {
-		return ErrSessionBusy
-	}
-
-	em := c.cfg.Config().EmbeddedModels
-	if em == nil || !em.Inference.Enabled {
-		slog.Warn("Embedded model not enabled, falling back to main model")
-		return c.Summarize(ctx, sessionID)
-	}
-
-	modelPath := em.Inference.ModelPath
-	if modelPath == "" && em.Inference.ModelRepo != "" {
-		downloader := embedded.NewModelDownloader("")
-		registry := embedded.DefaultRegistry()
-		var downloadErr error
-		modelPath, downloadErr = embedded.ResolveAndDownload(ctx, downloader, registry, em.Inference.ModelRepo)
-		if downloadErr != nil {
-			slog.Error("Failed to resolve/download embedded model, falling back to main model", "error", downloadErr)
-			return c.Summarize(ctx, sessionID)
-		}
-	}
-
-	dlgoModel, err := embedded.NewDlgoModel(modelPath, em.Inference.GPU)
-	if err != nil {
-		slog.Error("Failed to load embedded model, falling back to main model", "error", err)
-		return c.Summarize(ctx, sessionID)
-	}
-
-	// Use the configured model repo as the model name.
-	modelName := em.Inference.ModelRepo
-
-	currentSession, err := c.sessions.Get(ctx, sessionID)
-	if err != nil {
-		return err
-	}
-
-summaryMsgs, err := c.messages.List(ctx, sessionID)
-	if err != nil {
-		return err
-	}
-	if len(summaryMsgs) == 0 {
-		return nil
-	}
-
-	// Otel tracing for embedded model call.
-	tempVal := float64(0.3)
-	maxTokensVal := int64(2048)
-	llmAttrs := otel.GenAIAttributes{
-		ProviderName:       "embedded",
-		RequestModel:       modelName,
-		RequestTemperature: &tempVal,
-		RequestMaxTokens:   &maxTokensVal,
-	}
-	_, llmSpan := otel.StartLLMSpan(ctx, "embedded", modelName, llmAttrs)
-
-	// Build system prompt with optional iterative context.
-	systemPrompt := buildSummaryPrompt(currentSession.Todos)
-	if currentSession.SummaryMessageID != "" {
-		prevSummaryMsg, prevErr := c.messages.Get(ctx, currentSession.SummaryMessageID)
-		// Prepend previous summary for iterative compaction.
-		if prevErr == nil && prevSummaryMsg.Content().Text != "" {
-			systemPrompt += "\n\n## Previous Summary\n\n" + prevSummaryMsg.Content().Text
-		}
-	}
-
-	// Use the embedded summarization prompt template from the profile system.
-	summarizationPrompt := getSummarizationPrompt(ctx, c.cfg)
-	if summarizationPrompt != "" {
-		systemPrompt = summarizationPrompt + "\n\n" + systemPrompt
-	}
-
-	opts := c.cfg.Config().Options
-	toolOutputChars := 200
-	aggressiveChars := 50
-	if opts != nil {
-		if opts.SummarizeToolOutputChars > 0 {
-			toolOutputChars = opts.SummarizeToolOutputChars
-		}
-		if opts.SummarizeToolOutputAggressiveChars > 0 {
-			aggressiveChars = opts.SummarizeToolOutputAggressiveChars
-		}
-	}
-
-	// Build pruned conversation text (tool outputs truncated to configurable chars).
-	convText := PruneAndBuild(summaryMsgs, toolOutputChars)
-
-	// Attempt summary with pruned text.
-	summaryText, err := dlgoModel.Generate(systemPrompt + "\n" + convText)
-	if llmSpan != nil {
-		inputTokens := approxTokenCount(systemPrompt + "\n" + convText)
-		outputTokens := approxTokenCount(summaryText)
-		llmSpan.SetAttributes(
-			attribute.Int64("gen_ai.usage.input_tokens", int64(inputTokens)),
-			attribute.Int64("gen_ai.usage.output_tokens", int64(outputTokens)),
-			attribute.String("gen_ai.response.finish_reason", "stop"),
-		)
-		llmSpan.End()
-	}
-	if err != nil {
-		// Overflow recovery: retry with aggressive pruning.
-		if isOverflowError(err) {
-			slog.Info("Overflow detected, retrying with aggressive pruning")
-			convText = AggressiveBuild(summaryMsgs, aggressiveChars)
-			summaryText, err = dlgoModel.Generate(systemPrompt + "\n" + convText)
-		}
-		if err != nil {
-			slog.Error("Embedded model inference failed, falling back", "error", err)
-			return c.Summarize(ctx, sessionID)
-		}
-	}
-
-	summaryMessage, err := c.messages.Create(ctx, sessionID, message.CreateMessageParams{
-		Role:             message.Assistant,
-		Model:            "embedded",
-		Provider:         "embedded",
-		IsSummaryMessage: true,
-	})
-	if err != nil {
-		return err
-	}
-
-	summaryMessage.AppendContent(summaryText)
-	summaryMessage.AddFinish(message.FinishReasonEndTurn, "", "")
-	if err := c.messages.Update(ctx, summaryMessage); err != nil {
-		return err
-	}
-
-	currentSession.SummaryMessageID = summaryMessage.ID
-	currentSession.CurrentTokens = approxTokenCount(summaryText)
-	_, err = c.sessions.Save(ctx, currentSession)
-	return err
 }
 
 // getSummarizationPrompt loads the summarization prompt from the active profile,

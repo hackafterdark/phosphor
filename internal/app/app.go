@@ -34,7 +34,6 @@ import (
 	"github.com/hackafterdark/phosphor/pkg/agent/tools/mcp"
 	"github.com/hackafterdark/phosphor/pkg/config"
 	"github.com/hackafterdark/phosphor/pkg/db"
-	"github.com/hackafterdark/phosphor/pkg/embedded"
 	"github.com/hackafterdark/phosphor/pkg/filetracker"
 	"github.com/hackafterdark/phosphor/pkg/goal"
 	"github.com/hackafterdark/phosphor/pkg/history"
@@ -640,79 +639,7 @@ func (app *App) InitSystemAgent(ctx context.Context) error {
 		return err
 	}
 	app.GoalRuntime = app.AgentCoordinator.GoalRuntime()
-
-	// Proactively download embedded models in background so startup is not blocked.
-	go app.ensureEmbeddedModels(app.globalCtx)
 	return nil
-}
-
-// ensureEmbeddedModels checks for embedded model configs and downloads
-// the model files from HuggingFace if needed.
-func (app *App) ensureEmbeddedModels(ctx context.Context) {
-	cfg := app.config.Config()
-	if cfg.EmbeddedModels == nil {
-		slog.Debug("Embedded models not configured, skipping download")
-		return
-	}
-
-	em := cfg.EmbeddedModels
-
-	// Handle inference model (dlgo).
-	if em.Inference != nil && em.Inference.Enabled {
-		app.ensureInferenceModel(ctx, em.Inference)
-	}
-
-	// Handle embedding model (goformer).
-	if em.Embedding != nil && em.Embedding.Enabled {
-		app.ensureEmbeddingModel(em.Embedding)
-	}
-}
-
-// ensureInferenceModel downloads the dlgo inference model if needed.
-func (app *App) ensureInferenceModel(ctx context.Context, inf *config.InferenceModel) {
-	if inf.ModelPath != "" {
-		if _, err := os.Stat(inf.ModelPath); err == nil {
-			slog.Info("Inference model already exists locally", "path", inf.ModelPath)
-			return
-		}
-	}
-
-	if inf.ModelRepo != "" {
-		downloader := embedded.NewModelDownloader("")
-		slog.Info("Resolved global models directory", "dir", downloader.ModelsDir())
-		registry := embedded.DefaultRegistry()
-
-		slog.Info("Starting inference model download/resolution", "repo", inf.ModelRepo)
-		path, err := embedded.ResolveAndDownload(ctx, downloader, registry, inf.ModelRepo)
-		if err != nil {
-			slog.Error("Failed to download inference model", "repo", inf.ModelRepo, "error", err)
-			return
-		}
-		slog.Info("Inference model resolved and ready", "path", path)
-	}
-}
-
-// ensureEmbeddingModel downloads the goformer embedding model if needed.
-func (app *App) ensureEmbeddingModel(emb *config.EmbeddingModel) {
-	if emb.ModelPath != "" {
-		if _, err := os.Stat(emb.ModelPath); err == nil {
-			slog.Info("Embedding model already exists locally", "path", emb.ModelPath)
-			return
-		}
-	}
-
-	if emb.ModelRepo != "" {
-		downloader := embedded.NewModelDownloader("")
-		registry := embedded.DefaultRegistry()
-
-		slog.Info("Starting embedding model download/resolution", "repo", emb.ModelRepo)
-		path, err := registry.DownloadEmbedding(downloader, emb.ModelRepo)
-		if err != nil {
-			slog.Error("Failed to download embedding model", "repo", emb.ModelRepo, "error", err)
-			return
-		}
-		slog.Info("Embedding model resolved and ready", "path", path)
-	}
 }
 
 // Subscribe sends events to the TUI as tea.Msgs.

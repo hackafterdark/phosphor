@@ -3,14 +3,11 @@ package app
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sync"
 	"testing"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/hackafterdark/phosphor/pkg/config"
 	"github.com/hackafterdark/phosphor/pkg/pubsub"
 	"github.com/stretchr/testify/require"
 )
@@ -183,83 +180,4 @@ func testNConsumers(t *testing.T, n int) {
 		})
 	}
 	wg.Wait()
-}
-// TestEnsureEmbeddedModel_NoConfig verifies that ensureEmbeddedModel returns
-// immediately when embedded models are not configured.
-func TestEnsureEmbeddedModel_NoConfig(t *testing.T) {
-	t.Parallel()
-
-	store := config.NewTestStore(&config.Config{})
-	app := &App{
-		config: store,
-	}
-
-	// Should not panic and return immediately.
-	app.ensureEmbeddedModels(t.Context())
-}
-
-// TestEnsureEmbeddedModel_DisabledInference verifies that ensureEmbeddedModel
-// returns when inference is not enabled.
-func TestEnsureEmbeddedModel_DisabledInference(t *testing.T) {
-	t.Parallel()
-
-	store := config.NewTestStore(&config.Config{
-		EmbeddedModels: &config.EmbeddedModels{
-			Inference: &config.InferenceModel{
-				Enabled: false,
-			},
-		},
-	})
-	app := &App{
-		config: store,
-	}
-
-	app.ensureEmbeddedModels(t.Context())
-}
-
-// TestEnsureEmbeddedModel_NoModelPathRepo verifies that ensureEmbeddedModel
-// returns when neither model_path nor model_repo is set.
-func TestEnsureEmbeddedModel_NoModelPathRepo(t *testing.T) {
-	t.Parallel()
-
-	store := config.NewTestStore(&config.Config{
-		EmbeddedModels: &config.EmbeddedModels{
-			Inference: &config.InferenceModel{
-				Enabled: true,
-			},
-		},
-	})
-	app := &App{
-		config: store,
-	}
-
-	app.ensureEmbeddedModels(t.Context())
-}
-
-// TestEnsureEmbeddedModel_ModelExists verifies that ensureEmbeddedModel
-// returns early when the model file already exists locally.
-func TestEnsureEmbeddedModel_ModelExists(t *testing.T) {
-	t.Parallel()
-
-	tmpDir := t.TempDir()
-	modelPath := filepath.Join(tmpDir, "model.gguf")
-	// Create the model file.
-	f, err := os.Create(modelPath)
-	require.NoError(t, err)
-	f.Close()
-
-	store := config.NewTestStore(&config.Config{
-		EmbeddedModels: &config.EmbeddedModels{
-			Inference: &config.InferenceModel{
-				Enabled:   true,
-				ModelPath: modelPath,
-			},
-		},
-	})
-	app := &App{
-		config: store,
-	}
-
-	app.ensureEmbeddedModels(t.Context())
-	// No error, returns immediately.
 }
