@@ -7,7 +7,9 @@ import (
 
 	"charm.land/lipgloss/v2"
 	uv "github.com/charmbracelet/ultraviolet"
+	"github.com/hackafterdark/phosphor/internal/embeddings"
 	"github.com/hackafterdark/phosphor/internal/ui/common"
+	"github.com/hackafterdark/phosphor/internal/ui/styles"
 	"github.com/hackafterdark/phosphor/internal/ui/logo"
 	"github.com/hackafterdark/phosphor/pkg/config"
 )
@@ -87,6 +89,68 @@ func (m *UI) goalInfo(width int) string {
 		Width(width).
 		Render(m.currentGoal.Objective)
 	return lipgloss.JoinVertical(lipgloss.Left, header, objective)
+}
+
+// codebaseIndexInfo renders the codebase index status for the sidebar.
+func (m *UI) codebaseIndexInfo(width int) string {
+	cfg := m.com.Config()
+	idx := cfg.CodebaseIndex
+	if !idx.Enabled {
+		return ""
+	}
+	t := m.com.Styles
+
+	modelCfg, ok := cfg.Models[config.SelectedModelTypeEmbedding]
+	if !ok {
+		header := common.Section(t, "Codebase Embedding", width)
+		body := t.Sidebar.SessionTitle.
+			Foreground(t.Sidebar.WorkingDir.GetForeground()).
+			Width(width).
+			Render("Missing embedding model")
+		return lipgloss.JoinVertical(lipgloss.Left, header, body)
+	}
+
+	providerCfg := cfg.GetProviderForModel(config.SelectedModelTypeEmbedding)
+	providerName := ""
+	if providerCfg != nil {
+		providerName = providerCfg.Name
+	}
+
+	var parts []string
+	parts = append(parts, common.Section(t, "Codebase Embedding", width))
+	parts = append(parts, "")
+	// Icon + model name (bright) on first line, "via provider" (dim) on next — matches active_llm styling
+	modelIcon := t.ModelInfo.Icon.Render(styles.CodebaseIcon)
+	modelLine := t.ModelInfo.Name.Render(modelCfg.Model)
+
+	firstLine := fmt.Sprintf("%s %s", modelIcon, modelLine)
+	parts = append(parts, firstLine)
+
+	indent := lipgloss.NewStyle().PaddingLeft(2)
+
+	providerInfo := "via " + providerName
+	parts = append(parts, indent.Render(t.ModelInfo.Provider.Render(providerInfo)))
+
+	var statusLine string
+	if m.indexer != nil {
+		state := m.indexer.State()
+		st, processed, total, errMsg := state.Get()
+		if errMsg != "" {
+			statusLine = sanitizeIndexError(errMsg)
+		} else if st == embeddings.IndexStatusIndexing && total > 0 {
+			pct := state.Percent()
+			statusLine = fmt.Sprintf("Indexing %s/%s (%d%%)", abbrevNumber(processed), abbrevNumber(total), pct)
+		} else if st == embeddings.IndexStatusComplete {
+			statusLine = "Indexed"
+		} else {
+			statusLine = "Idle"
+		}
+	}
+	if statusLine != "" {
+		parts = append(parts, indent.Render(t.ModelInfo.Provider.Render(statusLine)))
+	}
+
+	return lipgloss.JoinVertical(lipgloss.Left, lipgloss.JoinVertical(lipgloss.Left, parts...))
 }
 
 func (m *UI) drawSidebar(scr uv.Screen, area uv.Rectangle) {
@@ -201,6 +265,8 @@ func (m *UI) renderSidebarComponent(cfg config.SidebarComponentConfig, width int
 		return m.modelInfo(width)
 	case "goal":
 		return m.goalInfo(width)
+	case "codebase_index":
+		return m.codebaseIndexInfo(width)
 	case "files":
 		return m.sidebarListComponent(cfg, width)
 	case "lsps":
@@ -233,5 +299,48 @@ func (m *UI) sidebarListComponent(cfg config.SidebarComponentConfig, width int) 
 		return m.skillsInfo(width, maxItems, true)
 	default:
 		return ""
+	}
+}
+// sanitizeIndexError returns a short, user-friendly message for indexing errors.
+func sanitizeIndexError(errMsg string) string {
+	if errMsg == "" {
+		return ""
+	}
+	// Map common error patterns to concise messages.
+	if strings.Contains(errMsg, "connection refused") || strings.Contains(errMsg, "connection reset") {
+		return "Indexing: API connection error"
+	}
+	if strings.Contains(errMsg, "timeout") || strings.Contains(errMsg, "deadline") {
+		return "Indexing: API timeout"
+	}
+	if strings.Contains(errMsg, "400") || strings.Contains(errMsg, "bad request") {
+		return "Indexing: request rejected"
+	}
+	if strings.Contains(errMsg, "429") || strings.Contains(errMsg, "too many requests") {
+		return "Indexing: rate limited"
+	}
+	if strings.Contains(errMsg, "5") {
+		return "Indexing: server error"
+	}
+	return "Indexing failed"
+}
+
+// abbrevNumber formats large numbers with K/M suffixes (e.g. 776849 → "776K").
+func abbrevNumber(n int) string {
+	switch {
+	case n >= 1_000_000:
+		formatted := fmt.Sprintf("%.1fM", float64(n)/1_000_000)
+		if strings.HasSuffix(formatted, ".0M") {
+			formatted = strings.Replace(formatted, ".0M", "M", 1)
+		}
+		return formatted
+	case n >= 1_000:
+		formatted := fmt.Sprintf("%.1fK", float64(n)/1_000)
+		if strings.HasSuffix(formatted, ".0K") {
+			formatted = strings.Replace(formatted, ".0K", "K", 1)
+		}
+		return formatted
+	default:
+		return fmt.Sprintf("%d", n)
 	}
 }

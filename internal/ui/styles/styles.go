@@ -21,6 +21,7 @@ const (
 	SpinnerIcon     string = "⋯"
 	LoadingIcon     string = "⟳"
 	ModelIcon       string = "◇"
+	CodebaseIcon    string = "◉"
 	HypercreditIcon string = "◆"
 
 	ArrowRightIcon string = "→"

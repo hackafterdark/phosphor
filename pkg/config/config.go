@@ -53,8 +53,9 @@ func (s SelectedModelType) String() string {
 }
 
 const (
-	SelectedModelTypeLarge SelectedModelType = "large"
-	SelectedModelTypeSmall SelectedModelType = "small"
+	SelectedModelTypeLarge   SelectedModelType = "large"
+	SelectedModelTypeSmall   SelectedModelType = "small"
+	SelectedModelTypeEmbedding SelectedModelType = "embedding"
 )
 
 const (
@@ -951,6 +952,8 @@ type Config struct {
 
 	Security *SecurityConfig `json:"security,omitempty" jsonschema:"description=Security manifest and governance options"`
 
+	CodebaseIndex CodebaseIndex `json:"codebase_index,omitempty" jsonschema:"description=Codebase indexing configuration"`
+
 	Agents map[string]Agent `json:"-"`
 }
 
@@ -980,6 +983,29 @@ type SecurityConfig struct {
 	AllowedEgress AllowedEgressConfig `json:"allowed_egress,omitempty" jsonschema:"description=Permitted outbound platforms"`
 	ToolBlacklist []string            `json:"tool_blacklist,omitempty" jsonschema:"description=List of tools to block"`
 	ReadOnly      bool                `json:"read_only,omitempty" jsonschema:"description=Force read-only mode"`
+}
+
+type CodebaseIndex struct {
+	// Enabled enables codebase indexing. Requires models["embedding"] to be
+	// configured.
+	Enabled bool `json:"enabled" jsonschema:"description=Enable codebase indexing,default=false"`
+
+	// MaxChunkSize is the maximum number of characters per code chunk.
+	MaxChunkSize int `json:"max_chunk_size,omitempty" jsonschema:"description=Maximum characters per code chunk,default=512"`
+
+	// ChunkOverlap is the number of overlapping characters between consecutive
+	// chunks to preserve semantic context across boundaries.
+	ChunkOverlap int `json:"chunk_overlap,omitempty" jsonschema:"description=Overlap in characters between consecutive chunks,default=128"`
+
+	// ExcludedPaths is a list of glob patterns for directories or files to
+	// skip during indexing.
+	ExcludedPaths []string `json:"excluded_paths,omitempty" jsonschema:"description=Patterns of paths to exclude from indexing"`
+
+	// EmbeddingDims is the expected embedding dimensionality.
+	EmbeddingDims int `json:"embedding_dims,omitempty" jsonschema:"description=Dimensionality of embedding vectors,default=384"`
+
+	// AutoUpdate enables automatic re-indexing when code files change.
+	AutoUpdate bool `json:"auto_update" jsonschema:"description=Enable automatic index updates on code changes,default=false"`
 }
 
 func (c *Config) EnabledProviders() []ProviderConfig {
@@ -1068,6 +1094,7 @@ func allToolNames() []string {
 		"structural_search",
 		"reload_queries",
 		"sourcegraph",
+		"semantic_search",
 		"todos",
 		"view",
 		"write",

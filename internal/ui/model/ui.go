@@ -50,6 +50,7 @@ import (
 	"github.com/hackafterdark/phosphor/internal/ui/util"
 	"github.com/hackafterdark/phosphor/internal/version"
 	"github.com/hackafterdark/phosphor/internal/workspace"
+	"github.com/hackafterdark/phosphor/internal/embeddings"
 	"github.com/hackafterdark/phosphor/pkg/agent"
 	"github.com/hackafterdark/phosphor/pkg/agent/hyper"
 	"github.com/hackafterdark/phosphor/pkg/agent/notify"
@@ -208,6 +209,8 @@ type UI struct {
 	isCanceling bool
 
 	header *header
+
+	indexer *embeddings.Indexer
 
 	// sendProgressBar instructs the TUI to send progress bar updates to the
 	// terminal.
@@ -433,6 +436,10 @@ func (m *UI) Init() tea.Cmd {
 	}
 	// load recent sessions for the landing page
 	cmds = append(cmds, m.loadRecentSessions())
+	// Auto-start codebase indexing if enabled
+	if cmd := m.autoStartCodebaseIndexing(); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
 	return tea.Batch(cmds...)
 }
 
@@ -1872,6 +1879,40 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		m.textarea.Reset()
 		m.attachments.Reset()
 		m.dialog.CloseDialog(dialog.CommandsID)
+	case dialog.ActionIndexCodebase:
+		if m.isAgentBusy() {
+			cmds = append(cmds, util.ReportWarn("Agent is busy, please wait..."))
+			break
+		}
+		cmds = append(cmds, m.startCodebaseIndexing())
+		m.dialog.CloseDialog(dialog.CodebaseIndexID)
+	case dialog.ActionClearCodebaseIndex:
+		cmds = append(cmds, func() tea.Msg {
+			store, err := embeddings.NewStore(m.com.Workspace.WorkingDir())
+			if err != nil {
+				return util.ReportError(err)
+			}
+			defer store.Close()
+			if err := store.Clear(context.Background()); err != nil {
+				return util.ReportError(err)
+			}
+			return util.ReportInfo("Codebase index cleared")
+		})
+		m.dialog.CloseDialog(dialog.CodebaseIndexID)
+	case dialog.ActionToggleCodebaseAutoUpdate:
+		cfg := m.com.Config()
+		newVal := !cfg.CodebaseIndex.AutoUpdate
+		cfg.CodebaseIndex.AutoUpdate = newVal
+		if err := m.com.Workspace.SetConfigField(config.ScopeGlobal, "codebase_index.auto_update", newVal); err != nil {
+			cmds = append(cmds, util.ReportError(err))
+			break
+		}
+		if newVal {
+			cmds = append(cmds, util.ReportInfo("Auto-update enabled"))
+		} else {
+			cmds = append(cmds, util.ReportInfo("Auto-update disabled"))
+		}
+		m.dialog.CloseDialog(dialog.CodebaseIndexID)
 	case dialog.ActionPruneSessions:
 		// Deprecated: prune now goes through the PruneDays dialog.
 		// Kept for backwards compatibility.
@@ -3220,6 +3261,54 @@ func (m *UI) toggleCompactMode() tea.Cmd {
 	return nil
 }
 
+// startCodebaseIndexing starts codebase indexing in the background.
+func (m *UI) startCodebaseIndexing() tea.Cmd {
+	cfg := m.com.Config()
+	idx := cfg.CodebaseIndex
+	modelCfg, ok := cfg.Models[config.SelectedModelTypeEmbedding]
+	if !ok {
+		return util.ReportWarn("No embedding model configured")
+	}
+	providerCfg := cfg.GetProviderForModel(config.SelectedModelTypeEmbedding)
+	if providerCfg == nil {
+		return util.ReportWarn("Provider not found for embedding model")
+	}
+
+	client := embeddings.NewEmbeddingClient(
+		strings.TrimRight(providerCfg.BaseURL, "/"),
+		modelCfg.Model,
+		providerCfg.APIKey,
+	)
+	store, err := embeddings.NewStore(m.com.Workspace.WorkingDir())
+	if err != nil {
+		return util.ReportError(err)
+	}
+	state := embeddings.NewIndexState()
+	// Pre-populate state from existing store data so sidebar shows correct progress on restart.
+	if count, err := store.Count(context.Background()); err == nil && count > 0 {
+		state.Update(embeddings.IndexStatusComplete, count, count, "")
+	}
+	m.indexer = embeddings.NewIndexer(client, store, state, idx.MaxChunkSize, idx.ChunkOverlap, nil)
+
+	go func() {
+		ctx := context.Background()
+		_ = m.indexer.IndexWorkspace(ctx, m.com.Workspace.WorkingDir(), idx.ExcludedPaths)
+	}()
+
+	return util.ReportInfo("Codebase indexing started")
+}
+
+// autoStartCodebaseIndexing returns a command that starts codebase indexing
+// if CodebaseIndex is enabled or Auto-Update is on.
+func (m *UI) autoStartCodebaseIndexing() tea.Cmd {
+	cfg := m.com.Config()
+	idx := cfg.CodebaseIndex
+	if !idx.Enabled && !idx.AutoUpdate {
+		return nil
+	}
+	return m.startCodebaseIndexing()
+}
+
 // updateLayoutAndSize updates the layout and sizes of UI components.
 func (m *UI) updateLayoutAndSize() {
 	// Determine if we should be in compact mode
@@ -4258,6 +4347,10 @@ func (m *UI) openDialog(id string) tea.Cmd {
 		if cmd := m.openPruneDaysDialog(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
+	case dialog.CodebaseIndexID:
+		if cmd := m.openCodebaseIndexDialog(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 	default:
 		// Unknown dialog
 		break
@@ -4416,7 +4509,17 @@ func (m *UI) openNotificationsDialog() tea.Cmd {
 	return nil
 }
 
-// openSessionsDialog opens the sessions dialog. If the dialog is already open,
+// openCodebaseIndexDialog opens the codebase index management dialog.
+func (m *UI) openCodebaseIndexDialog() tea.Cmd {
+	if m.dialog.ContainsDialog(dialog.CodebaseIndexID) {
+		m.dialog.BringToFront(dialog.CodebaseIndexID)
+		return nil
+	}
+
+	codebaseIndexDialog := dialog.NewCodebaseIndexDialog(m.com)
+	m.dialog.OpenDialog(codebaseIndexDialog)
+	return nil
+}
 // it brings it to the front. Otherwise, it will list all the sessions and open
 // the dialog.
 func (m *UI) openSessionsDialog() tea.Cmd {

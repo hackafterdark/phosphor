@@ -48,6 +48,12 @@ Phosphor provides a comprehensive suite of agent tools organized by function. Ea
 | `lsp_references` | Find all references to a symbol by name using LSP. |
 | `lsp_restart` | Restart one or all LSP clients by name. |
 
+## Semantic Search
+
+| Tool | Description |
+|------|-------------|
+| `semantic_search` | Search the codebase index for chunks semantically similar to a natural language query. Returns matching file paths, content snippets, and distance scores. |
+
 ## Structural Search
 
 | Tool | Description |
@@ -80,7 +86,7 @@ Phosphor provides a comprehensive suite of agent tools organized by function. Ea
 ## Quick Reference
 
 ```
-Total built-in tools: 30
+Total built-in tools: 31
 
 By category:
   File Operations:      9 tools (view, edit, write, append, multiedit, ls, glob, grep, view_node)
@@ -89,6 +95,7 @@ By category:
   Web & Network:        6 tools (fetch, download, agentic_fetch, web_fetch, web_search, sourcegraph)
   Code Intelligence:    3 tools (lsp_diagnostics, lsp_references, lsp_restart)
   Structural Search:    1 tool  (structural_search)
+  Semantic Search:      1 tool  (semantic_search)
   MCP:                  3 tools (mcp_*, read_mcp_resource, list_mcp_resources)
   System:               3 tools (phosphor_info, phosphor_logs, reload_queries)
   Task Management:      2 tools (update_goal, todos)
@@ -97,7 +104,9 @@ By category:
 ## Deep Dives
 
 - [Edit Tools](./edit_tools.md) — In-depth documentation for `edit`, `multiedit`, `write`, and `append`.
+- [Semantic Search](./SEMANTIC_SEARCH.md) — Usage, parameters, and tips for `semantic_search`.
 - [Structural Search](../structural_search/) — Templates, languages, and usage patterns for `structural_search`.
+- [Codebase Indexing](../embeddings/CODEBASE_INDEXING.md) — Configuration, exclusion files, and how indexing works.
 - [MCP Tools](../hooks/) — Information about MCP server integration and dynamically loaded tools.
 
 ## Design Principles

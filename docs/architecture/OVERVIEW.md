@@ -29,6 +29,7 @@ graph TB
         AGENT[SessionAgent<br/>internal/agent/agent.go]
         TOOLS[Built-in Tools<br/>internal/agent/tools/]
         HOOKS[Hook Engine<br/>internal/hooks/]
+        EMBEDDING[Indexer & Store<br/>internal/embeddings/]
     end
     
     subgraph "Backend Services"
@@ -44,6 +45,7 @@ graph TB
     
     subgraph "Data Layer"
         SQLITE[(SQLite DB)]
+        EMBEDDB[(Embedding DB)]
         PUBSUB[Pub/Sub Broker<br/>internal/pubsub/]
         MCP[MCP Integration<br/>internal/agent/tools/mcp/]
         CONFIG[Config Store<br/>internal/config/]
@@ -66,6 +68,8 @@ graph TB
     AGENT --> TOOLS
     TOOLS --> HOOKS
     TOOLS --> MCP
+    TOOLS --> EMBEDDING
+    EMBEDDING --> EMBEDDB
     COORD --> SESSION
     COORD --> MESSAGE
     COORD --> PERMISSION

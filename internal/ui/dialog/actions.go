@@ -62,6 +62,7 @@ type (
 		SessionID string
 	}
 	ActionClearPrompt struct{}
+	ActionIndexCodebase         struct{}
 	// ActionSelectReasoningEffort is a message indicating a reasoning effort
 	// has been selected.
 	ActionSelectReasoningEffort struct {

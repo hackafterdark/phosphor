@@ -65,7 +65,7 @@ internal/
 
 - **Config is a Service**: accessed via `config.Service`, not global state.
 - **Tools are self-documenting**: each tool has a `.go` implementation and a
-  `.md` description file in `internal/agent/tools/`.
+  `.md` description file in `pkg/agent/tools/`.
 - **System prompts are Go templates**: `internal/agent/templates/*.md.tpl`
   with runtime data injected.
 - **Context files**: Phosphor reads AGENTS.md, PHOSPHOR.md, CLAUDE.md, GEMINI.md

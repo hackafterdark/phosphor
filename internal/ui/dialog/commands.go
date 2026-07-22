@@ -482,8 +482,15 @@ func (c *Commands) defaultCommands() []*CommandItem {
 		commands = append(commands, NewCommandItem(c.com.Styles, "summarize", "Summarize Session", "", ActionSummarize{SessionID: c.sessionID}))
 	}
 
-	// Add reasoning toggle for models that support it
 	cfg := c.com.Config()
+	// Add codebase indexing command when codebase_index is enabled.
+	if cfg.CodebaseIndex.Enabled {
+		commands = append(commands, NewCommandItem(c.com.Styles, "codebase_index", "Codebase Index", "", ActionOpenDialog{
+			DialogID: CodebaseIndexID,
+		}))
+	}
+
+	// Add reasoning toggle for models that support it
 	if agentCfg, ok := cfg.Agents[config.AgentSystem]; ok {
 		providerCfg := cfg.GetProviderForModel(agentCfg.Model)
 		model := cfg.GetModelByType(agentCfg.Model)

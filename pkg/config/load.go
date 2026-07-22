@@ -50,6 +50,14 @@ func Load(workingDir, dataDir string, debug bool) (*ConfigStore, error) {
 
 	cfg.setDefaults(workingDir, dataDir)
 
+	// Validate codebase_index: if enabled, an embedding model must be configured.
+	if cfg.CodebaseIndex.Enabled {
+		_, ok := cfg.Models[SelectedModelTypeEmbedding]
+		if !ok {
+			return nil, fmt.Errorf("codebase_index is enabled but no \"embedding\" model is configured in models")
+		}
+	}
+
 	// Resolve symlinks in the workspace root to prevent bypass through
 	// symlink traversal in bounds checking. If the workspace doesn't exist
 	// on disk (e.g. during tests), use it as-is.
@@ -80,6 +88,13 @@ func Load(workingDir, dataDir string, debug bool) (*ConfigStore, error) {
 			dataDir := cfg.Options.DataDirectory
 			*cfg = *merged
 			cfg.setDefaults(workingDir, dataDir)
+			// Validate codebase_index after workspace merge.
+			if cfg.CodebaseIndex.Enabled {
+				_, ok := cfg.Models[SelectedModelTypeEmbedding]
+				if !ok {
+					return nil, fmt.Errorf("codebase_index is enabled but no \"embedding\" model is configured in models")
+				}
+			}
 			store.config = cfg
 			store.loadedPaths = append(store.loadedPaths, store.workspacePath)
 		}
@@ -604,6 +619,17 @@ func (c *Config) setDefaults(workingDir, dataDir string) {
 				HTTP: true,
 			},
 		}
+	}
+
+	// Apply defaults to codebase_index configuration
+	if c.CodebaseIndex.MaxChunkSize == 0 {
+		c.CodebaseIndex.MaxChunkSize = 512
+	}
+	if c.CodebaseIndex.ChunkOverlap == 0 {
+		c.CodebaseIndex.ChunkOverlap = 128
+	}
+	if c.CodebaseIndex.EmbeddingDims == 0 {
+		c.CodebaseIndex.EmbeddingDims = 384
 	}
 
 	// Apply defaults to LSP configurations

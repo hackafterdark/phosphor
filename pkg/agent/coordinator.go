@@ -948,6 +948,12 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, isSubA
 		allTools = append(allTools, tools.NewStructuralSearchTool(c.cfg.WorkingDir(), c.cfg.Config().Options.Agent.StructuralSearchLanguages))
 	}
 
+	// Add semantic search when codebase indexing is enabled or auto-update is on.
+	idx := c.cfg.Config().CodebaseIndex
+	if idx.Enabled || idx.AutoUpdate {
+		allTools = append(allTools, tools.NewSemanticSearchTool(*c.cfg.Config(), c.cfg.WorkingDir()))
+	}
+
 	if len(c.cfg.Config().MCP) > 0 {
 		allTools = append(
 			allTools,
