@@ -49,6 +49,7 @@ type Prompt struct {
 	platform                  string
 	workingDir                string
 	structuralSearchAvailable bool
+	semanticSearchAvailable   bool
 }
 
 type PromptDat struct {
@@ -66,6 +67,7 @@ type PromptDat struct {
 	GlobalContextFiles        []ContextFile
 	AvailSkillXML             string
 	StructuralSearchAvailable bool
+	SemanticSearchAvailable   bool
 	CriticalRules             string
 	CommunicationStyle        string
 	Workflow                  string
@@ -88,6 +90,7 @@ type RulesView struct {
 	IsGitRepo                 bool
 	Platform                  string
 	StructuralSearchAvailable bool
+	SemanticSearchAvailable   bool
 }
 
 // StyleView is the data exposed to style.md.tpl partials.
@@ -130,6 +133,7 @@ type CodingProtocolView struct {
 	GitStatus                 string
 	Platform                  string
 	StructuralSearchAvailable bool
+	SemanticSearchAvailable   bool
 }
 
 // SummarizationView is the data exposed to summarization.md.tpl partials.
@@ -161,6 +165,12 @@ func WithWorkingDir(workingDir string) Option {
 func WithStructuralSearchAvailable(available bool) Option {
 	return func(p *Prompt) {
 		p.structuralSearchAvailable = available
+	}
+}
+
+func WithSemanticSearchAvailable(available bool) Option {
+	return func(p *Prompt) {
+		p.semanticSearchAvailable = available
 	}
 }
 
@@ -238,6 +248,7 @@ func (p *Prompt) Build(ctx context.Context, provider, model string, store *confi
 		IsGitRepo:                 d.IsGitRepo,
 		Platform:                  d.Platform,
 		StructuralSearchAvailable: d.StructuralSearchAvailable,
+		SemanticSearchAvailable:   d.SemanticSearchAvailable,
 	})
 	if err != nil {
 		return "", err
@@ -284,6 +295,7 @@ func (p *Prompt) Build(ctx context.Context, provider, model string, store *confi
 		GitStatus:                 d.GitStatus,
 		Platform:                  d.Platform,
 		StructuralSearchAvailable: d.StructuralSearchAvailable,
+		SemanticSearchAvailable:   d.SemanticSearchAvailable,
 	})
 	if err != nil {
 		return "", err
@@ -457,6 +469,7 @@ func (p *Prompt) promptData(ctx context.Context, provider, model string, store *
 		Date:                      p.now().Format("1/2/2006"),
 		AvailSkillXML:             availSkillXML,
 		StructuralSearchAvailable: p.structuralSearchAvailable,
+		SemanticSearchAvailable:   p.semanticSearchAvailable,
 	}
 	if isGit {
 		var err error

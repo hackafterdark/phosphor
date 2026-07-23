@@ -7,24 +7,24 @@ The Phosphor system prompt is a **Policy-as-Code** engine built on Go templates.
 ```
 ┌─────────────────────────────────────────────┐
 │  system.md.tpl (master template)            │
-│  ┌───────────┐ ┌──────────┐ ┌────────────┐ │
-│  │ Critical  │ │ Workflow │ │ Interaction│ │
-│  │ Rules     │ │          │ │ Gating     │ │
-│  │           │ │          │ │            │ │
-│  │ Comm.     │ │ Decision │ │            │ │
-│  │ Style     │ │ Making   │ │            │ │
-│  └─────┬─────┘ └────┬─────┘ └─────┬──────┘ │
+│  ┌───────────┐ ┌──────────┐ ┌────────────┐  │
+│  │ Critical  │ │ Workflow │ │ Interaction│  │
+│  │ Rules     │ │          │ │ Gating     │  │
+│  │           │ │          │ │            │  │
+│  │ Comm.     │ │ Decision │ │            │  │
+│  │ Style     │ │ Making   │ │            │  │
+│  └─────┬─────┘ └────┬─────┘ └─────┬──────┘  │
 │        │            │             │         │
-│        ▼            ▼             ▼         │
-│  resolveProfileTemplate() per section      │
+│        ▼           ▼             ▼         │
+│  resolveProfileTemplate() per section       │
 │        │            │             │         │
-│        ▼            ▼             ▼         │
-│  Go-template execution with PromptDat      │
+│        ▼           ▼             ▼         │
+│  Go-template execution with PromptDat       │
 │        │            │             │         │
-│        ▼            ▼             ▼         │
-│  # DISABLE_SECTION filter                 │
+│        ▼           ▼             ▼         │
+│  # DISABLE_SECTION filter                   │
 │        │            │             │         │
-│        ▼            ▼             ▼         │
+│        ▼           ▼             ▼         │
 │  Inject into master template → final prompt │
 └─────────────────────────────────────────────┘
 ```
@@ -163,7 +163,7 @@ To enforce defense-in-depth, each profile partial receives only the data it need
 
 | Partial | View Struct | Exposed Fields |
 |---|---|---|
-| `rules.md.tpl` | `RulesView` | `.PromptToolCalls`, `.IsGitRepo`, `.Platform`, `.StructuralSearchAvailable` |
+| `rules.md.tpl` | `RulesView` | `.PromptToolCalls`, `.IsGitRepo`, `.Platform`, `.StructuralSearchAvailable`, `.SemanticSearchAvailable` |
 | `style.md.tpl` | `StyleView` | `.Provider`, `.Model`, `.Platform`, `.Date` |
 | `workflow.md.tpl` | `WorkflowView` | `.WorkingDir`, `.IsGitRepo`, `.GitStatus`, `.Platform` |
 | `interaction_gating.md.tpl` | `InteractionGatingView` | `.MaxTurns` |
@@ -196,6 +196,7 @@ Each partial receives a `PromptDat` struct during execution, providing runtime c
 | `.GitStatus` | string | Git context: current branch + short status + recent commits. Only set when `IsGitRepo` is true; empty otherwise. |
 | `.AvailSkillXML` | string | XML-formatted list of available skills (builtin + user). Empty if no skills are loaded. |
 | `.StructuralSearchAvailable` | bool | `true` if tree-sitter structural search is available |
+| `.SemanticSearchAvailable` | bool | `true` if codebase indexing is enabled (semantic search available) |
 | `.ContextFiles` | []ContextFile | Workspace-level context files (from `options.context_paths`). Each has `.Path` and `.Content`. |
 | `.GlobalContextFiles` | []ContextFile | Global context files (from `options.global_context_paths`). Same structure. |
 

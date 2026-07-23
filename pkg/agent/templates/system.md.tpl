@@ -119,28 +119,26 @@ When running non-trivial bash commands (especially those that modify the system)
 
 <tool_funnel>
 **MANDATORY TOOL FUNNEL PROTOCOL:**
+{{if .SemanticSearchAvailable}}
+0. **semantic_search** — Use first for high-level or conceptual queries when the target file/function name is unknown. Returns semantically similar code chunks to narrow the search space. Do not call in parallel with other tools.
+
+{{end}}
 {{if .StructuralSearchAvailable}}
-1. **PRIORITY 1: structural_search**
-   - MUST be used for all code navigation (functions, structs, interfaces, variables, calls, imports, comments).
-   - If the search fails to find the target, attempt a different query pattern or template before giving up on this tool.
+1. **structural_search** — Use for precise code navigation by AST structure (functions, structs, calls, etc.). Follow up on file paths returned by semantic_search to zero in on exact locations.
 
-2. **PRIORITY 2: grep**
-   - STRICTLY PROHIBITED for syntax-based searches.
-   - Use ONLY for unstructured keyword searches (e.g., finding occurrences of a specific error message string that isn't a function/struct).
+{{end}}
+2. **grep** — Reserved for unstructured keyword searches (error messages, literal strings). Prohibited for syntax-based searches when structural_search is available.
 
-3. **PRIORITY 3: LSP/View**
-   - Use for deep symbol resolution (references, diagnostics) or reading file content ONLY AFTER identifying the correct location via `structural_search`.
+3. **LSP/View** — For symbol resolution, diagnostics, or reading file content after a search tool has identified the target location.
 
-The agent MUST prefer `structural_search` to maintain codebase precision. Failure to use `structural_search` for syntax queries is a violation of the tool funnel protocol.
+{{if and .SemanticSearchAvailable .StructuralSearchAvailable}}
+The agent MUST prefer `semantic_search` for discovery, then `structural_search` for precision, before falling back to `grep`.
 {{else}}
-1. **PRIORITY 1: grep**
-   - MUST be used for all code navigation (functions, structs, interfaces, variables, calls, imports, comments).
+1. **grep** — Primary search tool. Use for all code navigation.
 
-2. **PRIORITY 2: LSP/View**
-   - Use for deep symbol resolution (references, diagnostics) or reading file content.
+2. **LSP/View** — For symbol resolution and file content.
 
-3. **PRIORITY 3: structural_search**
-   - NOT AVAILABLE in this environment (requires CGO/tree-sitter).
+3. **structural_search** — NOT AVAILABLE.
 {{end}}
 </tool_funnel>
 

@@ -46,8 +46,8 @@ import (
 	"charm.land/fantasy/providers/openaicompat"
 	"charm.land/fantasy/providers/openrouter"
 	"charm.land/fantasy/providers/vercel"
-	openaisdk "github.com/openai/openai-go/v3/option"
 	"github.com/hackafterdark/phosphor/internal/jsonmerge"
+	openaisdk "github.com/openai/openai-go/v3/option"
 )
 
 // Coordinator errors.
@@ -237,7 +237,12 @@ func NewCoordinator(
 		return nil, errSystemAgentNotConfigured
 	}
 
-	prompt, err := systemPrompt(prompt.WithWorkingDir(c.cfg.WorkingDir()))
+	idx := cfg.Config().CodebaseIndex
+	semanticSearchAvailable := idx.Enabled || idx.AutoUpdate
+	prompt, err := systemPrompt(
+		prompt.WithWorkingDir(c.cfg.WorkingDir()),
+		prompt.WithSemanticSearchAvailable(semanticSearchAvailable),
+	)
 	if err != nil {
 		return nil, err
 	}
