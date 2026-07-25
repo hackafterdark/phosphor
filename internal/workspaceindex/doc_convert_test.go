@@ -138,7 +138,7 @@ func TestConvertPDF(t *testing.T) {
 func TestConvertRTF(t *testing.T) {
 	t.Parallel()
 
-	rtfData := []byte("{\\rtf1\\ansi\\deff0\\fonttbl{\\f0\\fswiss Helvetica;}\\pard\\f0\\fs20 Hello World.\\par}")
+	rtfData := []byte("{\\rtf1\\ansi\\deff0{\\fonttbl{\\f0\\fswiss Helvetica;}}\\pard\\f0\\fs20 Hello World.\\par}")
 	text, err := convertRTF(rtfData)
 	if err != nil {
 		t.Fatalf("convertRTF() error: %v", err)

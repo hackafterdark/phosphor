@@ -12,8 +12,8 @@ import (
 
 	"github.com/attilabuti/striprtf"
 	"github.com/coregx/gxpdf"
-	pdfcpu "github.com/pdfcpu/pdfcpu/pkg/pdfcpu"
 	apicpu "github.com/pdfcpu/pdfcpu/pkg/api"
+	pdfcpu "github.com/pdfcpu/pdfcpu/pkg/pdfcpu"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/xuri/excelize/v2"
 )
@@ -292,7 +292,7 @@ func convertXLSX(data []byte) (string, error) {
 	}
 	defer f.Close()
 
-sheets := f.GetSheetList()
+	sheets := f.GetSheetList()
 	var texts []string
 	for _, name := range sheets {
 		rows, rowErr := f.GetRows(name)
