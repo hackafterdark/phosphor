@@ -163,7 +163,7 @@ To enforce defense-in-depth, each profile partial receives only the data it need
 
 | Partial | View Struct | Exposed Fields |
 |---|---|---|
-| `rules.md.tpl` | `RulesView` | `.PromptToolCalls`, `.IsGitRepo`, `.Platform`, `.StructuralSearchAvailable`, `.SemanticSearchAvailable` |
+| `rules.md.tpl` | `RulesView` | `.PromptToolCalls`, `.IsGitRepo`, `.Platform`, `.StructuralSearchAvailable`, `.SemanticSearchAvailable`, `.WorkspaceSearchAvailable` |
 | `style.md.tpl` | `StyleView` | `.Provider`, `.Model`, `.Platform`, `.Date` |
 | `workflow.md.tpl` | `WorkflowView` | `.WorkingDir`, `.IsGitRepo`, `.GitStatus`, `.Platform` |
 | `interaction_gating.md.tpl` | `InteractionGatingView` | `.MaxTurns` |
@@ -197,6 +197,7 @@ Each partial receives a `PromptDat` struct during execution, providing runtime c
 | `.AvailSkillXML` | string | XML-formatted list of available skills (builtin + user). Empty if no skills are loaded. |
 | `.StructuralSearchAvailable` | bool | `true` if tree-sitter structural search is available |
 | `.SemanticSearchAvailable` | bool | `true` if codebase indexing is enabled (semantic search available) |
+| `.WorkspaceSearchAvailable` | bool | `true` if FTS5 fulltext workspace search is enabled in config |
 | `.ContextFiles` | []ContextFile | Workspace-level context files (from `options.context_paths`). Each has `.Path` and `.Content`. |
 | `.GlobalContextFiles` | []ContextFile | Global context files (from `options.global_context_paths`). Same structure. |
 

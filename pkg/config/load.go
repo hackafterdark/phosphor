@@ -50,8 +50,9 @@ func Load(workingDir, dataDir string, debug bool) (*ConfigStore, error) {
 
 	cfg.setDefaults(workingDir, dataDir)
 
-	// Validate codebase_index: if enabled, an embedding model must be configured.
-	if cfg.CodebaseIndex.Enabled {
+	// Validate vector_embeddings: if enabled, an embedding model must be configured.
+	vemb := cfg.WorkspaceSearch.VectorEmbeddings
+	if vemb != nil && vemb.Enabled {
 		_, ok := cfg.Models[SelectedModelTypeEmbedding]
 		if !ok {
 			return nil, fmt.Errorf("codebase_index is enabled but no \"embedding\" model is configured in models")
@@ -88,8 +89,9 @@ func Load(workingDir, dataDir string, debug bool) (*ConfigStore, error) {
 			dataDir := cfg.Options.DataDirectory
 			*cfg = *merged
 			cfg.setDefaults(workingDir, dataDir)
-			// Validate codebase_index after workspace merge.
-			if cfg.CodebaseIndex.Enabled {
+			// Validate vector_embeddings after workspace merge.
+			vemb := cfg.WorkspaceSearch.VectorEmbeddings
+			if vemb != nil && vemb.Enabled {
 				_, ok := cfg.Models[SelectedModelTypeEmbedding]
 				if !ok {
 					return nil, fmt.Errorf("codebase_index is enabled but no \"embedding\" model is configured in models")
@@ -621,15 +623,23 @@ func (c *Config) setDefaults(workingDir, dataDir string) {
 		}
 	}
 
-	// Apply defaults to codebase_index configuration
-	if c.CodebaseIndex.MaxChunkSize == 0 {
-		c.CodebaseIndex.MaxChunkSize = 512
+	// Apply defaults to vector_embeddings configuration
+	if c.WorkspaceSearch == nil {
+		c.WorkspaceSearch = &WorkspaceSearch{}
 	}
-	if c.CodebaseIndex.ChunkOverlap == 0 {
-		c.CodebaseIndex.ChunkOverlap = 128
+	vemb := c.WorkspaceSearch.VectorEmbeddings
+	if vemb == nil {
+		c.WorkspaceSearch.VectorEmbeddings = &VectorEmbeddingIndex{}
+		vemb = c.WorkspaceSearch.VectorEmbeddings
 	}
-	if c.CodebaseIndex.EmbeddingDims == 0 {
-		c.CodebaseIndex.EmbeddingDims = 384
+	if vemb.MaxChunkSize == 0 {
+		vemb.MaxChunkSize = 512
+	}
+	if vemb.ChunkOverlap == 0 {
+		vemb.ChunkOverlap = 128
+	}
+	if vemb.EmbeddingDims == 0 {
+		vemb.EmbeddingDims = 384
 	}
 
 	// Apply defaults to LSP configurations

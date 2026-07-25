@@ -70,6 +70,7 @@ func init() {
 		loginCmd,
 		statsCmd,
 		sessionCmd,
+		indexCmd,
 		NewCronCommand(),
 	)
 }

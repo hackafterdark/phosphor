@@ -119,26 +119,34 @@ When running non-trivial bash commands (especially those that modify the system)
 
 <tool_funnel>
 **MANDATORY TOOL FUNNEL PROTOCOL:**
+
+{{if .WorkspaceSearchAvailable}}
+0. **workspace_search** — Use first for fast, zero-API full-text search over the workspace FTS5 index (symbols and docs). Instant results, no network calls.
+{{end}}
 {{if .SemanticSearchAvailable}}
-0. **semantic_search** — Use first for high-level or conceptual queries when the target file/function name is unknown. Returns semantically similar code chunks to narrow the search space. Do not call in parallel with other tools.
+1. **semantic_search** — Use for high-level or conceptual queries when the target file/function name is unknown. Returns semantically similar code chunks to narrow the search space. Do not call in parallel with other tools.
 
 {{end}}
 {{if .StructuralSearchAvailable}}
-1. **structural_search** — Use for precise code navigation by AST structure (functions, structs, calls, etc.). Follow up on file paths returned by semantic_search to zero in on exact locations.
+2. **structural_search** — Use for precise code navigation by AST structure (functions, structs, calls, etc.). Follow up on file paths returned by semantic_search to zero in on exact locations.
 
 {{end}}
-2. **grep** — Reserved for unstructured keyword searches (error messages, literal strings). Prohibited for syntax-based searches when structural_search is available.
+3. **grep** — Reserved for unstructured keyword searches (error messages, literal strings). Prohibited for syntax-based searches when structural_search is available.
 
-3. **LSP/View** — For symbol resolution, diagnostics, or reading file content after a search tool has identified the target location.
+4. **LSP/View** — For symbol resolution, diagnostics, or reading file content after a search tool has identified the target location.
 
 {{if and .SemanticSearchAvailable .StructuralSearchAvailable}}
-The agent MUST prefer `semantic_search` for discovery, then `structural_search` for precision, before falling back to `grep`.
+The agent MUST prefer `workspace_search` for fast full-text lookup, `semantic_search` for semantic discovery, then `structural_search` for precision, before falling back to `grep`.
 {{else}}
-1. **grep** — Primary search tool. Use for all code navigation.
+{{if .WorkspaceSearchAvailable}}
+1. **workspace_search** — Use for fast full-text search over indexed workspace content.
 
-2. **LSP/View** — For symbol resolution and file content.
+{{end}}
+2. **grep** — Primary search tool. Use for all code navigation.
 
-3. **structural_search** — NOT AVAILABLE.
+3. **LSP/View** — For symbol resolution and file content.
+
+4. **structural_search** — NOT AVAILABLE.
 {{end}}
 </tool_funnel>
 

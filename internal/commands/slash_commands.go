@@ -44,6 +44,10 @@ var SlashCommands = []SlashCommand{
 		Name:        "pin",
 		Description: "Pin or unpin the current session",
 	},
+	{
+		Name:        "compact",
+		Description: "On-demand session summarization (compaction)",
+	},
 }
 
 // GetSlashCommands returns all registered slash commands.

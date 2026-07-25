@@ -34,6 +34,7 @@ import (
 	"github.com/hackafterdark/phosphor/internal/app"
 	"github.com/hackafterdark/phosphor/internal/clipboard"
 	"github.com/hackafterdark/phosphor/internal/commands"
+	"github.com/hackafterdark/phosphor/internal/embeddings"
 	"github.com/hackafterdark/phosphor/internal/fsext"
 	"github.com/hackafterdark/phosphor/internal/home"
 	"github.com/hackafterdark/phosphor/internal/stringext"
@@ -50,7 +51,7 @@ import (
 	"github.com/hackafterdark/phosphor/internal/ui/util"
 	"github.com/hackafterdark/phosphor/internal/version"
 	"github.com/hackafterdark/phosphor/internal/workspace"
-	"github.com/hackafterdark/phosphor/internal/embeddings"
+	"github.com/hackafterdark/phosphor/internal/workspaceindex"
 	"github.com/hackafterdark/phosphor/pkg/agent"
 	"github.com/hackafterdark/phosphor/pkg/agent/hyper"
 	"github.com/hackafterdark/phosphor/pkg/agent/notify"
@@ -211,6 +212,19 @@ type UI struct {
 	header *header
 
 	indexer *embeddings.Indexer
+
+	symbolIndex *workspaceindex.Store
+
+	// Cached workspace search progress (refreshed periodically, not every draw).
+	indexProgress     *workspaceindex.IndexProgress
+	indexProgressTime time.Time
+
+	// Cached layout inputs to skip layout recalculation.
+	cachedWidth, cachedHeight int
+	cachedTextareaHeight      int
+	cachedState               uiState
+	cachedPillsHeight         int
+	cachedForceCompactMode    bool
 
 	// sendProgressBar instructs the TUI to send progress bar updates to the
 	// terminal.
@@ -385,6 +399,13 @@ func New(com *common.Common, initialSessionID string, continueLast bool) *UI {
 	ui.randomizePlaceholders()
 	ui.textarea.Placeholder = ui.readyPlaceholder
 	ui.status = status
+
+	// Wire the workspace symbol index store for sidebar display.
+	if aw, ok := com.Workspace.(*workspace.AppWorkspace); ok {
+		if app := aw.App(); app != nil && app.SymbolIndex != nil {
+			ui.symbolIndex = app.SymbolIndex
+		}
+	}
 
 	// Initialize compact mode from config
 	ui.forceCompactMode = com.Config().Options.TUI.CompactMode
@@ -1901,16 +1922,20 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		m.dialog.CloseDialog(dialog.CodebaseIndexID)
 	case dialog.ActionToggleCodebaseAutoUpdate:
 		cfg := m.com.Config()
-		newVal := !cfg.CodebaseIndex.AutoUpdate
-		cfg.CodebaseIndex.AutoUpdate = newVal
-		if err := m.com.Workspace.SetConfigField(config.ScopeGlobal, "codebase_index.auto_update", newVal); err != nil {
+		vemb := cfg.WorkspaceSearch.VectorEmbeddings
+		if vemb == nil {
+			return nil
+		}
+		newVal := !vemb.AutoIndex
+		vemb.AutoIndex = newVal
+		if err := m.com.Workspace.SetConfigField(config.ScopeGlobal, "workspace_search.vector_embeddings.auto_index", newVal); err != nil {
 			cmds = append(cmds, util.ReportError(err))
 			break
 		}
 		if newVal {
-			cmds = append(cmds, util.ReportInfo("Auto-update enabled"))
+			cmds = append(cmds, util.ReportInfo("Auto-index enabled"))
 		} else {
-			cmds = append(cmds, util.ReportInfo("Auto-update disabled"))
+			cmds = append(cmds, util.ReportInfo("Auto-index disabled"))
 		}
 		m.dialog.CloseDialog(dialog.CodebaseIndexID)
 	case dialog.ActionPruneSessions:
@@ -3264,7 +3289,7 @@ func (m *UI) toggleCompactMode() tea.Cmd {
 // startCodebaseIndexing starts codebase indexing in the background.
 func (m *UI) startCodebaseIndexing() tea.Cmd {
 	cfg := m.com.Config()
-	idx := cfg.CodebaseIndex
+	vemb := cfg.WorkspaceSearch.VectorEmbeddings
 	modelCfg, ok := cfg.Models[config.SelectedModelTypeEmbedding]
 	if !ok {
 		return util.ReportWarn("No embedding model configured")
@@ -3288,11 +3313,11 @@ func (m *UI) startCodebaseIndexing() tea.Cmd {
 	if count, err := store.Count(context.Background()); err == nil && count > 0 {
 		state.Update(embeddings.IndexStatusComplete, count, count, "")
 	}
-	m.indexer = embeddings.NewIndexer(client, store, state, idx.MaxChunkSize, idx.ChunkOverlap, nil)
+	m.indexer = embeddings.NewIndexer(client, store, state, vemb.MaxChunkSize, vemb.ChunkOverlap, nil)
 
 	go func() {
 		ctx := context.Background()
-		_ = m.indexer.IndexWorkspace(ctx, m.com.Workspace.WorkingDir(), idx.ExcludedPaths)
+		_ = m.indexer.IndexWorkspace(ctx, m.com.Workspace.WorkingDir(), vemb.ExcludedPaths)
 	}()
 
 	return util.ReportInfo("Codebase indexing started")
@@ -3302,8 +3327,8 @@ func (m *UI) startCodebaseIndexing() tea.Cmd {
 // if CodebaseIndex is enabled or Auto-Update is on.
 func (m *UI) autoStartCodebaseIndexing() tea.Cmd {
 	cfg := m.com.Config()
-	idx := cfg.CodebaseIndex
-	if !idx.Enabled && !idx.AutoUpdate {
+	vemb := cfg.WorkspaceSearch.VectorEmbeddings
+	if vemb == nil || (!vemb.Enabled && !vemb.AutoIndex) {
 		return nil
 	}
 	return m.startCodebaseIndexing()
@@ -3311,6 +3336,22 @@ func (m *UI) autoStartCodebaseIndexing() tea.Cmd {
 
 // updateLayoutAndSize updates the layout and sizes of UI components.
 func (m *UI) updateLayoutAndSize() {
+	pillsHeight := m.pillsAreaHeight()
+	if m.width == m.cachedWidth &&
+		m.height == m.cachedHeight &&
+		m.textarea.Height() == m.cachedTextareaHeight &&
+		m.state == m.cachedState &&
+		pillsHeight == m.cachedPillsHeight &&
+		m.forceCompactMode == m.cachedForceCompactMode {
+		return
+	}
+	m.cachedWidth = m.width
+	m.cachedHeight = m.height
+	m.cachedTextareaHeight = m.textarea.Height()
+	m.cachedState = m.state
+	m.cachedPillsHeight = pillsHeight
+	m.cachedForceCompactMode = m.forceCompactMode
+
 	// Determine if we should be in compact mode
 	if m.state == uiChat {
 		if m.forceCompactMode {
@@ -4068,12 +4109,13 @@ func cancelTimerCmd() tea.Cmd {
 // registerSlashCommands sets up the mapping between slash command names and their TUI handlers.
 func (m *UI) registerSlashCommands() {
 	m.slashHandlers = map[string]slashCommandHandler{
-		"goal":  m.handleGoalSlashCommand,
-		"name":  m.handleNameSlashCommand,
-		"menu":  m.handleMenuSlashCommand,
-		"stats": m.handleStatsSlashCommand,
-		"learn": m.handleLearnSlashCommand,
-		"quit":  m.handleQuitSlashCommand,
+		"goal":    m.handleGoalSlashCommand,
+		"name":    m.handleNameSlashCommand,
+		"compact": m.handleCompactSlashCommand,
+		"pin":     m.handlePinSlashCommand,
+		"stats":   m.handleStatsSlashCommand,
+		"learn":   m.handleLearnSlashCommand,
+		"quit":    m.handleQuitSlashCommand,
 	}
 	m.slashHandlers["pin"] = m.handlePinSlashCommand
 	if agent.StructuralSearchAvailable {
@@ -4142,6 +4184,22 @@ func (m *UI) handleNameSlashCommand(args []string) tea.Cmd {
 			return util.ReportError(err)()
 		}
 		return util.NewInfoMsg(fmt.Sprintf("Session renamed to %q", title))
+	}
+}
+
+// handleCompactSlashCommand handles the "/compact" slash command to trigger on-demand session summarization.
+func (m *UI) handleCompactSlashCommand(args []string) tea.Cmd {
+	if !m.hasSession() {
+		return util.ReportWarn("Start a session first.")
+	}
+	if m.isAgentBusy() {
+		return util.ReportWarn("Agent is busy, please wait before compacting session...")
+	}
+	return func() tea.Msg {
+		if err := m.com.Workspace.AgentSummarize(context.Background(), m.session.ID); err != nil {
+			return util.ReportError(err)()
+		}
+		return util.NewInfoMsg("Session compaction started")
 	}
 }
 
@@ -4520,6 +4578,7 @@ func (m *UI) openCodebaseIndexDialog() tea.Cmd {
 	m.dialog.OpenDialog(codebaseIndexDialog)
 	return nil
 }
+
 // it brings it to the front. Otherwise, it will list all the sessions and open
 // the dialog.
 func (m *UI) openSessionsDialog() tea.Cmd {

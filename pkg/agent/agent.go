@@ -1260,7 +1260,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 				}
 			}
 			currentAssistant.AddFinish(finishReason, "", "")
-			sessionLock.Lock()
+sessionLock.Lock()
 			defer sessionLock.Unlock()
 
 			updatedSession, getSessionErr := a.sessions.Get(ctx, call.SessionID)

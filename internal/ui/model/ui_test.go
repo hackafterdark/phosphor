@@ -204,3 +204,31 @@ func TestUI_HandleSlashCommand_LearnSubmitsMessage(t *testing.T) {
 	cmdWarn := ui.handleSlashCommand("/learn")
 	require.NotNil(t, cmdWarn)
 }
+func TestUI_HandleSlashCommand_CompactTriggersSummarize(t *testing.T) {
+	t.Parallel()
+
+	tw := &testWorkspace{}
+	st := uistyles.CharmtonePantera()
+	ui := &UI{
+		com: &common.Common{
+			Workspace: tw,
+			Styles:    &st,
+		},
+	}
+	ui.registerSlashCommands()
+
+	// Setup active session so compact doesn't warn about missing session.
+	ui.session = &session.Session{ID: "test-session-123"}
+	ui.dialog = dialog.NewOverlay()
+	ui.slashMode = true
+	ui.completionsOpen = true
+	ui.completions = completions.New(lipgloss.NewStyle(), lipgloss.NewStyle(), lipgloss.NewStyle())
+
+	// Call handleSlashCommand with /compact.
+	cmd := ui.handleSlashCommand("/compact")
+	require.NotNil(t, cmd)
+
+	// Verify state sanitization.
+	require.False(t, ui.slashMode)
+	require.False(t, ui.completionsOpen)
+}

@@ -44,8 +44,8 @@ func NewSemanticSearchTool(cfg config.Config, workingDir string) fantasy.AgentTo
 				params.Count = 20
 			}
 
-			idx := cfg.CodebaseIndex
-if !idx.Enabled && !idx.AutoUpdate {
+			vemb := cfg.WorkspaceSearch.VectorEmbeddings
+			if vemb == nil || (!vemb.Enabled && !vemb.AutoIndex) {
 			return fantasy.NewTextErrorResponse("Codebase indexing is not enabled"), nil
 		}
 

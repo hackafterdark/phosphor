@@ -48,6 +48,18 @@ Phosphor provides a comprehensive suite of agent tools organized by function. Ea
 | `lsp_references` | Find all references to a symbol by name using LSP. |
 | `lsp_restart` | Restart one or all LSP clients by name. |
 
+## Workspace Search (FTS5)
+
+| Tool | Description |
+|------|-------------|
+| `workspace_search` | Search the workspace FTS5 index for code symbols and document text. Instant, zero API calls. |
+
+## Workspace Search
+
+| Tool | Description |
+|------|-------------|
+| `workspace_search` | Full-text search over code symbols and document text using a local FTS5 index. Instant, zero API calls. |
+
 ## Semantic Search
 
 | Tool | Description |
@@ -86,7 +98,7 @@ Phosphor provides a comprehensive suite of agent tools organized by function. Ea
 ## Quick Reference
 
 ```
-Total built-in tools: 31
+Total built-in tools: 32
 
 By category:
   File Operations:      9 tools (view, edit, write, append, multiedit, ls, glob, grep, view_node)
@@ -94,6 +106,7 @@ By category:
   Background Jobs:      2 tools (job_output, job_kill)
   Web & Network:        6 tools (fetch, download, agentic_fetch, web_fetch, web_search, sourcegraph)
   Code Intelligence:    3 tools (lsp_diagnostics, lsp_references, lsp_restart)
+  Workspace Search:     1 tool  (workspace_search)
   Structural Search:    1 tool  (structural_search)
   Semantic Search:      1 tool  (semantic_search)
   MCP:                  3 tools (mcp_*, read_mcp_resource, list_mcp_resources)
@@ -104,6 +117,7 @@ By category:
 ## Deep Dives
 
 - [Edit Tools](./edit_tools.md) — In-depth documentation for `edit`, `multiedit`, `write`, and `append`.
+- [Workspace Search](./WORKSPACE_SEARCH.md) — Usage, parameters, and tips for `workspace_search` (FTS5).
 - [Semantic Search](./SEMANTIC_SEARCH.md) — Usage, parameters, and tips for `semantic_search`.
 - [Structural Search](../structural_search/) — Templates, languages, and usage patterns for `structural_search`.
 - [Codebase Indexing](../embeddings/CODEBASE_INDEXING.md) — Configuration, exclusion files, and how indexing works.

@@ -2,14 +2,14 @@ package model
 
 import (
 	"cmp"
+	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"charm.land/lipgloss/v2"
 	uv "github.com/charmbracelet/ultraviolet"
-	"github.com/hackafterdark/phosphor/internal/embeddings"
 	"github.com/hackafterdark/phosphor/internal/ui/common"
-	"github.com/hackafterdark/phosphor/internal/ui/styles"
 	"github.com/hackafterdark/phosphor/internal/ui/logo"
 	"github.com/hackafterdark/phosphor/pkg/config"
 )
@@ -91,63 +91,42 @@ func (m *UI) goalInfo(width int) string {
 	return lipgloss.JoinVertical(lipgloss.Left, header, objective)
 }
 
-// codebaseIndexInfo renders the codebase index status for the sidebar.
+// codebaseIndexInfo renders the workspace search index status for the sidebar.
 func (m *UI) codebaseIndexInfo(width int) string {
 	cfg := m.com.Config()
-	idx := cfg.CodebaseIndex
-	if !idx.Enabled {
+	wi := cfg.WorkspaceSearch.FullText
+	if cfg.WorkspaceSearch == nil || wi == nil || !wi.Enabled {
 		return ""
 	}
 	t := m.com.Styles
 
-	modelCfg, ok := cfg.Models[config.SelectedModelTypeEmbedding]
-	if !ok {
-		header := common.Section(t, "Codebase Embedding", width)
-		body := t.Sidebar.SessionTitle.
-			Foreground(t.Sidebar.WorkingDir.GetForeground()).
-			Width(width).
-			Render("Missing embedding model")
-		return lipgloss.JoinVertical(lipgloss.Left, header, body)
-	}
-
-	providerCfg := cfg.GetProviderForModel(config.SelectedModelTypeEmbedding)
-	providerName := ""
-	if providerCfg != nil {
-		providerName = providerCfg.Name
-	}
-
 	var parts []string
-	parts = append(parts, common.Section(t, "Codebase Embedding", width))
+	parts = append(parts, common.Section(t, "Workspace Search", width))
 	parts = append(parts, "")
-	// Icon + model name (bright) on first line, "via provider" (dim) on next — matches active_llm styling
-	modelIcon := t.ModelInfo.Icon.Render(styles.CodebaseIcon)
-	modelLine := t.ModelInfo.Name.Render(modelCfg.Model)
 
-	firstLine := fmt.Sprintf("%s %s", modelIcon, modelLine)
-	parts = append(parts, firstLine)
-
-	indent := lipgloss.NewStyle().PaddingLeft(2)
-
-	providerInfo := "via " + providerName
-	parts = append(parts, indent.Render(t.ModelInfo.Provider.Render(providerInfo)))
-
-	var statusLine string
-	if m.indexer != nil {
-		state := m.indexer.State()
-		st, processed, total, errMsg := state.Get()
-		if errMsg != "" {
-			statusLine = sanitizeIndexError(errMsg)
-		} else if st == embeddings.IndexStatusIndexing && total > 0 {
-			pct := state.Percent()
-			statusLine = fmt.Sprintf("Indexing %s/%s (%d%%)", abbrevNumber(processed), abbrevNumber(total), pct)
-		} else if st == embeddings.IndexStatusComplete {
-			statusLine = "Indexed"
-		} else {
-			statusLine = "Idle"
+	var statusParts []string
+	if m.symbolIndex != nil {
+		// Refresh progress only once per second to avoid per-draw SQL queries.
+		if m.indexProgress == nil || time.Since(m.indexProgressTime) > time.Second {
+			progress, err := m.symbolIndex.GetProgress(context.Background())
+			if err == nil {
+				m.indexProgress = progress
+				m.indexProgressTime = time.Now()
+			}
+		}
+		if m.indexProgress != nil {
+			p := m.indexProgress
+			if p.Complete {
+				statusParts = append(statusParts, t.ModelInfo.Provider.Render("Files: " + abbrevNumber(p.FilesIndexed)))
+				statusParts = append(statusParts, t.ModelInfo.Provider.Render("Symbols: " + abbrevNumber(p.SymbolsIndexed)))
+				statusParts = append(statusParts, t.ModelInfo.Provider.Render("Docs: " + abbrevNumber(p.DocsIndexed)))
+			} else {
+				statusParts = append(statusParts, t.ModelInfo.Provider.Render("Building index..."))
+			}
 		}
 	}
-	if statusLine != "" {
-		parts = append(parts, indent.Render(t.ModelInfo.Provider.Render(statusLine)))
+	for _, line := range statusParts {
+		parts = append(parts, line)
 	}
 
 	return lipgloss.JoinVertical(lipgloss.Left, lipgloss.JoinVertical(lipgloss.Left, parts...))
@@ -265,7 +244,7 @@ func (m *UI) renderSidebarComponent(cfg config.SidebarComponentConfig, width int
 		return m.modelInfo(width)
 	case "goal":
 		return m.goalInfo(width)
-	case "codebase_index":
+	case "workspace_search":
 		return m.codebaseIndexInfo(width)
 	case "files":
 		return m.sidebarListComponent(cfg, width)
@@ -300,29 +279,6 @@ func (m *UI) sidebarListComponent(cfg config.SidebarComponentConfig, width int) 
 	default:
 		return ""
 	}
-}
-// sanitizeIndexError returns a short, user-friendly message for indexing errors.
-func sanitizeIndexError(errMsg string) string {
-	if errMsg == "" {
-		return ""
-	}
-	// Map common error patterns to concise messages.
-	if strings.Contains(errMsg, "connection refused") || strings.Contains(errMsg, "connection reset") {
-		return "Indexing: API connection error"
-	}
-	if strings.Contains(errMsg, "timeout") || strings.Contains(errMsg, "deadline") {
-		return "Indexing: API timeout"
-	}
-	if strings.Contains(errMsg, "400") || strings.Contains(errMsg, "bad request") {
-		return "Indexing: request rejected"
-	}
-	if strings.Contains(errMsg, "429") || strings.Contains(errMsg, "too many requests") {
-		return "Indexing: rate limited"
-	}
-	if strings.Contains(errMsg, "5") {
-		return "Indexing: server error"
-	}
-	return "Indexing failed"
 }
 
 // abbrevNumber formats large numbers with K/M suffixes (e.g. 776849 → "776K").

@@ -69,7 +69,7 @@ func TestUpdateLayoutAndSize_EditorGrowthShrinksChat(t *testing.T) {
 	// Increase textarea content enough to trigger growth, then run the
 	// same resize hook used in the real update path.
 	prevHeight := u.textarea.Height()
-	u.textarea.SetValue(strings.Repeat("line\n", 8))
+	u.textarea.SetValue(strings.Repeat("line\n", 20))
 	u.textarea.MoveToEnd()
 	_ = u.handleTextareaHeightChange(prevHeight)
 

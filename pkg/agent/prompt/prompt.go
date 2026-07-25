@@ -68,6 +68,7 @@ type PromptDat struct {
 	AvailSkillXML             string
 	StructuralSearchAvailable bool
 	SemanticSearchAvailable   bool
+	WorkspaceSearchAvailable  bool
 	CriticalRules             string
 	CommunicationStyle        string
 	Workflow                  string
@@ -91,6 +92,7 @@ type RulesView struct {
 	Platform                  string
 	StructuralSearchAvailable bool
 	SemanticSearchAvailable   bool
+	WorkspaceSearchAvailable  bool
 }
 
 // StyleView is the data exposed to style.md.tpl partials.
@@ -134,6 +136,7 @@ type CodingProtocolView struct {
 	Platform                  string
 	StructuralSearchAvailable bool
 	SemanticSearchAvailable   bool
+	WorkspaceSearchAvailable  bool
 }
 
 // SummarizationView is the data exposed to summarization.md.tpl partials.
@@ -249,6 +252,7 @@ func (p *Prompt) Build(ctx context.Context, provider, model string, store *confi
 		Platform:                  d.Platform,
 		StructuralSearchAvailable: d.StructuralSearchAvailable,
 		SemanticSearchAvailable:   d.SemanticSearchAvailable,
+		WorkspaceSearchAvailable:  d.WorkspaceSearchAvailable,
 	})
 	if err != nil {
 		return "", err
@@ -296,6 +300,7 @@ func (p *Prompt) Build(ctx context.Context, provider, model string, store *confi
 		Platform:                  d.Platform,
 		StructuralSearchAvailable: d.StructuralSearchAvailable,
 		SemanticSearchAvailable:   d.SemanticSearchAvailable,
+		WorkspaceSearchAvailable:  d.WorkspaceSearchAvailable,
 	})
 	if err != nil {
 		return "", err
@@ -470,6 +475,7 @@ func (p *Prompt) promptData(ctx context.Context, provider, model string, store *
 		AvailSkillXML:             availSkillXML,
 		StructuralSearchAvailable: p.structuralSearchAvailable,
 		SemanticSearchAvailable:   p.semanticSearchAvailable,
+		WorkspaceSearchAvailable:  cfg.WorkspaceSearch != nil && cfg.WorkspaceSearch.FullText != nil && cfg.WorkspaceSearch.FullText.Enabled,
 	}
 	if isGit {
 		var err error

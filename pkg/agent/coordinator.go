@@ -237,8 +237,8 @@ func NewCoordinator(
 		return nil, errSystemAgentNotConfigured
 	}
 
-	idx := cfg.Config().CodebaseIndex
-	semanticSearchAvailable := idx.Enabled || idx.AutoUpdate
+	vemb := cfg.Config().WorkspaceSearch.VectorEmbeddings
+	semanticSearchAvailable := vemb != nil && (vemb.Enabled || vemb.AutoIndex)
 	prompt, err := systemPrompt(
 		prompt.WithWorkingDir(c.cfg.WorkingDir()),
 		prompt.WithSemanticSearchAvailable(semanticSearchAvailable),
@@ -953,9 +953,14 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, isSubA
 		allTools = append(allTools, tools.NewStructuralSearchTool(c.cfg.WorkingDir(), c.cfg.Config().Options.Agent.StructuralSearchLanguages))
 	}
 
+	ft := c.cfg.Config().WorkspaceSearch.FullText
+	if ft != nil && (ft.Enabled || ft.AutoIndex) {
+		allTools = append(allTools, tools.NewWorkspaceSearchTool(c.cfg.WorkingDir()))
+	}
+
 	// Add semantic search when codebase indexing is enabled or auto-update is on.
-	idx := c.cfg.Config().CodebaseIndex
-	if idx.Enabled || idx.AutoUpdate {
+	vemb := c.cfg.Config().WorkspaceSearch.VectorEmbeddings
+	if vemb != nil && (vemb.Enabled || vemb.AutoIndex) {
 		allTools = append(allTools, tools.NewSemanticSearchTool(*c.cfg.Config(), c.cfg.WorkingDir()))
 	}
 

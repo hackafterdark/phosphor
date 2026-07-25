@@ -952,7 +952,9 @@ type Config struct {
 
 	Security *SecurityConfig `json:"security,omitempty" jsonschema:"description=Security manifest and governance options"`
 
-	CodebaseIndex CodebaseIndex `json:"codebase_index,omitempty" jsonschema:"description=Codebase indexing configuration"`
+	// WorkspaceSearch holds settings for the unified workspace search system
+	// (FTS5 full-text + vector embeddings).
+	WorkspaceSearch *WorkspaceSearch `json:"workspace_search,omitempty" jsonschema:"description=Unified workspace search configuration"`
 
 	Agents map[string]Agent `json:"-"`
 }
@@ -985,27 +987,30 @@ type SecurityConfig struct {
 	ReadOnly      bool                `json:"read_only,omitempty" jsonschema:"description=Force read-only mode"`
 }
 
-type CodebaseIndex struct {
-	// Enabled enables codebase indexing. Requires models["embedding"] to be
-	// configured.
-	Enabled bool `json:"enabled" jsonschema:"description=Enable codebase indexing,default=false"`
+// WorkspaceSearch holds settings for the unified workspace search system
+// containing both FTS5 full-text and vector embedding configurations.
+type WorkspaceSearch struct {
+	FullText          *FullTextIndex          `json:"fulltext,omitempty"`
+	VectorEmbeddings *VectorEmbeddingIndex     `json:"vector_embeddings,omitempty"`
+}
 
-	// MaxChunkSize is the maximum number of characters per code chunk.
-	MaxChunkSize int `json:"max_chunk_size,omitempty" jsonschema:"description=Maximum characters per code chunk,default=512"`
+// FullTextIndex holds settings for the FTS5-based workspace search.
+type FullTextIndex struct {
+	Enabled         bool     `json:"enabled" jsonschema:"description=Enable FTS5 workspace indexing,default=false"`
+	AutoIndex       bool     `json:"auto_index" jsonschema:"description=Enable automatic index updates on file changes,default=false"`
+	DebounceMs      int      `json:"debounce_ms,omitempty" jsonschema:"description=Debounce interval in milliseconds,default=2000"`
+	ExcludePatterns []string `json:"exclude_patterns,omitempty" jsonschema:"description=Glob patterns to exclude from indexing"`
+	MaxFileSize     int      `json:"max_file_size,omitempty" jsonschema:"description=Maximum file size in bytes to index (0 = unlimited),default=1048576"`
+}
 
-	// ChunkOverlap is the number of overlapping characters between consecutive
-	// chunks to preserve semantic context across boundaries.
-	ChunkOverlap int `json:"chunk_overlap,omitempty" jsonschema:"description=Overlap in characters between consecutive chunks,default=128"`
-
-	// ExcludedPaths is a list of glob patterns for directories or files to
-	// skip during indexing.
-	ExcludedPaths []string `json:"excluded_paths,omitempty" jsonschema:"description=Patterns of paths to exclude from indexing"`
-
-	// EmbeddingDims is the expected embedding dimensionality.
-	EmbeddingDims int `json:"embedding_dims,omitempty" jsonschema:"description=Dimensionality of embedding vectors,default=384"`
-
-	// AutoUpdate enables automatic re-indexing when code files change.
-	AutoUpdate bool `json:"auto_update" jsonschema:"description=Enable automatic index updates on code changes,default=false"`
+// VectorEmbeddingIndex holds settings for vector-based codebase search.
+type VectorEmbeddingIndex struct {
+	Enabled       bool     `json:"enabled" jsonschema:"description=Enable vector embedding indexing,default=false"`
+	AutoIndex     bool     `json:"auto_index" jsonschema:"description=Enable automatic index updates,default=false"`
+	MaxChunkSize  int      `json:"max_chunk_size,omitempty" jsonschema:"description=Maximum characters per chunk,default=512"`
+	ChunkOverlap  int      `json:"chunk_overlap,omitempty" jsonschema:"description=Overlap in characters between chunks,default=128"`
+	ExcludedPaths []string `json:"excluded_paths,omitempty" jsonschema:"description=Patterns to exclude from indexing"`
+	EmbeddingDims int      `json:"embedding_dims,omitempty" jsonschema:"description=Embedding dimensionality,default=384"`
 }
 
 func (c *Config) EnabledProviders() []ProviderConfig {
@@ -1095,6 +1100,7 @@ func allToolNames() []string {
 		"reload_queries",
 		"sourcegraph",
 		"semantic_search",
+		"workspace_search",
 		"todos",
 		"view",
 		"write",

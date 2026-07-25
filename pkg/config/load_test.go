@@ -740,7 +740,7 @@ func TestConfig_setupAgentsWithDisabledTools(t *testing.T) {
 	systemAgent, ok := cfg.Agents[AgentSystem]
 	require.True(t, ok)
 
-	assert.Equal(t, []string{"agent", "bash", "phosphor_info", "phosphor_logs", "job_output", "job_kill", "multiedit", "update_goal", "lsp_diagnostics", "lsp_references", "lsp_restart", "fetch", "agentic_fetch", "glob", "ls", "structural_search", "reload_queries", "sourcegraph", "todos", "view", "write", "append", "list_mcp_resources", "read_mcp_resource"}, systemAgent.AllowedTools)
+	assert.Equal(t, []string{"agent", "bash", "phosphor_info", "phosphor_logs", "job_output", "job_kill", "multiedit", "update_goal", "lsp_diagnostics", "lsp_references", "lsp_restart", "fetch", "agentic_fetch", "glob", "ls", "structural_search", "reload_queries", "sourcegraph", "semantic_search", "workspace_search", "todos", "view", "write", "append", "list_mcp_resources", "read_mcp_resource"}, systemAgent.AllowedTools)
 
 	taskAgent, ok := cfg.Agents[AgentTask]
 	require.True(t, ok)
@@ -764,7 +764,7 @@ func TestConfig_setupAgentsWithEveryReadOnlyToolDisabled(t *testing.T) {
 	cfg.SetupAgents()
 	systemAgent, ok := cfg.Agents[AgentSystem]
 	require.True(t, ok)
-	assert.Equal(t, []string{"agent", "bash", "phosphor_info", "phosphor_logs", "job_output", "job_kill", "download", "edit", "multiedit", "update_goal", "lsp_diagnostics", "lsp_references", "lsp_restart", "fetch", "agentic_fetch", "reload_queries", "todos", "write", "append", "list_mcp_resources", "read_mcp_resource"}, systemAgent.AllowedTools)
+	assert.Equal(t, []string{"agent", "bash", "phosphor_info", "phosphor_logs", "job_output", "job_kill", "download", "edit", "multiedit", "update_goal", "lsp_diagnostics", "lsp_references", "lsp_restart", "fetch", "agentic_fetch", "reload_queries", "semantic_search", "workspace_search", "todos", "write", "append", "list_mcp_resources", "read_mcp_resource"}, systemAgent.AllowedTools)
 
 	taskAgent, ok := cfg.Agents[AgentTask]
 	require.True(t, ok)

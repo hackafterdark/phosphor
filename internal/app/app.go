@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -22,6 +23,8 @@ import (
 	"github.com/charmbracelet/x/exp/charmtone"
 	"github.com/charmbracelet/x/term"
 	"github.com/hackafterdark/phosphor/internal/clipboard"
+	"github.com/hackafterdark/phosphor/internal/lock"
+	"github.com/hackafterdark/phosphor/internal/workspaceindex"
 	"github.com/hackafterdark/phosphor/internal/format"
 	"github.com/hackafterdark/phosphor/internal/log"
 	"github.com/hackafterdark/phosphor/internal/ui/anim"
@@ -68,6 +71,10 @@ type App struct {
 	LSPManager *lsp.Manager
 
 	Skills *skills.Manager
+
+	SymbolIndex *workspaceindex.Store
+	SymbolWatcher *workspaceindex.Watcher
+	indexBuildWG  sync.WaitGroup // tracks background workspace index build
 
 	config *config.ConfigStore
 
@@ -125,6 +132,65 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore, skillsMgr
 		tuiWG:              &sync.WaitGroup{},
 		agentNotifications: pubsub.NewBroker[notify.Notification](),
 		runCompletions:     pubsub.NewBroker[notify.RunComplete](),
+	}
+
+	// Initialize the workspace symbol index store.
+	indexStore, err := workspaceindex.NewStore(store.WorkingDir())
+	if err != nil {
+		slog.Warn("Failed to initialize workspace index", "error", err)
+	} else {
+		app.SymbolIndex = indexStore
+		app.cleanupFuncs = append(
+			app.cleanupFuncs,
+			func(context.Context) error {
+				app.indexBuildWG.Wait()
+				return indexStore.Close()
+			},
+		)
+
+		if cfg.WorkspaceSearch != nil && cfg.WorkspaceSearch.FullText != nil && cfg.WorkspaceSearch.FullText.AutoIndex {
+			wi := cfg.WorkspaceSearch.FullText
+			debounceMs := wi.DebounceMs
+			if debounceMs == 0 {
+				debounceMs = 2000
+			}
+			watcher := workspaceindex.NewWatcher(indexStore, store.WorkingDir(), wi.ExcludePatterns, debounceMs)
+			if err := watcher.Start(); err != nil {
+				slog.Warn("Failed to start workspace index watcher", "error", err)
+			} else {
+				app.SymbolWatcher = watcher
+				app.cleanupFuncs = append(
+					app.cleanupFuncs,
+					func(context.Context) error {
+						watcher.Stop()
+						return nil
+					},
+				)
+			}
+		}
+
+		// Build the initial workspace index in the background.
+		if cfg.WorkspaceSearch != nil && cfg.WorkspaceSearch.FullText != nil && cfg.WorkspaceSearch.FullText.Enabled {
+			wi := cfg.WorkspaceSearch.FullText
+			lockPath := filepath.Join(store.WorkingDir(), ".phosphor", "workspace_index.lock")
+			release, err := lock.TryFile(lockPath)
+			if err != nil {
+				slog.Warn("Another process is building the workspace index, skipping", "error", err)
+				return app, nil
+			}
+			app.indexBuildWG.Go(func() {
+				defer release()
+				indexer := workspaceindex.NewIndexer(indexStore, wi.MaxFileSize)
+				if err := indexer.IndexWorkspace(ctx, store.WorkingDir(), wi.ExcludePatterns); err != nil {
+					slog.Warn("Failed to build workspace index", "error", err)
+				} else {
+					files, _ := indexStore.CountFiles(ctx)
+					symbols, _ := indexStore.CountSymbols(ctx)
+					docs, _ := indexStore.CountDocs(ctx)
+					slog.Info("Workspace index built", "files", files, "symbols", symbols, "docs", docs)
+				}
+			})
+		}
 	}
 
 	app.setupEvents()

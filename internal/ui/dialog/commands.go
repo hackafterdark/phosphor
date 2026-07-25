@@ -484,10 +484,13 @@ func (c *Commands) defaultCommands() []*CommandItem {
 
 	cfg := c.com.Config()
 	// Add codebase indexing command when codebase_index is enabled.
-	if cfg.CodebaseIndex.Enabled {
-		commands = append(commands, NewCommandItem(c.com.Styles, "codebase_index", "Codebase Index", "", ActionOpenDialog{
-			DialogID: CodebaseIndexID,
-		}))
+	if cfg != nil && cfg.WorkspaceSearch != nil {
+		vemb := cfg.WorkspaceSearch.VectorEmbeddings
+		if vemb != nil && vemb.Enabled {
+			commands = append(commands, NewCommandItem(c.com.Styles, "codebase_index", "Codebase Index", "", ActionOpenDialog{
+				DialogID: CodebaseIndexID,
+			}))
+		}
 	}
 
 	// Add reasoning toggle for models that support it

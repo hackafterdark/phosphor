@@ -84,7 +84,10 @@ func NewCodebaseIndexDialog(com *common.Common) *CodebaseIndexDialog {
 	d := &CodebaseIndexDialog{com: com}
 	d.list = list.NewList()
 
-	autoUpdate := com.Config().CodebaseIndex.AutoUpdate
+	autoUpdate := false
+	if com.Config().WorkspaceSearch != nil && com.Config().WorkspaceSearch.VectorEmbeddings != nil {
+		autoUpdate = com.Config().WorkspaceSearch.VectorEmbeddings.AutoIndex
+	}
 	d.list.SetItems(
 		&CodebaseIndexItem{Versioned: list.NewVersioned(), Title: "Index Codebase", ID: "index", filter: "index codebase", Action: ActionIndexCodebase{}, t: com.Styles},
 		&CodebaseIndexItem{Versioned: list.NewVersioned(), Title: "Clear Index", ID: "clear", filter: "clear index", Action: ActionClearCodebaseIndex{}, t: com.Styles},

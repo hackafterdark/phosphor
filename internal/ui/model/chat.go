@@ -419,7 +419,7 @@ func (m *Chat) ScrollToTop() {
 // ScrollBy scrolls the chat view by the given number of line deltas.
 func (m *Chat) ScrollBy(lines int) {
 	m.list.ScrollBy(lines)
-	m.follow = lines > 0 && m.AtBottom() // Disable follow mode if user scrolls up
+	m.follow = lines >= 0 // Disable follow mode only when scrolling up
 }
 
 // ScrollToSelected scrolls the chat view to the selected item.

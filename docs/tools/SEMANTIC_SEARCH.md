@@ -36,7 +36,7 @@ Returns up to `count` results, each containing:
 
 ## Requirements
 
-- `codebase_index.enabled` or `codebase_index.auto_update` must be true in `phosphor.json`
+- `workspace_search.vector_embeddings.enabled` or `workspace_search.vector_embeddings.auto_index` must be true in `phosphor.json`
 - An embedding model must be configured in `models["embedding"]`
 - The codebase must be indexed (or currently being indexed — WAL mode allows concurrent queries)
 
