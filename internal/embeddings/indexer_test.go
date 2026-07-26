@@ -67,7 +67,7 @@ func TestIndexer_Cancel(t *testing.T) {
 	// Create a test file so the cancel check triggers.
 	testFile := tmpDir + "/test.txt"
 	os.WriteFile(testFile, []byte("hello world\n"), 0o644)
-	
+
 	indexer := NewIndexer(client, store, state, 512, 64, nil)
 	close(indexer.cancelCh)
 	err = indexer.IndexWorkspace(context.Background(), tmpDir, nil)

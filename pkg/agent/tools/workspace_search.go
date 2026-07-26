@@ -17,7 +17,7 @@ const WorkspaceSearchToolName = "workspace_search"
 type WorkspaceSearchParams struct {
 	Query string `json:"query" description:"Search query (keywords or identifier)"`
 	Table string `json:"table" description:"Which table to search: 'symbols', 'docs', or 'all' (default: 'all')"`
-	Limit int   `json:"limit,omitempty" description:"Max results (default: 10, max: 50)"`
+	Limit int    `json:"limit,omitempty" description:"Max results (default: 10, max: 50)"`
 }
 
 func NewWorkspaceSearchTool(workingDir string) fantasy.AgentTool {

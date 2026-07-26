@@ -289,6 +289,12 @@ type UI struct {
 	// forceCompactMode tracks whether compact mode is forced by user toggle
 	forceCompactMode bool
 
+	// userMessageAwaited is true when sendMessage has been called but the
+	// corresponding CreatedEvent for the user message has not yet been
+	// processed by appendSessionMessage. Used to delay clearing the textarea
+	// until the user message is confirmed displayed in the chat.
+	userMessageAwaited bool
+
 	// isCompact tracks whether we're currently in compact layout mode (either
 	// by user toggle or auto-switch based on window size)
 	isCompact bool
@@ -1510,6 +1516,15 @@ func (m *UI) appendSessionMessage(msg message.Message) tea.Cmd {
 		if cmd := m.chat.ScrollToBottomAndAnimate(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
+		// User message confirmed in chat; now safe to clear the textarea.
+		if m.userMessageAwaited {
+			m.userMessageAwaited = false
+			prevHeight := m.textarea.Height()
+			m.textarea.Reset()
+			if cmd := m.handleTextareaHeightChange(prevHeight); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
 	case message.Assistant:
 		items := chat.ExtractMessageItems(m.com.Styles, &msg, nil)
 		for _, item := range items {
@@ -2603,12 +2618,8 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 					break
 				}
 
-				// Otherwise, send the message
-				m.textarea.Reset()
-				if cmd := m.handleTextareaHeightChange(prevHeight); cmd != nil {
-					cmds = append(cmds, cmd)
-				}
-
+				// Mark that we're waiting for the user message to appear in chat.
+				m.userMessageAwaited = true
 				value = strings.TrimSpace(value)
 				if value == "exit" || value == "quit" {
 					return m.openQuitDialog()
@@ -4170,7 +4181,12 @@ func (m *UI) handleNameSlashCommand(args []string) tea.Cmd {
 		return util.ReportWarn("Start a session first.")
 	}
 	if len(args) == 0 {
-		return func() tea.Msg { return util.NewInfoMsg(fmt.Sprintf("Session name: %q", m.session.Title)) }
+		return func() tea.Msg {
+			if err := m.com.Workspace.AgentGenerateTitle(context.Background(), m.session.ID); err != nil {
+				return util.ReportError(err)()
+			}
+			return util.NewInfoMsg("Generating session title...")
+		}
 	}
 
 	title := strings.Join(args, " ")

@@ -46,8 +46,8 @@ func NewSemanticSearchTool(cfg config.Config, workingDir string) fantasy.AgentTo
 
 			vemb := cfg.WorkspaceSearch.VectorEmbeddings
 			if vemb == nil || (!vemb.Enabled && !vemb.AutoIndex) {
-			return fantasy.NewTextErrorResponse("Codebase indexing is not enabled"), nil
-		}
+				return fantasy.NewTextErrorResponse("Codebase indexing is not enabled"), nil
+			}
 
 			modelCfg, ok := cfg.Models[config.SelectedModelTypeEmbedding]
 			if !ok {

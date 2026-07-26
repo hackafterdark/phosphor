@@ -19,8 +19,8 @@ const (
 
 // IndexState tracks the progress and status of codebase indexing.
 type IndexState struct {
-	mu          sync.RWMutex
-	Status      IndexStatus
+	mu            sync.RWMutex
+	Status        IndexStatus
 	ChunksIndexed int
 	TotalChunks   int
 	UpdatedAt     time.Time
@@ -30,8 +30,8 @@ type IndexState struct {
 // NewIndexState creates a new IndexState in the idle status.
 func NewIndexState() *IndexState {
 	return &IndexState{
-		Status:      IndexStatusIdle,
-		UpdatedAt:   time.Now(),
+		Status:    IndexStatusIdle,
+		UpdatedAt: time.Now(),
 	}
 }
 

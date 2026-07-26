@@ -1022,9 +1022,11 @@ func (c *coordinator) buildAgentModels(ctx context.Context, isSubAgent bool) (Mo
 	if !ok {
 		return Model{}, Model{}, errLargeModelNotSelected
 	}
-	smallModelCfg, ok := c.cfg.Config().Models[config.SelectedModelTypeSmall]
-	if !ok {
-		return Model{}, Model{}, errSmallModelNotSelected
+	hasSmallModel := false
+	var smallModelCfg config.SelectedModel
+	if cfg, ok := c.cfg.Config().Models[config.SelectedModelTypeSmall]; ok {
+		hasSmallModel = true
+		smallModelCfg = cfg
 	}
 
 	largeProviderCfg, ok := c.cfg.Config().Providers.Get(largeModelCfg.Provider)
@@ -1037,69 +1039,78 @@ func (c *coordinator) buildAgentModels(ctx context.Context, isSubAgent bool) (Mo
 		return Model{}, Model{}, err
 	}
 
-	smallProviderCfg, ok := c.cfg.Config().Providers.Get(smallModelCfg.Provider)
-	if !ok {
-		return Model{}, Model{}, errSmallModelProviderNotConfigured
-	}
-
-	smallProvider, err := c.buildProvider(smallProviderCfg, smallModelCfg, true)
-	if err != nil {
-		return Model{}, Model{}, err
-	}
-
 	var largeCatwalkModel *catwalk.Model
-	var smallCatwalkModel *catwalk.Model
-
 	for _, m := range largeProviderCfg.Models {
 		if m.ID == largeModelCfg.Model {
 			largeCatwalkModel = &m
 		}
 	}
-	for _, m := range smallProviderCfg.Models {
-		if m.ID == smallModelCfg.Model {
-			smallCatwalkModel = &m
-		}
-	}
-
 	if largeCatwalkModel == nil {
 		return Model{}, Model{}, errLargeModelNotFound
 	}
 
-	if smallCatwalkModel == nil {
-		return Model{}, Model{}, errSmallModelNotFound
-	}
-
 	largeModelID := largeModelCfg.Model
-	smallModelID := smallModelCfg.Model
-
 	if largeModelCfg.Provider == openrouter.Name && isExactoSupported(largeModelID) {
 		largeModelID += ":exacto"
-	}
-
-	if smallModelCfg.Provider == openrouter.Name && isExactoSupported(smallModelID) {
-		smallModelID += ":exacto"
 	}
 
 	largeModel, err := largeProvider.LanguageModel(ctx, largeModelID)
 	if err != nil {
 		return Model{}, Model{}, err
 	}
-	smallModel, err := smallProvider.LanguageModel(ctx, smallModelID)
-	if err != nil {
-		return Model{}, Model{}, err
+
+	if hasSmallModel {
+		var smallCatwalkModel *catwalk.Model
+		smallProviderCfg, ok := c.cfg.Config().Providers.Get(smallModelCfg.Provider)
+		if !ok {
+			return Model{}, Model{}, errSmallModelProviderNotConfigured
+		}
+
+		smallProvider, err := c.buildProvider(smallProviderCfg, smallModelCfg, true)
+		if err != nil {
+			return Model{}, Model{}, err
+		}
+
+		for _, m := range smallProviderCfg.Models {
+			if m.ID == smallModelCfg.Model {
+				smallCatwalkModel = &m
+			}
+		}
+
+		if smallCatwalkModel == nil {
+			return Model{}, Model{}, errSmallModelNotFound
+		}
+
+		smallModelID := smallModelCfg.Model
+		if smallModelCfg.Provider == openrouter.Name && isExactoSupported(smallModelID) {
+			smallModelID += ":exacto"
+		}
+
+		smallModel, err := smallProvider.LanguageModel(ctx, smallModelID)
+		if err != nil {
+			return Model{}, Model{}, err
+		}
+
+		return Model{
+				Model:      largeModel,
+				CatwalkCfg: *largeCatwalkModel,
+				ModelCfg:   largeModelCfg,
+				FlatRate:   largeProviderCfg.FlatRate,
+			}, Model{
+				Model:      smallModel,
+				CatwalkCfg: *smallCatwalkModel,
+				ModelCfg:   smallModelCfg,
+				FlatRate:   smallProviderCfg.FlatRate,
+			}, nil
 	}
 
+	// Small model not configured — large model will be used for title generation.
 	return Model{
-			Model:      largeModel,
-			CatwalkCfg: *largeCatwalkModel,
-			ModelCfg:   largeModelCfg,
-			FlatRate:   largeProviderCfg.FlatRate,
-		}, Model{
-			Model:      smallModel,
-			CatwalkCfg: *smallCatwalkModel,
-			ModelCfg:   smallModelCfg,
-			FlatRate:   smallProviderCfg.FlatRate,
-		}, nil
+		Model:      largeModel,
+		CatwalkCfg: *largeCatwalkModel,
+		ModelCfg:   largeModelCfg,
+		FlatRate:   largeProviderCfg.FlatRate,
+	}, Model{}, nil
 }
 
 func (c *coordinator) buildAnthropicProvider(baseURL, apiKey string, headers map[string]string, providerID string) (fantasy.Provider, error) {
@@ -1549,6 +1560,9 @@ func (c *coordinator) Summarize(ctx context.Context, sessionID string) error {
 
 	switch sumModel {
 	case "small":
+		if c.smallModel.Model == nil {
+			return c.summarizeWithModel(ctx, sessionID, c.largeModel)
+		}
 		return c.summarizeWithModel(ctx, sessionID, c.smallModel)
 	default: // "main", "large"
 		return c.summarizeWithModel(ctx, sessionID, c.largeModel)

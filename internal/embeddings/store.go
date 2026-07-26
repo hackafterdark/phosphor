@@ -44,7 +44,7 @@ func NewStore(workspaceDir string) (*Store, error) {
 
 	// The vec0 extension is auto-registered by importing modernc.org/sqlite/vec.
 
-// Create the vector virtual table.
+	// Create the vector virtual table.
 	db.Exec(`
 		CREATE VIRTUAL TABLE IF NOT EXISTS vec_chunks USING vec0(
 			vector float[384]
@@ -125,7 +125,7 @@ func (s *Store) Insert(ctx context.Context, filePath, contentHash, content strin
 		return fmt.Errorf("begin tx: %w", err)
 	}
 
-// Insert vector into vec_chunks.
+	// Insert vector into vec_chunks.
 	_, err = tx.ExecContext(ctx,
 		"INSERT INTO vec_chunks(vector) VALUES (vec_f32(?))",
 		vectorToBlob(vector))
@@ -167,7 +167,7 @@ func (s *Store) Migrate(ctx context.Context) error {
 // Search finds the top-k nearest neighbors for a query vector.
 func (s *Store) Search(ctx context.Context, query []float32, k int) ([]SearchResult, error) {
 	queryBlob := vectorToBlob(query)
-rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, `
 		SELECT chunk_meta.id, chunk_meta.file_path, chunk_meta.offset, chunk_meta.content, sub.distance
 		FROM chunk_meta
 		JOIN (SELECT rowid, distance FROM vec_chunks WHERE vector MATCH vec_f32(?) LIMIT ?) sub
@@ -297,11 +297,11 @@ func (s *Store) Close() error {
 
 // SearchResult holds a single semantic search hit.
 type SearchResult struct {
-	ID        string
-	FilePath  string
-	Offset    int
-	Content   string
-	Distance  float64
+	ID       string
+	FilePath string
+	Offset   int
+	Content  string
+	Distance float64
 }
 
 // vectorToBlob converts a float32 slice to a byte blob for sqlite-vec.

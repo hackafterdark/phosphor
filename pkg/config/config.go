@@ -53,8 +53,8 @@ func (s SelectedModelType) String() string {
 }
 
 const (
-	SelectedModelTypeLarge   SelectedModelType = "large"
-	SelectedModelTypeSmall   SelectedModelType = "small"
+	SelectedModelTypeLarge     SelectedModelType = "large"
+	SelectedModelTypeSmall     SelectedModelType = "small"
 	SelectedModelTypeEmbedding SelectedModelType = "embedding"
 )
 
@@ -417,17 +417,17 @@ func (Attribution) JSONSchemaExtend(schema *jsonschema.Schema) {
 }
 
 type Options struct {
-	ContextPaths         []string    `json:"context_paths,omitempty" jsonschema:"description=Paths to files containing context information for the AI,example=.cursorrules,example=PHOSPHOR.md"`
-	GlobalContextPaths   []string    `json:"global_context_paths,omitempty" jsonschema:"description=Paths to files containing global context information for the AI,default=~/.config/phosphor/PHOSPHOR.md,default=~/.config/AGENTS.md"`
-	SkillsPaths          []string    `json:"skills_paths,omitempty" jsonschema:"description=Paths to directories containing Agent Skills (folders with SKILL.md files),example=~/.config/phosphor/skills,example=./skills"`
-	TUI                  *TUIOptions `json:"tui,omitempty" jsonschema:"description=Terminal user interface options"`
-	Debug                bool        `json:"debug,omitempty" jsonschema:"description=Enable debug logging,default=false"`
-	DebugLSP             bool        `json:"debug_lsp,omitempty" jsonschema:"description=Enable debug logging for LSP servers,default=false"`
-	DisableAutoSummarize bool        `json:"disable_auto_summarize,omitempty" jsonschema:"description=Disable automatic conversation summarization,default=false"`
-	SummarizeThreshold   float64     `json:"summarize_threshold,omitempty" jsonschema:"description=Fraction of context window at which to trigger auto-summarization (0-1, default=0.8),default=0.8"`
-	SummarizeModel        string      `json:'summarize_model,omitempty' jsonschema:'description=Model to use for summarization: 'main'/'large' (default) or 'small',default=main'`
-	SummarizeToolOutputChars int `json:'summarize_tool_output_chars,omitempty' jsonschema:'description=Max chars to keep per tool output during compaction pruning,default=200'`
-	SummarizeToolOutputAggressiveChars int `json:'summarize_tool_output_aggressive_chars,omitempty' jsonschema:'description=Max chars per tool output for overflow recovery pruning,default=50'`
+	ContextPaths                       []string    `json:"context_paths,omitempty" jsonschema:"description=Paths to files containing context information for the AI,example=.cursorrules,example=PHOSPHOR.md"`
+	GlobalContextPaths                 []string    `json:"global_context_paths,omitempty" jsonschema:"description=Paths to files containing global context information for the AI,default=~/.config/phosphor/PHOSPHOR.md,default=~/.config/AGENTS.md"`
+	SkillsPaths                        []string    `json:"skills_paths,omitempty" jsonschema:"description=Paths to directories containing Agent Skills (folders with SKILL.md files),example=~/.config/phosphor/skills,example=./skills"`
+	TUI                                *TUIOptions `json:"tui,omitempty" jsonschema:"description=Terminal user interface options"`
+	Debug                              bool        `json:"debug,omitempty" jsonschema:"description=Enable debug logging,default=false"`
+	DebugLSP                           bool        `json:"debug_lsp,omitempty" jsonschema:"description=Enable debug logging for LSP servers,default=false"`
+	DisableAutoSummarize               bool        `json:"disable_auto_summarize,omitempty" jsonschema:"description=Disable automatic conversation summarization,default=false"`
+	SummarizeThreshold                 float64     `json:"summarize_threshold,omitempty" jsonschema:"description=Fraction of context window at which to trigger auto-summarization (0-1, default=0.8),default=0.8"`
+	SummarizeModel                     string      `json:'summarize_model,omitempty' jsonschema:'description=Model to use for summarization: 'main'/'large' (default) or 'small',default=main'`
+	SummarizeToolOutputChars           int         `json:'summarize_tool_output_chars,omitempty' jsonschema:'description=Max chars to keep per tool output during compaction pruning,default=200'`
+	SummarizeToolOutputAggressiveChars int         `json:'summarize_tool_output_aggressive_chars,omitempty' jsonschema:'description=Max chars per tool output for overflow recovery pruning,default=50'`
 	// DataDirectory is where Phosphor keeps per-project state such as
 	// the SQLite database and workspace overrides. Relative paths are
 	// resolved against the working directory; absolute paths are used
@@ -453,8 +453,6 @@ type Options struct {
 	// and turn limits. When nil, sensible defaults are applied at use time.
 	Agent *AgentConfig `json:"agent,omitempty" jsonschema:"description=Agent runtime configuration"`
 }
-
-
 
 // AgentConfig controls agent-specific runtime behavior.
 type AgentConfig struct {
@@ -990,8 +988,8 @@ type SecurityConfig struct {
 // WorkspaceSearch holds settings for the unified workspace search system
 // containing both FTS5 full-text and vector embedding configurations.
 type WorkspaceSearch struct {
-	FullText          *FullTextIndex          `json:"fulltext,omitempty"`
-	VectorEmbeddings *VectorEmbeddingIndex     `json:"vector_embeddings,omitempty"`
+	FullText         *FullTextIndex        `json:"fulltext,omitempty"`
+	VectorEmbeddings *VectorEmbeddingIndex `json:"vector_embeddings,omitempty"`
 }
 
 // FullTextIndex holds settings for the FTS5-based workspace search.

@@ -19,10 +19,10 @@ import (
 
 	"charm.land/fantasy"
 	"github.com/hackafterdark/phosphor/internal/filepathext"
+	"github.com/hackafterdark/phosphor/internal/workspaceindex"
 	"github.com/hackafterdark/phosphor/pkg/filetracker"
 	"github.com/hackafterdark/phosphor/pkg/lsp"
 	"github.com/hackafterdark/phosphor/pkg/otel"
-	"github.com/hackafterdark/phosphor/internal/workspaceindex"
 	"github.com/hackafterdark/phosphor/pkg/permission"
 	"github.com/hackafterdark/phosphor/pkg/skills"
 	"go.opentelemetry.io/otel/attribute"
@@ -246,35 +246,35 @@ func NewViewTool(
 				), nil
 			}
 
-// Read the file content
-		content, hasMore, err := readTextFile(filePath, params.Offset, params.Limit, MaxViewSize)
-		if err != nil {
-			var tooLarge contentTooLargeError
-			if errors.As(err, &tooLarge) {
-				return fantasy.NewTextErrorResponse(fmt.Sprintf("Content section is too large (%d bytes). Maximum size is %d bytes",
-					tooLarge.Size, tooLarge.Max)), nil
+			// Read the file content
+			content, hasMore, err := readTextFile(filePath, params.Offset, params.Limit, MaxViewSize)
+			if err != nil {
+				var tooLarge contentTooLargeError
+				if errors.As(err, &tooLarge) {
+					return fantasy.NewTextErrorResponse(fmt.Sprintf("Content section is too large (%d bytes). Maximum size is %d bytes",
+						tooLarge.Size, tooLarge.Max)), nil
+				}
+				return fantasy.ToolResponse{}, fmt.Errorf("error reading file: %w", err)
 			}
-			return fantasy.ToolResponse{}, fmt.Errorf("error reading file: %w", err)
-		}
 
-ext := strings.ToLower(filepath.Ext(filePath))
-		if !utf8.ValidString(content) || isDocExt(ext) {
-			// Try document conversion for binary formats.
-			data, readErr := os.ReadFile(filePath)
-			if readErr == nil {
-				converted, convErr := workspaceindex.ConvertDocument(data, ext)
-				if convErr != nil {
-					return fantasy.NewTextErrorResponse(fmt.Sprintf("Document conversion failed: %v", convErr)), nil
+			ext := strings.ToLower(filepath.Ext(filePath))
+			if !utf8.ValidString(content) || isDocExt(ext) {
+				// Try document conversion for binary formats.
+				data, readErr := os.ReadFile(filePath)
+				if readErr == nil {
+					converted, convErr := workspaceindex.ConvertDocument(data, ext)
+					if convErr != nil {
+						return fantasy.NewTextErrorResponse(fmt.Sprintf("Document conversion failed: %v", convErr)), nil
+					}
+					if converted != "" {
+						content = converted
+						hasMore = false
+					}
 				}
-				if converted != "" {
-					content = converted
-					hasMore = false
+				if !utf8.ValidString(content) {
+					return fantasy.NewTextErrorResponse("File content is not valid UTF-8"), nil
 				}
 			}
-			if !utf8.ValidString(content) {
-				return fantasy.NewTextErrorResponse("File content is not valid UTF-8"), nil
-			}
-		}
 
 			openInLSPs(ctx, lspManager, filePath)
 			waitForLSPDiagnostics(ctx, lspManager, filePath, 300*time.Millisecond)

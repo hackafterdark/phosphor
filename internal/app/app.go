@@ -23,14 +23,14 @@ import (
 	"github.com/charmbracelet/x/exp/charmtone"
 	"github.com/charmbracelet/x/term"
 	"github.com/hackafterdark/phosphor/internal/clipboard"
-	"github.com/hackafterdark/phosphor/internal/lock"
-	"github.com/hackafterdark/phosphor/internal/workspaceindex"
 	"github.com/hackafterdark/phosphor/internal/format"
+	"github.com/hackafterdark/phosphor/internal/lock"
 	"github.com/hackafterdark/phosphor/internal/log"
 	"github.com/hackafterdark/phosphor/internal/ui/anim"
 	"github.com/hackafterdark/phosphor/internal/ui/styles"
 	"github.com/hackafterdark/phosphor/internal/update"
 	"github.com/hackafterdark/phosphor/internal/version"
+	"github.com/hackafterdark/phosphor/internal/workspaceindex"
 	"github.com/hackafterdark/phosphor/pkg/agent"
 	"github.com/hackafterdark/phosphor/pkg/agent/notify"
 	"github.com/hackafterdark/phosphor/pkg/agent/parser"
@@ -72,7 +72,7 @@ type App struct {
 
 	Skills *skills.Manager
 
-	SymbolIndex *workspaceindex.Store
+	SymbolIndex   *workspaceindex.Store
 	SymbolWatcher *workspaceindex.Watcher
 	indexBuildWG  sync.WaitGroup // tracks background workspace index build
 

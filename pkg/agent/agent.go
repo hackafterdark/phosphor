@@ -787,16 +787,6 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 		}
 	}
 
-	var wg sync.WaitGroup
-	// Generate title from the first real (non-shell) user prompt.
-	if !hasUserTextMessage(msgs) {
-		titleCtx := ctx // Copy to avoid race with ctx reassignment below.
-		wg.Go(func() {
-			a.GenerateTitle(titleCtx, call.SessionID, call.Prompt)
-		})
-	}
-	defer wg.Wait()
-
 	// Add the user message to the session.
 	_, err = a.createUserMessage(ctx, call)
 	if err != nil {
@@ -1260,7 +1250,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 				}
 			}
 			currentAssistant.AddFinish(finishReason, "", "")
-sessionLock.Lock()
+			sessionLock.Lock()
 			defer sessionLock.Unlock()
 
 			updatedSession, getSessionErr := a.sessions.Get(ctx, call.SessionID)
@@ -1340,6 +1330,24 @@ sessionLock.Lock()
 		history = append(history, fantasy.NewSystemMessage(correctionMsg))
 		// Re-run the agent with the correction message.
 		return a.Run(ctx, call)
+	}
+
+	if err == nil && !call.IsStateless {
+		if dbMsgs, dbErr := a.messages.List(ctx, call.SessionID); dbErr == nil {
+			var userMsgCount int
+			for _, m := range dbMsgs {
+				if m.Role == message.User {
+					userMsgCount++
+				}
+			}
+			if userMsgCount == 1 {
+				titleCtx, titleCancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+				go func() {
+					defer titleCancel()
+					a.GenerateTitle(titleCtx, call.SessionID, call.Prompt)
+				}()
+			}
+		}
 	}
 
 	if err != nil {
@@ -2120,21 +2128,128 @@ func hasUserTextMessage(msgs []message.Message) bool {
 // GenerateTitle generates a session title based on the initial prompt.
 func (a *sessionAgent) GenerateTitle(ctx context.Context, sessionID string, userPrompt string) {
 	if userPrompt == "" {
+		if msgs, err := a.messages.List(ctx, sessionID); err == nil {
+			for _, m := range msgs {
+				if m.Role == message.User {
+					for _, part := range m.Parts {
+						if tc, ok := part.(message.TextContent); ok && tc.Text != "" {
+							userPrompt = tc.Text
+							break
+						}
+					}
+				}
+				if userPrompt != "" {
+					break
+				}
+			}
+		}
+	}
+	if userPrompt == "" {
 		return
 	}
+
+	// Find the last assistant message in this session to attach the tool call to.
+	var assistantMsg *message.Message
+	if msgs, err := a.messages.List(ctx, sessionID); err == nil {
+		for i := len(msgs) - 1; i >= 0; i-- {
+			if msgs[i].Role == message.Assistant {
+				assistantMsg = &msgs[i]
+				break
+			}
+		}
+	}
+
+	toolCallID := "call_auto_title_" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	var title string
+	var success bool
 
 	// Ensure the session always gets a title even if every path below
 	// fails or the context is cancelled before we finish.
 	var titleSaved bool
 	defer func() {
+		fallbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+
 		if !titleSaved {
-			fallbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-			defer cancel()
-			if err := a.sessions.Rename(fallbackCtx, sessionID, DefaultSessionName); err != nil {
-				slog.Error("Failed to save fallback session title", "error", err)
+			var currentTitle string
+			if s, err := a.sessions.Get(fallbackCtx, sessionID); err == nil {
+				currentTitle = s.Title
+			}
+			if currentTitle == "" || currentTitle == DefaultSessionName || currentTitle == "New Session" {
+				if err := a.sessions.Rename(fallbackCtx, sessionID, DefaultSessionName); err != nil {
+					slog.Error("Failed to save fallback session title", "error", err)
+				}
+			}
+		}
+
+		if assistantMsg != nil {
+			// Always make sure the tool call is finished so the TUI spinner stops!
+			if currentMsg, getErr := a.messages.Get(fallbackCtx, assistantMsg.ID); getErr == nil {
+				var tcFound bool
+				for i, part := range currentMsg.Parts {
+					if tc, ok := part.(message.ToolCall); ok && tc.ID == toolCallID {
+						if !tc.Finished {
+							tc.Finished = true
+							currentMsg.Parts[i] = tc
+							tcFound = true
+						}
+						break
+					}
+				}
+				if tcFound {
+					_ = a.messages.Update(fallbackCtx, currentMsg)
+				}
+			}
+
+			// Ensure a tool result message is created.
+			if msgs, listErr := a.messages.List(fallbackCtx, sessionID); listErr == nil {
+				hasResult := false
+				for _, m := range msgs {
+					if m.Role == message.Tool {
+						for _, r := range m.ToolResults() {
+							if r.ToolCallID == toolCallID {
+								hasResult = true
+								break
+							}
+						}
+					}
+				}
+				if !hasResult {
+					var resultStr string
+					if titleSaved {
+						resultStr = fmt.Sprintf("Session successfully renamed to %q", title)
+					} else {
+						resultStr = "Failed to generate title"
+					}
+					toolResult := message.ToolResult{
+						ToolCallID: toolCallID,
+						Name:       "auto_title",
+						Content:    resultStr,
+						IsError:    !titleSaved,
+					}
+					_, _ = a.messages.Create(fallbackCtx, sessionID, message.CreateMessageParams{
+						Role: message.Tool,
+						Parts: []message.ContentPart{
+							toolResult,
+						},
+					})
+				}
 			}
 		}
 	}()
+
+	if assistantMsg != nil {
+		tc := message.ToolCall{
+			ID:       toolCallID,
+			Name:     "auto_title",
+			Input:    `{}`,
+			Finished: false,
+		}
+		assistantMsg.AddToolCall(tc)
+		if err := a.messages.Update(ctx, *assistantMsg); err != nil {
+			slog.Error("Failed to add auto_title tool call to assistant message", "error", err)
+		}
+	}
 
 	smallModel := a.smallModel.Get()
 	largeModel := a.largeModel.Get()
@@ -2150,7 +2265,7 @@ func (a *sessionAgent) GenerateTitle(ctx context.Context, sessionID string, user
 	}
 
 	streamCall := fantasy.AgentStreamCall{
-		Prompt: fmt.Sprintf("Generate a concise title for the following content:\n\n%s\n <think>\n\n</think>", userPrompt),
+		Prompt: userPrompt,
 		PrepareStep: func(callCtx context.Context, opts fantasy.PrepareStepFunctionOptions) (_ context.Context, prepared fantasy.PrepareStepResult, err error) {
 			prepared.Messages = opts.Messages
 			if systemPromptPrefix != "" {
@@ -2166,48 +2281,53 @@ func (a *sessionAgent) GenerateTitle(ctx context.Context, sessionID string, user
 		name  string
 		model Model
 	}
-	attempts := []modelAttempt{
-		{"small", smallModel},
-		{"large", largeModel},
+	var attempts []modelAttempt
+	if smallModel.Model != nil {
+		attempts = append(attempts, modelAttempt{"small", smallModel})
+	}
+	if largeModel.Model != nil {
+		attempts = append(attempts, modelAttempt{"large", largeModel})
+	}
+	if len(attempts) == 0 {
+		return
 	}
 
 	var resp *fantasy.AgentResult
 	var err error
 	var model Model
-	var success bool
 	for _, attempt := range attempts {
-		tok := int64(40)
+		tok := int64(150) // Give the model more room.
 		if attempt.model.CatwalkCfg.CanReason {
 			tok = attempt.model.CatwalkCfg.DefaultMaxTokens
 		}
 		agent := newAgent(attempt.model.Model, titlePrompt, tok)
 		resp, err = agent.Stream(ctx, streamCall)
-		if err == nil && resp.Response.FinishReason != fantasy.FinishReasonLength {
-			model = attempt.model
-			slog.Debug("Generated title with " + attempt.name + " model")
-			success = true
-			break
+		if err == nil {
+			// Extract title candidate.
+			rawTitle := resp.Response.Content.Text()
+			cleanedTitle := strings.ReplaceAll(rawTitle, "\n", " ")
+			cleanedTitle = thinkTagRegex.ReplaceAllString(cleanedTitle, "")
+			cleanedTitle = orphanThinkTagRegex.ReplaceAllString(cleanedTitle, "")
+			cleanedTitle = strings.TrimSpace(cleanedTitle)
+
+			if cleanedTitle != "" {
+				model = attempt.model
+				slog.Debug("Generated title with " + attempt.name + " model")
+				title = cleanedTitle
+				success = true
+				break
+			}
 		}
 		if err != nil {
 			slog.Error("Error generating title with "+attempt.name+" model; trying next", "err", err)
 		} else {
-			slog.Error("Title generation hit token limit with " + attempt.name + " model; trying next")
+			slog.Error("Title generation resulted in empty title with " + attempt.name + " model; trying next")
 		}
 	}
 	if !success {
-		// The deferred fallback will save the default session name.
 		return
 	}
 
-	// Clean up title.
-	var title string
-	title = strings.ReplaceAll(resp.Response.Content.Text(), "\n", " ")
-
-	// Remove thinking tags if present.
-	title = thinkTagRegex.ReplaceAllString(title, "")
-	title = orphanThinkTagRegex.ReplaceAllString(title, "")
-
-	title = strings.TrimSpace(title)
 	title = cmp.Or(title, DefaultSessionName)
 
 	// Calculate usage and cost.

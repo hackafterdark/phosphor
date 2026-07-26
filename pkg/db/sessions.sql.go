@@ -182,11 +182,11 @@ func (q *Queries) ListSessions(ctx context.Context) ([]Session, error) {
 			&i.CreatedAt,
 			&i.SummaryMessageID,
 			&i.Todos,
-				&i.CurrentTokens,
-				&i.IsStateless,
-				&i.Service,
-				&i.IsPinned,
-			); err != nil {
+			&i.CurrentTokens,
+			&i.IsStateless,
+			&i.Service,
+			&i.IsPinned,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -326,6 +326,7 @@ func (q *Queries) UpdateStatelessSession(ctx context.Context, arg UpdateStateles
 	)
 	return err
 }
+
 const listStatelessSessions = `-- name: ListStatelessSessions :many
 SELECT id, parent_session_id, title, message_count, prompt_tokens, completion_tokens,
        cost, updated_at, created_at, summary_message_id, todos, current_tokens,
@@ -360,11 +361,11 @@ func (q *Queries) ListStatelessSessions(ctx context.Context, arg ListStatelessSe
 			&i.CreatedAt,
 			&i.SummaryMessageID,
 			&i.Todos,
-				&i.CurrentTokens,
-				&i.IsStateless,
-				&i.Service,
-				&i.IsPinned,
-			); err != nil {
+			&i.CurrentTokens,
+			&i.IsStateless,
+			&i.Service,
+			&i.IsPinned,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -377,6 +378,7 @@ func (q *Queries) ListStatelessSessions(ctx context.Context, arg ListStatelessSe
 	}
 	return items, nil
 }
+
 const updatePinned = `-- name: UpdatePinned :exec
 UPDATE sessions
 SET
@@ -386,7 +388,7 @@ WHERE id = ?
 
 type UpdatePinnedParams struct {
 	IsPinned int64  `json:"is_pinned"`
-	ID        string `json:"id"`
+	ID       string `json:"id"`
 }
 
 func (q *Queries) UpdatePinned(ctx context.Context, arg UpdatePinnedParams) error {

@@ -117,9 +117,9 @@ func (m *UI) codebaseIndexInfo(width int) string {
 		if m.indexProgress != nil {
 			p := m.indexProgress
 			if p.Complete {
-				statusParts = append(statusParts, t.ModelInfo.Provider.Render("Files: " + abbrevNumber(p.FilesIndexed)))
-				statusParts = append(statusParts, t.ModelInfo.Provider.Render("Symbols: " + abbrevNumber(p.SymbolsIndexed)))
-				statusParts = append(statusParts, t.ModelInfo.Provider.Render("Docs: " + abbrevNumber(p.DocsIndexed)))
+				statusParts = append(statusParts, t.ModelInfo.Provider.Render("Files: "+abbrevNumber(p.FilesIndexed)))
+				statusParts = append(statusParts, t.ModelInfo.Provider.Render("Symbols: "+abbrevNumber(p.SymbolsIndexed)))
+				statusParts = append(statusParts, t.ModelInfo.Provider.Render("Docs: "+abbrevNumber(p.DocsIndexed)))
 			} else {
 				statusParts = append(statusParts, t.ModelInfo.Provider.Render("Building index..."))
 			}

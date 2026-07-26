@@ -46,8 +46,8 @@ Examples:
 	}
 
 	sessionPruneSessionsBefore string
-	sessionPruneSessionsJSON  bool
-	sessionPruneSessionsDry   bool
+	sessionPruneSessionsJSON   bool
+	sessionPruneSessionsDry    bool
 )
 
 func init() {
@@ -82,10 +82,10 @@ func runSessionPin(cmd *cobra.Command, args []string) error {
 
 	if sessionShowJSON {
 		return outputSessionMutationJSON(cmd.OutOrStdout(), sessionMutationResult{
-			ID:      session.HashID(sess.ID),
-			UUID:    sess.ID,
-			Title:   sess.Title,
-			Pinned:  true,
+			ID:     session.HashID(sess.ID),
+			UUID:   sess.ID,
+			Title:  sess.Title,
+			Pinned: true,
 		})
 	}
 
@@ -111,10 +111,10 @@ func runSessionUnpin(cmd *cobra.Command, args []string) error {
 
 	if sessionShowJSON {
 		return outputSessionMutationJSON(cmd.OutOrStdout(), sessionMutationResult{
-			ID:      session.HashID(sess.ID),
-			UUID:    sess.ID,
-			Title:   sess.Title,
-			Pinned:  false,
+			ID:     session.HashID(sess.ID),
+			UUID:   sess.ID,
+			Title:  sess.Title,
+			Pinned: false,
 		})
 	}
 
@@ -148,9 +148,9 @@ func runSessionPruneSessions(cmd *cobra.Command, _ []string) error {
 
 		if sessionPruneSessionsJSON {
 			result := map[string]any{
-				"dry_run":          true,
-				"session_count":    len(sessions),
-				"cutoff":           cutoff.Format(time.RFC3339),
+				"dry_run":            true,
+				"session_count":      len(sessions),
+				"cutoff":             cutoff.Format(time.RFC3339),
 				"sessions_to_delete": formatSessionsJSON(sessions),
 			}
 			return outputJSON(out, result)
@@ -193,11 +193,11 @@ func formatSessionsJSON(sessions []session.Session) []map[string]any {
 	result := make([]map[string]any, len(sessions))
 	for i, s := range sessions {
 		result[i] = map[string]any{
-			"id":           session.HashID(s.ID),
-			"uuid":         s.ID,
-			"title":        s.Title,
-			"updated_at":   time.Unix(s.UpdatedAt, 0).Format(time.RFC3339),
-			"is_pinned":    s.IsPinned,
+			"id":            session.HashID(s.ID),
+			"uuid":          s.ID,
+			"title":         s.Title,
+			"updated_at":    time.Unix(s.UpdatedAt, 0).Format(time.RFC3339),
+			"is_pinned":     s.IsPinned,
 			"message_count": s.MessageCount,
 		}
 	}

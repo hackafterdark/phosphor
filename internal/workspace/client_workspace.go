@@ -291,6 +291,10 @@ func (w *ClientWorkspace) AgentSummarize(ctx context.Context, sessionID string) 
 	return w.client.AgentSummarizeSession(ctx, w.workspaceID(), sessionID)
 }
 
+func (w *ClientWorkspace) AgentGenerateTitle(ctx context.Context, sessionID string) error {
+	return w.client.AgentGenerateTitleSession(ctx, w.workspaceID(), sessionID)
+}
+
 func (w *ClientWorkspace) UpdateAgentModel(ctx context.Context) error {
 	return w.client.UpdateAgent(ctx, w.workspaceID())
 }

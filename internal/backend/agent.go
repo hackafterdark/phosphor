@@ -191,6 +191,21 @@ func (b *Backend) SummarizeSession(ctx context.Context, workspaceID, sessionID s
 	return ws.AgentCoordinator.Summarize(ctx, sessionID)
 }
 
+// GenerateTitle triggers auto title generation for a session.
+func (b *Backend) GenerateTitle(ctx context.Context, workspaceID, sessionID string) error {
+	ws, err := b.GetWorkspace(workspaceID)
+	if err != nil {
+		return err
+	}
+
+	if ws.AgentCoordinator == nil {
+		return ErrAgentNotInitialized
+	}
+
+	go ws.AgentCoordinator.GenerateTitle(context.WithoutCancel(ctx), sessionID, "")
+	return nil
+}
+
 // QueuedPrompts returns the number of queued prompts for the session.
 func (b *Backend) QueuedPrompts(workspaceID, sessionID string) (int, error) {
 	ws, err := b.GetWorkspace(workspaceID)

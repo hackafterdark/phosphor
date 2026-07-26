@@ -171,15 +171,15 @@ func (i *Indexer) IndexWorkspace(ctx context.Context, rootDir string, excludedPa
 				return err
 			}
 
-for k, vector := range vectors {
-			idx := j + k
-			chunk := batch[k]
-			err := i.store.Insert(context.Background(), file, contentHash, chunk, idx*i.maxChunkSize, len(chunk), vector)
-			if err != nil {
-				slog.Warn("Failed to store embedding", "file", file, "chunk", idx, "error", err)
-				continue
+			for k, vector := range vectors {
+				idx := j + k
+				chunk := batch[k]
+				err := i.store.Insert(context.Background(), file, contentHash, chunk, idx*i.maxChunkSize, len(chunk), vector)
+				if err != nil {
+					slog.Warn("Failed to store embedding", "file", file, "chunk", idx, "error", err)
+					continue
+				}
 			}
-		}
 
 			i.processed.Add(int64(end - j))
 			i.state.Update(IndexStatusIndexing, int(i.processed.Load()), int(i.totalChunks.Load()), "")

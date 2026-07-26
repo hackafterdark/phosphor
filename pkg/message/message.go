@@ -49,6 +49,7 @@ type Service interface {
 	Update(ctx context.Context, message Message) error
 	Get(ctx context.Context, id string) (Message, error)
 	List(ctx context.Context, sessionID string) ([]Message, error)
+	ListUnfiltered(ctx context.Context, sessionID string) ([]Message, error)
 	ListUserMessages(ctx context.Context, sessionID string) ([]Message, error)
 	ListAllUserMessages(ctx context.Context) ([]Message, error)
 	Delete(ctx context.Context, id string) error
@@ -454,6 +455,46 @@ func (s *service) Get(ctx context.Context, id string) (Message, error) {
 }
 
 func (s *service) List(ctx context.Context, sessionID string) ([]Message, error) {
+	dbMessages, err := s.q.ListMessagesBySession(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	messages := make([]Message, 0, len(dbMessages))
+	for _, dbMessage := range dbMessages {
+		msg, err := s.fromDBItem(dbMessage)
+		if err != nil {
+			return nil, err
+		}
+
+		if msg.Role == Assistant {
+			var newParts []ContentPart
+			for _, part := range msg.Parts {
+				if tc, ok := part.(ToolCall); ok && tc.Name == "auto_title" {
+					continue
+				}
+				newParts = append(newParts, part)
+			}
+			msg.Parts = newParts
+		} else if msg.Role == Tool {
+			var newParts []ContentPart
+			for _, part := range msg.Parts {
+				if tr, ok := part.(ToolResult); ok && tr.Name == "auto_title" {
+					continue
+				}
+				newParts = append(newParts, part)
+			}
+			if len(newParts) == 0 {
+				continue
+			}
+			msg.Parts = newParts
+		}
+
+		messages = append(messages, msg)
+	}
+	return messages, nil
+}
+
+func (s *service) ListUnfiltered(ctx context.Context, sessionID string) ([]Message, error) {
 	dbMessages, err := s.q.ListMessagesBySession(ctx, sessionID)
 	if err != nil {
 		return nil, err

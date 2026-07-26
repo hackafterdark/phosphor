@@ -15,7 +15,7 @@ func TestIsOverflowError(t *testing.T) {
 
 	// Errors that should match
 	overflowCases := []struct {
-		err   error
+		err     error
 		matches bool
 	}{
 		{errors.New("context window overflow"), true},
@@ -120,7 +120,7 @@ func TestAggressiveBuild_Truncation(t *testing.T) {
 	}
 
 	result := AggressiveBuild(msgs, 50)
-	require.True(t, strings.Contains(result, "[tool] " + longText[:50]))
+	require.True(t, strings.Contains(result, "[tool] "+longText[:50]))
 	require.True(t, strings.Contains(result, "\n... [truncated]"))
 }
 
