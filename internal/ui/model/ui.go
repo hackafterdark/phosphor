@@ -2618,8 +2618,6 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 					break
 				}
 
-				// Mark that we're waiting for the user message to appear in chat.
-				m.userMessageAwaited = true
 				value = strings.TrimSpace(value)
 				if value == "exit" || value == "quit" {
 					return m.openQuitDialog()
@@ -2631,6 +2629,9 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 					}
 					return func() tea.Msg { return nil }
 				}
+
+				// Mark that we're waiting for the user message to appear in chat.
+				m.userMessageAwaited = true
 
 				attachments := m.attachments.List()
 				m.attachments.Reset()
@@ -4324,6 +4325,9 @@ func (m *UI) handleSlashCommand(value string) tea.Cmd {
 
 	m.slashMode = false
 	m.closeCompletions()
+	if m.textarea.Value() != "" {
+		m.textarea.SetValue("")
+	}
 
 	// Extract command name and arguments.
 	parts := strings.Fields(value)

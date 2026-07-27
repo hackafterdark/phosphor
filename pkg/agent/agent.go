@@ -2127,12 +2127,14 @@ func hasUserTextMessage(msgs []message.Message) bool {
 
 // GenerateTitle generates a session title based on the initial prompt.
 func (a *sessionAgent) GenerateTitle(ctx context.Context, sessionID string, userPrompt string) {
+	// slog.Debug("GenerateTitle: entry", "sessionID", sessionID, "userPrompt", userPrompt)
 	if userPrompt == "" {
-		if msgs, err := a.messages.List(ctx, sessionID); err == nil {
+		_ = a.messages.FlushAll(ctx)
+		if msgs, err := a.messages.ListUnfiltered(ctx, sessionID); err == nil {
 			for _, m := range msgs {
 				if m.Role == message.User {
 					for _, part := range m.Parts {
-						if tc, ok := part.(message.TextContent); ok && tc.Text != "" {
+						if tc, ok := part.(message.TextContent); ok && strings.TrimSpace(tc.Text) != "" {
 							userPrompt = tc.Text
 							break
 						}
@@ -2145,12 +2147,32 @@ func (a *sessionAgent) GenerateTitle(ctx context.Context, sessionID string, user
 		}
 	}
 	if userPrompt == "" {
+		slog.Debug("GenerateTitle: no user prompt found in session history", "sessionID", sessionID)
+		return
+	}
+
+	smallModel := a.smallModel.Get()
+	largeModel := a.largeModel.Get()
+
+	type modelAttempt struct {
+		name  string
+		model Model
+	}
+	var attempts []modelAttempt
+	if smallModel.Model != nil {
+		attempts = append(attempts, modelAttempt{"small", smallModel})
+	}
+	if largeModel.Model != nil {
+		attempts = append(attempts, modelAttempt{"large", largeModel})
+	}
+	if len(attempts) == 0 {
+		slog.Warn("GenerateTitle: no models available for title generation", "sessionID", sessionID)
 		return
 	}
 
 	// Find the last assistant message in this session to attach the tool call to.
 	var assistantMsg *message.Message
-	if msgs, err := a.messages.List(ctx, sessionID); err == nil {
+	if msgs, err := a.messages.ListUnfiltered(ctx, sessionID); err == nil {
 		for i := len(msgs) - 1; i >= 0; i-- {
 			if msgs[i].Role == message.Assistant {
 				assistantMsg = &msgs[i]
@@ -2202,7 +2224,7 @@ func (a *sessionAgent) GenerateTitle(ctx context.Context, sessionID string, user
 			}
 
 			// Ensure a tool result message is created.
-			if msgs, listErr := a.messages.List(fallbackCtx, sessionID); listErr == nil {
+			if msgs, listErr := a.messages.ListUnfiltered(fallbackCtx, sessionID); listErr == nil {
 				hasResult := false
 				for _, m := range msgs {
 					if m.Role == message.Tool {
@@ -2251,14 +2273,10 @@ func (a *sessionAgent) GenerateTitle(ctx context.Context, sessionID string, user
 		}
 	}
 
-	smallModel := a.smallModel.Get()
-	largeModel := a.largeModel.Get()
-	systemPromptPrefix := a.systemPromptPrefix.Get()
-
 	newAgent := func(m fantasy.LanguageModel, p []byte, tok int64) fantasy.Agent {
 		return fantasy.NewAgent(
 			m,
-			fantasy.WithSystemPrompt(string(p)+"\n /no_think"),
+			fantasy.WithSystemPrompt(string(p)),
 			fantasy.WithMaxOutputTokens(tok),
 			fantasy.WithUserAgent(userAgent),
 		)
@@ -2266,38 +2284,14 @@ func (a *sessionAgent) GenerateTitle(ctx context.Context, sessionID string, user
 
 	streamCall := fantasy.AgentStreamCall{
 		Prompt: userPrompt,
-		PrepareStep: func(callCtx context.Context, opts fantasy.PrepareStepFunctionOptions) (_ context.Context, prepared fantasy.PrepareStepResult, err error) {
-			prepared.Messages = opts.Messages
-			if systemPromptPrefix != "" {
-				prepared.Messages = append([]fantasy.Message{
-					fantasy.NewSystemMessage(systemPromptPrefix),
-				}, prepared.Messages...)
-			}
-			return callCtx, prepared, nil
-		},
-	}
-
-	type modelAttempt struct {
-		name  string
-		model Model
-	}
-	var attempts []modelAttempt
-	if smallModel.Model != nil {
-		attempts = append(attempts, modelAttempt{"small", smallModel})
-	}
-	if largeModel.Model != nil {
-		attempts = append(attempts, modelAttempt{"large", largeModel})
-	}
-	if len(attempts) == 0 {
-		return
 	}
 
 	var resp *fantasy.AgentResult
 	var err error
 	var model Model
 	for _, attempt := range attempts {
-		tok := int64(150) // Give the model more room.
-		if attempt.model.CatwalkCfg.CanReason {
+		tok := int64(1024)
+		if attempt.model.CatwalkCfg.DefaultMaxTokens > 0 {
 			tok = attempt.model.CatwalkCfg.DefaultMaxTokens
 		}
 		agent := newAgent(attempt.model.Model, titlePrompt, tok)
@@ -2305,10 +2299,24 @@ func (a *sessionAgent) GenerateTitle(ctx context.Context, sessionID string, user
 		if err == nil {
 			// Extract title candidate.
 			rawTitle := resp.Response.Content.Text()
-			cleanedTitle := strings.ReplaceAll(rawTitle, "\n", " ")
+			slog.Debug("GenerateTitle: LLM response", "model", attempt.name, "rawTitle", rawTitle)
+
+			cleanedTitle := rawTitle
+			if idx := strings.LastIndex(cleanedTitle, "</think>"); idx != -1 {
+				cleanedTitle = cleanedTitle[idx+len("</think>"):]
+			} else if idx := strings.LastIndex(cleanedTitle, "<think>"); idx != -1 {
+				cleanedTitle = cleanedTitle[idx+len("<think>"):]
+			}
+			cleanedTitle = strings.ReplaceAll(cleanedTitle, "\n", " ")
 			cleanedTitle = thinkTagRegex.ReplaceAllString(cleanedTitle, "")
 			cleanedTitle = orphanThinkTagRegex.ReplaceAllString(cleanedTitle, "")
 			cleanedTitle = strings.TrimSpace(cleanedTitle)
+			if strings.HasPrefix(strings.ToLower(cleanedTitle), "title:") {
+				cleanedTitle = strings.TrimSpace(cleanedTitle[6:])
+			}
+			cleanedTitle = strings.Trim(cleanedTitle, "\"`'")
+			cleanedTitle = strings.TrimSpace(cleanedTitle)
+			slog.Debug("GenerateTitle: cleaned title", "model", attempt.name, "cleanedTitle", cleanedTitle)
 
 			if cleanedTitle != "" {
 				model = attempt.model
