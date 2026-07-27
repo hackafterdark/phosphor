@@ -1344,7 +1344,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 				titleCtx, titleCancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 				go func() {
 					defer titleCancel()
-					a.GenerateTitle(titleCtx, call.SessionID, call.Prompt)
+					a.GenerateTitle(titleCtx, call.SessionID, cmp.Or(call.UserPrompt, call.Prompt))
 				}()
 			}
 		}
@@ -2127,9 +2127,11 @@ func hasUserTextMessage(msgs []message.Message) bool {
 
 // GenerateTitle generates a session title based on the initial prompt.
 func (a *sessionAgent) GenerateTitle(ctx context.Context, sessionID string, userPrompt string) {
-	// slog.Debug("GenerateTitle: entry", "sessionID", sessionID, "userPrompt", userPrompt)
-	if userPrompt == "" {
-		_ = a.messages.FlushAll(ctx)
+	// Always flush pending debounced messages so history reads in GenerateTitle
+	// observe the latest assistant and user messages written during the turn.
+	_ = a.messages.FlushAll(ctx)
+
+	if strings.TrimSpace(userPrompt) == "" {
 		if msgs, err := a.messages.ListUnfiltered(ctx, sessionID); err == nil {
 			for _, m := range msgs {
 				if m.Role == message.User {
@@ -2146,7 +2148,7 @@ func (a *sessionAgent) GenerateTitle(ctx context.Context, sessionID string, user
 			}
 		}
 	}
-	if userPrompt == "" {
+	if strings.TrimSpace(userPrompt) == "" {
 		slog.Debug("GenerateTitle: no user prompt found in session history", "sessionID", sessionID)
 		return
 	}
@@ -2170,18 +2172,6 @@ func (a *sessionAgent) GenerateTitle(ctx context.Context, sessionID string, user
 		return
 	}
 
-	// Find the last assistant message in this session to attach the tool call to.
-	var assistantMsg *message.Message
-	if msgs, err := a.messages.ListUnfiltered(ctx, sessionID); err == nil {
-		for i := len(msgs) - 1; i >= 0; i-- {
-			if msgs[i].Role == message.Assistant {
-				assistantMsg = &msgs[i]
-				break
-			}
-		}
-	}
-
-	toolCallID := "call_auto_title_" + strconv.FormatInt(time.Now().UnixNano(), 10)
 	var title string
 	var success bool
 
@@ -2203,75 +2193,7 @@ func (a *sessionAgent) GenerateTitle(ctx context.Context, sessionID string, user
 				}
 			}
 		}
-
-		if assistantMsg != nil {
-			// Always make sure the tool call is finished so the TUI spinner stops!
-			if currentMsg, getErr := a.messages.Get(fallbackCtx, assistantMsg.ID); getErr == nil {
-				var tcFound bool
-				for i, part := range currentMsg.Parts {
-					if tc, ok := part.(message.ToolCall); ok && tc.ID == toolCallID {
-						if !tc.Finished {
-							tc.Finished = true
-							currentMsg.Parts[i] = tc
-							tcFound = true
-						}
-						break
-					}
-				}
-				if tcFound {
-					_ = a.messages.Update(fallbackCtx, currentMsg)
-				}
-			}
-
-			// Ensure a tool result message is created.
-			if msgs, listErr := a.messages.ListUnfiltered(fallbackCtx, sessionID); listErr == nil {
-				hasResult := false
-				for _, m := range msgs {
-					if m.Role == message.Tool {
-						for _, r := range m.ToolResults() {
-							if r.ToolCallID == toolCallID {
-								hasResult = true
-								break
-							}
-						}
-					}
-				}
-				if !hasResult {
-					var resultStr string
-					if titleSaved {
-						resultStr = fmt.Sprintf("Session successfully renamed to %q", title)
-					} else {
-						resultStr = "Failed to generate title"
-					}
-					toolResult := message.ToolResult{
-						ToolCallID: toolCallID,
-						Name:       "auto_title",
-						Content:    resultStr,
-						IsError:    !titleSaved,
-					}
-					_, _ = a.messages.Create(fallbackCtx, sessionID, message.CreateMessageParams{
-						Role: message.Tool,
-						Parts: []message.ContentPart{
-							toolResult,
-						},
-					})
-				}
-			}
-		}
 	}()
-
-	if assistantMsg != nil {
-		tc := message.ToolCall{
-			ID:       toolCallID,
-			Name:     "auto_title",
-			Input:    `{}`,
-			Finished: false,
-		}
-		assistantMsg.AddToolCall(tc)
-		if err := a.messages.Update(ctx, *assistantMsg); err != nil {
-			slog.Error("Failed to add auto_title tool call to assistant message", "error", err)
-		}
-	}
 
 	newAgent := func(m fantasy.LanguageModel, p []byte, tok int64) fantasy.Agent {
 		return fantasy.NewAgent(

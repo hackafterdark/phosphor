@@ -121,49 +121,19 @@ func TestSessionAutoTitlingDeferred(t *testing.T) {
 
 	require.Equal(t, "Expected Generated Title", updatedTitle)
 
-	// Now retrieve all messages for the session to verify the auto_title tool call and result.
+	// Ensure messages remain clean and unpolluted by synthetic auto_title tool calls.
 	msgs, err := env.messages.ListUnfiltered(t.Context(), session.ID)
 	require.NoError(t, err)
-
-	var hasAutoTitleToolCall bool
-	var hasAutoTitleToolResult bool
 
 	for _, msg := range msgs {
 		if msg.Role == message.Assistant {
 			for _, part := range msg.ToolCalls() {
-				if part.Name == "auto_title" {
-					hasAutoTitleToolCall = true
-					require.True(t, part.Finished, "auto_title tool call should be finished")
-				}
+				require.NotEqual(t, "auto_title", part.Name, "Assistant message must not contain synthetic auto_title tool call")
 			}
 		}
 		if msg.Role == message.Tool {
 			for _, part := range msg.ToolResults() {
-				if part.Name == "auto_title" {
-					hasAutoTitleToolResult = true
-					require.Contains(t, part.Content, "Expected Generated Title")
-					require.False(t, part.IsError, "auto_title tool result should not be an error")
-				}
-			}
-		}
-	}
-
-	require.True(t, hasAutoTitleToolCall, "Should have created an auto_title tool call in the assistant message")
-	require.True(t, hasAutoTitleToolResult, "Should have created an auto_title tool result message")
-
-	// Standard List should filter out the synthetic auto_title tool call and result.
-	filteredMsgs, err := env.messages.List(t.Context(), session.ID)
-	require.NoError(t, err)
-
-	for _, msg := range filteredMsgs {
-		if msg.Role == message.Assistant {
-			for _, part := range msg.ToolCalls() {
-				require.NotEqual(t, "auto_title", part.Name, "Standard List must filter out auto_title tool call")
-			}
-		}
-		if msg.Role == message.Tool {
-			for _, part := range msg.ToolResults() {
-				require.NotEqual(t, "auto_title", part.Name, "Standard List must filter out auto_title tool result")
+				require.NotEqual(t, "auto_title", part.Name, "Tool messages must not contain synthetic auto_title tool result")
 			}
 		}
 	}
