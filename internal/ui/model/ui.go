@@ -1118,6 +1118,7 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case util.InfoMsg:
 		if msg.Type == util.InfoTypeError {
 			slog.Error("Error reported", "error", msg.Msg)
+			m.userMessageAwaited = false
 		}
 		m.status.SetInfoMsg(msg)
 		ttl := msg.TTL
@@ -2607,6 +2608,10 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				cmds = append(cmds, m.pasteImageFromClipboard)
 
 			case key.Matches(msg, m.keyMap.Editor.SendMessage):
+				if m.userMessageAwaited {
+					break
+				}
+
 				prevHeight := m.textarea.Height()
 				value := m.textarea.Value()
 				if before, ok := strings.CutSuffix(value, "\\"); ok {
@@ -2630,14 +2635,14 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 					return func() tea.Msg { return nil }
 				}
 
-				// Mark that we're waiting for the user message to appear in chat.
-				m.userMessageAwaited = true
-
 				attachments := m.attachments.List()
-				m.attachments.Reset()
 				if len(value) == 0 && !message.ContainsTextAttachment(attachments) {
 					return nil
 				}
+
+				// Mark that we're waiting for the user message to appear in chat.
+				m.userMessageAwaited = true
+				m.attachments.Reset()
 
 				m.randomizePlaceholders()
 				m.historyReset()

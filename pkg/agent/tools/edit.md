@@ -1,1 +1,1 @@
-Edit a file by exact find-and-replace; can also create or delete content. For renames/moves use bash. For large edits use write.
+Edit a file by exact find-and-replace; can also create or delete content. Supports hashline-tagged strings ('line:hash|content') in old_string when viewed with use_hashline for 100% exact line verification. For renames/moves use bash. For large edits use write.

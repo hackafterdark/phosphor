@@ -9,6 +9,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	uv "github.com/charmbracelet/ultraviolet"
+	"github.com/hackafterdark/phosphor/internal/server"
+	"github.com/hackafterdark/phosphor/pkg/db"
 	"github.com/hackafterdark/phosphor/internal/ui/common"
 	ui "github.com/hackafterdark/phosphor/internal/ui/model"
 	"github.com/hackafterdark/phosphor/internal/workspace"
@@ -50,6 +52,11 @@ func (s *Service) Describe() string {
 
 // Start runs the Bubble Tea TUI asynchronously.
 func (s *Service) Start(ctx context.Context) error {
+	// Initialize mermaid service for TUI diagram rendering.
+	server.SetDiagramsQuerier(db.New(s.dbConn))
+	server.SetMermaidServiceEnabled(true, 8643)
+	server.SetMermaidSessionID(s.sessionID)
+
 	com := common.NewCommon(s.ws, s.dbConn)
 	model := ui.New(com, s.sessionID, s.continueLast)
 

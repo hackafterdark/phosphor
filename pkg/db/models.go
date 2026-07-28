@@ -28,6 +28,13 @@ type Goal struct {
 	ActiveSeconds int64  `json:"active_seconds"`
 }
 
+type Diagram struct {
+	ID        int64  `json:"id"`
+	SessionID string `json:"session_id"`
+	Syntax    string `json:"syntax"`
+	CreatedAt int64  `json:"created_at"`
+}
+
 type Message struct {
 	ID               string         `json:"id"`
 	SessionID        string         `json:"session_id"`

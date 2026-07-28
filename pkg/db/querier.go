@@ -56,6 +56,8 @@ type Querier interface {
 	UpdateStatelessSession(ctx context.Context, arg UpdateStatelessSessionParams) error
 	UpdatePinned(ctx context.Context, arg UpdatePinnedParams) error
 	ListPrunableSessions(ctx context.Context, updatedAt int64) ([]Session, error)
+	CreateDiagram(ctx context.Context, arg CreateDiagramParams) (Diagram, error)
+	GetDiagram(ctx context.Context, id int64) (Diagram, error)
 	BulkDeleteSessions(ctx context.Context, updatedAt int64) error
 }
 

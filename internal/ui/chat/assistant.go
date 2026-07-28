@@ -4,11 +4,13 @@ import (
 	"encoding/binary"
 	"fmt"
 	"hash/fnv"
+	"regexp"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/hackafterdark/phosphor/internal/server"
 	"github.com/hackafterdark/phosphor/internal/ui/anim"
 	"github.com/hackafterdark/phosphor/internal/ui/common"
 	"github.com/hackafterdark/phosphor/internal/ui/list"
@@ -499,6 +501,28 @@ func (a *AssistantMessageItem) renderThinking(thinking string, width int) string
 	return result
 }
 
+// mermaidBlockRegex matches fenced mermaid code blocks.
+// Captures the syntax inside the block.
+var mermaidBlockRegex = regexp.MustCompile("(?s)```mermaid[ \t\n\r]*(.*?)[ \t\n\r]*```")
+
+// mermaidViewLink returns an OSC 8 hyperlink "View" for mermaid blocks found
+// in the content. Stores the syntax in the DB and uses the resulting ID in the URL.
+// Returns empty string if no mermaid block is found or the service is not enabled.
+func mermaidViewLink(content string) string {
+	matches := mermaidBlockRegex.FindAllStringSubmatch(content, -1)
+	if len(matches) == 0 {
+		return ""
+	}
+	syntax := matches[0][1]
+	// Generate a short URL via the diagram ID stored in DB.
+	// The server.MermaidURL function handles DB storage and URL generation.
+	url := server.MermaidURL(syntax)
+	if url == "" {
+		return ""
+	}
+	return "\x1b]8;;" + url + "\x07View\x1b]8;;\x07"
+}
+
 // renderMarkdown renders content as markdown. F8 routes the call
 // through streamingContent, which caches the glamour render of a
 // "stable prefix" so each streaming flush only re-renders the
@@ -510,7 +534,11 @@ func (a *AssistantMessageItem) renderThinking(thinking string, width int) string
 // findSafeMarkdownBoundary.
 func (a *AssistantMessageItem) renderMarkdown(content string, width int) string {
 	renderer := common.MarkdownRenderer(a.sty, width)
-	return a.streamingContent.Render(content, width, renderer)
+	out := a.streamingContent.Render(content, width, renderer)
+	if link := mermaidViewLink(content); link != "" {
+		out += "\n\n" + link
+	}
+	return out
 }
 
 func (a *AssistantMessageItem) renderSpinning() string {

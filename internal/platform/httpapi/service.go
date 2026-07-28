@@ -15,6 +15,7 @@ import (
 	"github.com/hackafterdark/phosphor/internal/proto"
 	"github.com/hackafterdark/phosphor/internal/server"
 	"github.com/hackafterdark/phosphor/pkg/config"
+	"github.com/hackafterdark/phosphor/pkg/db"
 	"github.com/labstack/echo/v5"
 )
 
@@ -266,6 +267,21 @@ func (s *Service) Start(ctx context.Context) error {
 		// Register stateless session management endpoints
 		s.echoSrv.GET("/v1/stateless-sessions", s.listStatelessSessions)
 		s.echoSrv.POST("/v1/stateless-sessions/:session-id/prune", s.pruneStatelessSession)
+
+		// Register Mermaid rendering endpoint
+		s.echoSrv.GET("/service/mermaid/render", server.HandleMermaidRender)
+		server.SetMermaidServiceEnabled(true, openaiCfg.port)
+		// Create a DB connection and set it on the server for mermaid diagram lookups.
+		dataDir := ""
+		if s.cfgStore != nil {
+			dataDir = s.cfgStore.Config().Options.DataDirectory
+		}
+		if dataDir != "" {
+			conn, err := db.Connect(context.Background(), dataDir)
+			if err == nil {
+				server.SetDiagramsQuerier(db.New(conn))
+			}
+		}
 
 		openaiAddr := fmt.Sprintf("%s:%d", openaiCfg.host, openaiCfg.port)
 		if s.logger != nil {

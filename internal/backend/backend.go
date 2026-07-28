@@ -69,6 +69,7 @@ type Backend struct {
 	mu        sync.Mutex
 
 	cfg         *config.ConfigStore
+	querier     db.Querier
 	ctx         context.Context
 	shutdownFn  ShutdownFunc
 	createGrace time.Duration
@@ -680,9 +681,19 @@ func (b *Backend) VersionInfo() proto.VersionInfo {
 	}
 }
 
-// Config returns the server-level configuration.
+// Config returns the configuration store.
 func (b *Backend) Config() *config.ConfigStore {
 	return b.cfg
+}
+
+// DB returns the DB querier for database operations.
+func (b *Backend) DB() db.Querier {
+	return b.querier
+}
+
+// SetQuerier sets the DB querier for the backend.
+func (b *Backend) SetQuerier(q db.Querier) {
+	b.querier = q
 }
 
 // Shutdown initiates a graceful server shutdown.

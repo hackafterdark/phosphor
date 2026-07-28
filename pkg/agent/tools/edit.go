@@ -567,7 +567,14 @@ func replaceContent(edit editContext, filePath, oldString, newString string, rep
 	}
 
 	if oldContent == newContent {
-		return fantasy.NewTextErrorResponse("new content is the same as old content. No changes made."), nil
+		startL, endL := findMatchedLineRange(oldContent, oldStringForFuzzy)
+		var msg string
+		if startL > 0 && endL >= startL {
+			msg = fmt.Sprintf("No changes made: new content is identical to old content. Target region (lines %d-%d) on disk already matches your proposed replacement. Please inspect the file using View if you intended to modify a different section.", startL, endL)
+		} else {
+			msg = "No changes made: new content is identical to old content. The target content on disk already matches your proposed replacement. Please inspect the file using View if you intended to modify a different section."
+		}
+		return fantasy.NewTextErrorResponse(msg), nil
 	}
 
 	if err := verifySyntax(newContent, filePath); err != nil {
@@ -996,6 +1003,22 @@ func findCloseMatches(fileContent, oldString string) []matchCandidate {
 		}
 	}
 	return unique
+}
+
+func findMatchedLineRange(fileContent, target string) (int, int) {
+	oldContent, _ := fsext.ToUnixLineEndings(fileContent)
+	targetNorm, _ := fsext.ToUnixLineEndings(target)
+	idx := strings.Index(oldContent, targetNorm)
+	if idx != -1 {
+		startLine := strings.Count(oldContent[:idx], "\n") + 1
+		endLine := startLine + strings.Count(targetNorm, "\n")
+		return startLine, endLine
+	}
+	candidates := findCloseMatches(oldContent, targetNorm)
+	if len(candidates) > 0 {
+		return candidates[0].lineStart, candidates[0].lineEnd
+	}
+	return 0, 0
 }
 
 func makeNotFoundError(fileContent, oldString string) fantasy.ToolResponse {

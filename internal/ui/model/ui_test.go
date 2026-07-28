@@ -4,8 +4,11 @@ import (
 	"context"
 	"testing"
 
+	"charm.land/bubbles/v2/textarea"
+	tea "charm.land/bubbletea/v2"
 	"charm.land/catwalk/pkg/catwalk"
 	"charm.land/lipgloss/v2"
+	"github.com/hackafterdark/phosphor/internal/ui/attachments"
 	"github.com/hackafterdark/phosphor/internal/ui/common"
 	"github.com/hackafterdark/phosphor/internal/ui/completions"
 	"github.com/hackafterdark/phosphor/internal/ui/dialog"
@@ -162,6 +165,14 @@ func (w *testWorkspace) AgentIsReady() bool {
 	return w.agentIsReady
 }
 
+func (w *testWorkspace) AgentIsBusy() bool {
+	return false
+}
+
+func (w *testWorkspace) PermissionSkipRequests() bool {
+	return false
+}
+
 func (w *testWorkspace) AgentRun(ctx context.Context, sessionID, prompt string, attachments ...message.Attachment) error {
 	w.runCalled = true
 	w.lastPrompt = prompt
@@ -231,4 +242,70 @@ func TestUI_HandleSlashCommand_CompactTriggersSummarize(t *testing.T) {
 	// Verify state sanitization.
 	require.False(t, ui.slashMode)
 	require.False(t, ui.completionsOpen)
+}
+
+func TestUI_SendMessage_IgnoresDuplicateWhileUserMessageAwaited(t *testing.T) {
+	t.Parallel()
+
+	tw := &testWorkspace{agentIsReady: true}
+	st := uistyles.CharmtonePantera()
+	ui := &UI{
+		com: &common.Common{
+			Workspace: tw,
+			Styles:    &st,
+		},
+		keyMap: DefaultKeyMap(),
+	}
+	ta := textarea.New()
+	ui.textarea = ta
+	ui.dialog = dialog.NewOverlay()
+	ui.session = &session.Session{ID: "test-session-123"}
+	ui.attachments = attachments.New(nil, attachments.Keymap{})
+	ui.state = uiChat
+	ui.focus = uiFocusEditor
+
+	// Type a prompt into textarea.
+	ui.textarea.SetValue("hello world")
+
+	// First Enter keypress should process message and set userMessageAwaited to true.
+	msgEnter := tea.KeyPressMsg{Code: tea.KeyEnter}
+	ui.Update(msgEnter)
+
+	require.True(t, ui.userMessageAwaited)
+
+	// A second rapid Enter keypress should be ignored while userMessageAwaited is true.
+	tw.runCalled = false
+	ui.Update(msgEnter)
+
+	require.False(t, tw.runCalled, "AgentRun should not be called again on rapid duplicate Enter keypress")
+	require.True(t, ui.userMessageAwaited)
+}
+
+func TestUI_SendMessage_EmptyPromptDoesNotLockUserMessageAwaited(t *testing.T) {
+	t.Parallel()
+
+	tw := &testWorkspace{agentIsReady: true}
+	st := uistyles.CharmtonePantera()
+	ui := &UI{
+		com: &common.Common{
+			Workspace: tw,
+			Styles:    &st,
+		},
+		keyMap: DefaultKeyMap(),
+	}
+	ta := textarea.New()
+	ui.textarea = ta
+	ui.dialog = dialog.NewOverlay()
+	ui.session = &session.Session{ID: "test-session-123"}
+	ui.attachments = attachments.New(nil, attachments.Keymap{})
+	ui.state = uiChat
+	ui.focus = uiFocusEditor
+
+	// Empty prompt
+	ui.textarea.SetValue("")
+
+	msgEnter := tea.KeyPressMsg{Code: tea.KeyEnter}
+	ui.Update(msgEnter)
+
+	require.False(t, ui.userMessageAwaited, "Empty prompt should not set userMessageAwaited to true")
 }
