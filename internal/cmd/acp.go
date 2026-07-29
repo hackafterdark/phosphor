@@ -3,16 +3,15 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/hackafterdark/phosphor/internal/backend"
 	"github.com/hackafterdark/phosphor/internal/client"
-	phosphorlog "github.com/hackafterdark/phosphor/internal/log"
 	"github.com/hackafterdark/phosphor/internal/platform"
 	"github.com/hackafterdark/phosphor/internal/platform/acp"
 	"github.com/hackafterdark/phosphor/internal/server"
@@ -29,7 +28,8 @@ func init() {
 
 var acpCmd = &cobra.Command{
 	Use:   "acp",
-	Short: "Start the ACP (Agent Client Protocol) v1 server over stdio",
+	Short: "Start the Agent Client Protocol service",
+	Long:  "Start the Agent Client Protocol (ACP) service over standard input/output.",
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		dataDir, err := cmd.Flags().GetString("data-dir")
 		if err != nil {
@@ -55,18 +55,62 @@ var acpCmd = &cobra.Command{
 			return fmt.Errorf("failed to load configuration: %v", err)
 		}
 
-		// Set up logging.
-		logFile := filepath.Join(config.GlobalCacheDir(), "acp", "phosphor.log")
-		phosphorlog.SetupWithConfig(logFile, nil, debug, os.Stderr)
+		// Configure logging to all standard log directories:
+		// 1. DataDirectory/logs/phosphor-acp.log (matches phosphor.log location)
+		// 2. workingDir/.phosphor/logs/phosphor-acp.log
+		// 3. GlobalCacheDir/phosphor-acp.log (fallback)
+		logPaths := []string{
+			filepath.Join(cfg.Config().Options.DataDirectory, "logs", "phosphor-acp.log"),
+			filepath.Join(workingDir, ".phosphor", "logs", "phosphor-acp.log"),
+			filepath.Join(config.GlobalCacheDir(), "phosphor-acp.log"),
+		}
+
+		// Deduplicate log paths
+		seenPaths := make(map[string]bool)
+		var uniqueLogPaths []string
+		for _, p := range logPaths {
+			abs, err := filepath.Abs(p)
+			if err != nil {
+				abs = p
+			}
+			if !seenPaths[abs] {
+				seenPaths[abs] = true
+				uniqueLogPaths = append(uniqueLogPaths, abs)
+			}
+		}
+
+		var logWriters []io.Writer
+		for _, p := range uniqueLogPaths {
+			if err := os.MkdirAll(filepath.Dir(p), 0755); err == nil {
+				if f, err := os.OpenFile(p, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644); err == nil {
+					logWriters = append(logWriters, f)
+				}
+			}
+		}
+
+		var acpHandler slog.Handler
+		if len(logWriters) > 0 {
+			acpHandler = slog.NewJSONHandler(io.MultiWriter(logWriters...), &slog.HandlerOptions{
+				Level:     slog.LevelDebug,
+				AddSource: true,
+			})
+		} else {
+			acpHandler = slog.NewTextHandler(io.Discard, nil)
+		}
+
+		acpLogger := slog.New(acpHandler)
+		slog.SetDefault(acpLogger)
+
+		acpLogger.Info("ACP logger initialized", "workspace", workingDir, "logPaths", uniqueLogPaths)
 
 		// Shut down any running server to avoid database lock conflicts.
 		if err := stopRunningServer(); err != nil {
-			slog.Warn("Failed to stop running server", "error", err)
+			acpLogger.Warn("Failed to stop running server", "error", err)
 		}
 
 		// Create the backend and governance layer.
 		gov := platform.NewGovernance(cfg.Config())
-		reg := platform.NewRegistry(slog.Default(), gov)
+		reg := platform.NewRegistry(acpLogger, gov)
 
 		backendCtx, backendCancel := context.WithCancel(cmd.Context())
 		defer backendCancel()
@@ -74,7 +118,7 @@ var acpCmd = &cobra.Command{
 		bk := backend.New(backendCtx, cfg, nil)
 
 		// Create and register the ACP service.
-		acpSrv := acp.NewService(bk, cfg, slog.Default())
+		acpSrv := acp.NewService(bk, cfg, acpLogger)
 
 		if err := gov.Check(acpSrv); err != nil {
 			return fmt.Errorf("governance check failed: %w", err)
@@ -88,21 +132,13 @@ var acpCmd = &cobra.Command{
 			return fmt.Errorf("failed to start services: %w", err)
 		}
 
-		sigch := make(chan os.Signal, 1)
-		sigs := []os.Signal{os.Interrupt}
-		sigs = append(sigs, addSignals(sigs)...)
-		signal.Notify(sigch, sigs...)
-
-		<-sigch
-		slog.Info("Received interrupt signal...")
+		acpLogger.Info("ACP service loop completed, shutting down")
 
 		ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 		defer cancel()
 
-		slog.Info("Shutting down...")
-
 		if err := reg.StopAll(ctx); err != nil {
-			slog.Error("Failed to shutdown services", "error", err)
+			acpLogger.Error("Failed to shutdown services", "error", err)
 			return fmt.Errorf("failed to shutdown services: %v", err)
 		}
 

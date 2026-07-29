@@ -1333,19 +1333,21 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 	}
 
 	if err == nil && !call.IsStateless {
-		if dbMsgs, dbErr := a.messages.List(ctx, call.SessionID); dbErr == nil {
-			var userMsgCount int
-			for _, m := range dbMsgs {
-				if m.Role == message.User {
-					userMsgCount++
+		if sess, sessErr := a.sessions.Get(ctx, call.SessionID); sessErr == nil && sess.Service != "acp" && sess.Service != "cron" {
+			if dbMsgs, dbErr := a.messages.List(ctx, call.SessionID); dbErr == nil {
+				var userMsgCount int
+				for _, m := range dbMsgs {
+					if m.Role == message.User {
+						userMsgCount++
+					}
 				}
-			}
-			if userMsgCount == 1 {
-				titleCtx, titleCancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-				go func() {
-					defer titleCancel()
-					a.GenerateTitle(titleCtx, call.SessionID, cmp.Or(call.UserPrompt, call.Prompt))
-				}()
+				if userMsgCount == 1 {
+					titleCtx, titleCancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+					go func() {
+						defer titleCancel()
+						a.GenerateTitle(titleCtx, call.SessionID, cmp.Or(call.UserPrompt, call.Prompt))
+					}()
+				}
 			}
 		}
 	}
@@ -2216,8 +2218,10 @@ func (a *sessionAgent) GenerateTitle(ctx context.Context, sessionID string, user
 		if attempt.model.CatwalkCfg.DefaultMaxTokens > 0 {
 			tok = attempt.model.CatwalkCfg.DefaultMaxTokens
 		}
+		attemptCtx, attemptCancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
 		agent := newAgent(attempt.model.Model, titlePrompt, tok)
-		resp, err = agent.Stream(ctx, streamCall)
+		resp, err = agent.Stream(attemptCtx, streamCall)
+		attemptCancel()
 		if err == nil {
 			// Extract title candidate.
 			rawTitle := resp.Response.Content.Text()

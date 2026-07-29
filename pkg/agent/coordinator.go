@@ -221,7 +221,9 @@ func NewCoordinator(
 		if c.permissions.SkipRequests() {
 			return true, nil
 		}
+		sessionID := tools.GetSessionFromContext(ctx)
 		granted, err := c.permissions.Request(ctx, permission.CreatePermissionRequest{
+			SessionID:  sessionID,
 			ToolName:   "web_fetch",
 			ToolCallID: fmt.Sprintf("tui:allow:%s", host),
 			Params:     fmt.Sprintf("WebFetch is requesting access to %s. Allow this domain?", host),

@@ -201,14 +201,6 @@ func (s *permissionService) Request(ctx context.Context, opts CreatePermissionRe
 		return true, nil
 	}
 
-	s.requestMu.Lock()
-	defer s.requestMu.Unlock()
-
-	// tell the UI that a permission was requested
-	s.notificationBroker.Publish(pubsub.CreatedEvent, PermissionNotification{
-		ToolCallID: opts.ToolCallID,
-	})
-
 	s.autoApproveSessionsMu.RLock()
 	autoApprove := s.autoApproveSessions[opts.SessionID]
 	s.autoApproveSessionsMu.RUnlock()
@@ -234,6 +226,28 @@ func (s *permissionService) Request(ctx context.Context, opts CreatePermissionRe
 	if dir == "." {
 		dir = s.workingDir
 	}
+
+	if _, ok := s.sessionPermissions.Get(PermissionKey{
+		SessionID: opts.SessionID,
+		ToolName:  opts.ToolName,
+		Action:    opts.Action,
+		Path:      dir,
+	}); ok {
+		s.notificationBroker.Publish(pubsub.CreatedEvent, PermissionNotification{
+			ToolCallID: opts.ToolCallID,
+			Granted:    true,
+		})
+		return true, nil
+	}
+
+	s.requestMu.Lock()
+	defer s.requestMu.Unlock()
+
+	// tell the UI that a permission was requested
+	s.notificationBroker.Publish(pubsub.CreatedEvent, PermissionNotification{
+		ToolCallID: opts.ToolCallID,
+	})
+
 	permission := PermissionRequest{
 		ID:          uuid.New().String(),
 		Path:        dir,
@@ -243,19 +257,6 @@ func (s *permissionService) Request(ctx context.Context, opts CreatePermissionRe
 		Description: opts.Description,
 		Action:      opts.Action,
 		Params:      opts.Params,
-	}
-
-	if _, ok := s.sessionPermissions.Get(PermissionKey{
-		SessionID: permission.SessionID,
-		ToolName:  permission.ToolName,
-		Action:    permission.Action,
-		Path:      permission.Path,
-	}); ok {
-		s.notificationBroker.Publish(pubsub.CreatedEvent, PermissionNotification{
-			ToolCallID: opts.ToolCallID,
-			Granted:    true,
-		})
-		return true, nil
 	}
 
 	s.activeRequestMu.Lock()
@@ -271,6 +272,11 @@ func (s *permissionService) Request(ctx context.Context, opts CreatePermissionRe
 
 	select {
 	case <-ctx.Done():
+		s.activeRequestMu.Lock()
+		if s.activeRequest != nil && s.activeRequest.ID == permission.ID {
+			s.activeRequest = nil
+		}
+		s.activeRequestMu.Unlock()
 		return false, ctx.Err()
 	case granted := <-respCh:
 		return granted, nil

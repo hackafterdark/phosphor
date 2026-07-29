@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/google/uuid"
@@ -113,6 +114,7 @@ func (s *Service) Describe() string {
 // is cancelled or stdin closes.
 func (s *Service) Start(ctx context.Context) error {
 	s.providers = s.resolveProviders()
+	s.logger.Info("ACP service loop started, listening on stdio", "providersCount", len(s.providers))
 
 	mainCtx, mainCancel := context.WithCancel(ctx)
 	defer mainCancel()
@@ -140,7 +142,7 @@ func (s *Service) Start(ctx context.Context) error {
 				Method:  msg.Method,
 				Params:  msg.Params,
 			}
-			s.handleRequest(mainCtx, &req)
+			go s.handleRequest(mainCtx, &req)
 		} else if msg.ID != nil {
 			s.handleResponseMessage(&msg)
 		} else {
@@ -149,8 +151,10 @@ func (s *Service) Start(ctx context.Context) error {
 	}
 
 	if err := scanner.Err(); err != nil && err != io.EOF {
+		s.logger.Error("ACP stdio scanner error", "error", err)
 		return fmt.Errorf("stdio read error: %w", err)
 	}
+	s.logger.Info("ACP stdio scanner reached EOF, stopping service loop")
 	return nil
 }
 
@@ -191,6 +195,7 @@ func (s *Service) resolveProviders() []acpProvider {
 // ----- Request dispatch -----
 
 func (s *Service) handleRequest(ctx context.Context, req *jsonrpcRequest) {
+	s.logger.Info("Received ACP request", "method", req.Method, "id", req.ID)
 	switch req.Method {
 	case "initialize":
 		s.handleInitialize(ctx, req)
@@ -213,6 +218,7 @@ func (s *Service) handleRequest(ctx context.Context, req *jsonrpcRequest) {
 	case "logout":
 		s.handleLogout(req)
 	default:
+		s.logger.Warn("ACP method not found", "method", req.Method, "id", req.ID)
 		s.writeError(req.ID, jsonrpcMethodNotFound, "method not found: "+req.Method)
 	}
 }
@@ -229,6 +235,8 @@ func (s *Service) handleResponseMessage(msg *jsonrpcMessage) {
 			idStr = fmt.Sprintf("%v", v)
 		}
 	}
+
+	s.logger.Debug("Received ACP response message from client", "id", idStr)
 
 	s.clientRequestsMu.Lock()
 	ch, ok := s.clientRequests[idStr]
@@ -247,8 +255,9 @@ func (s *Service) writeResponse(id any, result any) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	resp := jsonrpcResponse{JSONRPC: "2.0", ID: id, Result: result}
+	s.logger.Debug("Writing ACP response", "id", id)
 	if err := s.Encoder.Encode(resp); err != nil {
-		slog.Warn("Failed to write JSON-RPC response", "error", err)
+		s.logger.Warn("Failed to write JSON-RPC response", "id", id, "error", err)
 	}
 }
 
@@ -260,8 +269,9 @@ func (s *Service) writeError(id any, code int, message string) {
 		ID:      id,
 		Error:   &jsonrpcError{Code: code, Message: message},
 	}
+	s.logger.Error("Writing ACP error response", "id", id, "code", code, "message", message)
 	if err := s.Encoder.Encode(resp); err != nil {
-		slog.Warn("Failed to write JSON-RPC error", "error", err)
+		s.logger.Warn("Failed to write JSON-RPC error", "id", id, "error", err)
 	}
 }
 
@@ -270,12 +280,13 @@ func (s *Service) writeNotification(method string, params any) {
 	defer s.writeMu.Unlock()
 	p, err := json.Marshal(params)
 	if err != nil {
-		slog.Warn("Failed to marshal notification params", "error", err)
+		s.logger.Warn("Failed to marshal notification params", "method", method, "error", err)
 		return
 	}
 	notif := jsonrpcNotification{JSONRPC: "2.0", Method: method, Params: p}
+	s.logger.Debug("Writing ACP notification", "method", method)
 	if err := s.Encoder.Encode(notif); err != nil {
-		slog.Warn("Failed to write JSON-RPC notification", "error", err)
+		s.logger.Warn("Failed to write JSON-RPC notification", "method", method, "error", err)
 	}
 }
 
@@ -327,6 +338,53 @@ func (s *Service) sendSessionUpdate(sessionID string, update SessionUpdate) {
 	})
 }
 
+func (s *Service) registerPending(runID, sessionID string) (chan sessionPromptResponse, func()) {
+	s.pendingMu.Lock()
+	defer s.pendingMu.Unlock()
+
+	ch := make(chan sessionPromptResponse, 1)
+	s.pending[runID] = &pendingPrompt{
+		respCh:    ch,
+		runID:     runID,
+		sessionID: sessionID,
+	}
+
+	cleanup := func() {
+		s.pendingMu.Lock()
+		defer s.pendingMu.Unlock()
+		delete(s.pending, runID)
+	}
+
+	return ch, cleanup
+}
+
+func (s *Service) resolvePendingRun(runID, sessionID string, resp sessionPromptResponse) {
+	s.pendingMu.Lock()
+	defer s.pendingMu.Unlock()
+
+	if runID != "" {
+		if p, ok := s.pending[runID]; ok {
+			delete(s.pending, runID)
+			select {
+			case p.respCh <- resp:
+			default:
+			}
+			return
+		}
+	}
+
+	for id, p := range s.pending {
+		if p.sessionID == sessionID {
+			delete(s.pending, id)
+			select {
+			case p.respCh <- resp:
+			default:
+			}
+			return
+		}
+	}
+}
+
 // ----- Handler implementations -----
 
 func (s *Service) handleInitialize(_ context.Context, req *jsonrpcRequest) {
@@ -359,7 +417,7 @@ func (s *Service) handleInitialize(_ context.Context, req *jsonrpcRequest) {
 				Stdio: true,
 			},
 		},
-		AuthMethods: nil,
+		AuthMethods: []authMethod{},
 	}
 
 	s.writeResponse(req.ID, resp)
@@ -400,6 +458,11 @@ func (s *Service) handleSessionNew(ctx context.Context, req *jsonrpcRequest) {
 	if err != nil {
 		s.writeError(req.ID, jsonrpcInternalErr, "failed to create session: "+err.Error())
 		return
+	}
+
+	// Mark session service origin as "acp".
+	if err := s.backend.UpdateSessionStateless(ctx, ws.ID, se.ID, false, "acp"); err != nil {
+		s.logger.Warn("Failed to set ACP session service origin", "error", err)
 	}
 
 	// Subscribe to events for this session's workspace.
@@ -540,6 +603,9 @@ func (s *Service) handleSessionPrompt(ctx context.Context, req *jsonrpcRequest) 
 	// Generate a RunID for tracking completion.
 	runID := uuid.New().String()
 
+	respCh, unregister := s.registerPending(runID, params.SessionID)
+	defer unregister()
+
 	// Send message to backend using proto.AgentMessage.
 	msg := proto.AgentMessage{
 		SessionID:   params.SessionID,
@@ -553,12 +619,12 @@ func (s *Service) handleSessionPrompt(ctx context.Context, req *jsonrpcRequest) 
 		return
 	}
 
-	// Non-blocking: return immediately with end_turn stopReason as placeholder.
-	// The agent streams actual updates via session/update notifications.
-	// Zed reconciles the final state from the event stream.
-	s.writeResponse(req.ID, sessionPromptResponse{
-		StopReason: stopReasonEndTurn,
-	})
+	select {
+	case <-ctx.Done():
+		s.writeError(req.ID, jsonrpcInternalErr, "context cancelled")
+	case resp := <-respCh:
+		s.writeResponse(req.ID, resp)
+	}
 }
 
 func (s *Service) handleSessionCancel(req *jsonrpcRequest) {
@@ -568,12 +634,24 @@ func (s *Service) handleSessionCancel(req *jsonrpcRequest) {
 	}
 
 	s.mu.Lock()
-	_, ok := s.sessions[params.SessionID]
+	ss, ok := s.sessions[params.SessionID]
 	s.mu.Unlock()
 
 	if !ok {
 		return
 	}
+
+	// Cancel ongoing session in backend.
+	if s.backend != nil {
+		if err := s.backend.CancelSession(ss.workspaceID, params.SessionID); err != nil {
+			s.logger.Warn("Failed to cancel session in backend", "sessionID", params.SessionID, "error", err)
+		}
+	}
+
+	// Resolve any pending prompt for this session as cancelled immediately.
+	s.resolvePendingRun("", params.SessionID, sessionPromptResponse{
+		StopReason: stopReasonCancelled,
+	})
 
 	// Send a cancellation indicator to the IDE.
 	s.sendSessionUpdate(params.SessionID, SessionUpdate{
@@ -748,6 +826,8 @@ func (s *Service) translateAndSend(sessionID string, ev pubsub.Event[tea.Msg]) {
 		s.handleMessage(sessionID, p.Payload)
 	case pubsub.Event[notify.Notification]:
 		s.handleNotification(sessionID, p.Payload)
+	case pubsub.Event[notify.RunComplete]:
+		s.handleRunComplete(sessionID, p.Payload)
 	case pubsub.Event[permission.PermissionRequest]:
 		s.handlePermissionRequest(sessionID, p.Payload)
 	default:
@@ -755,10 +835,34 @@ func (s *Service) translateAndSend(sessionID string, ev pubsub.Event[tea.Msg]) {
 	}
 }
 
+// handleRunComplete handles authoritative end-of-run signals.
+func (s *Service) handleRunComplete(sessionID string, rc notify.RunComplete) {
+	if rc.SessionID != "" && rc.SessionID != sessionID {
+		return
+	}
+
+	reason := stopReasonEndTurn
+	if rc.Cancelled {
+		reason = stopReasonCancelled
+	}
+
+	s.resolvePendingRun(rc.RunID, sessionID, sessionPromptResponse{
+		StopReason: reason,
+	})
+}
+
 // handleNotification translates agent notifications (finished, error) into ACP updates.
 func (s *Service) handleNotification(sessionID string, n notify.Notification) {
+	if n.SessionID != "" && n.SessionID != sessionID {
+		return
+	}
+
 	switch n.Type {
-	case notify.TypeAgentFinished:
+	case notify.TypeAgentError, notify.TypeAgentFinished:
+		s.resolvePendingRun(n.RunID, sessionID, sessionPromptResponse{
+			StopReason: stopReasonEndTurn,
+		})
+
 		// Look up the last assistant message ID for this session so we
 		// can find the accumulated full text keyed by that message ID
 		// (not the session ID).
@@ -808,6 +912,10 @@ func (s *Service) handleNotification(sessionID string, n notify.Notification) {
 
 // handlePermissionRequest forwards permission requests to the client and grants/denies them.
 func (s *Service) handlePermissionRequest(sessionID string, req permission.PermissionRequest) {
+	if req.SessionID != "" && req.SessionID != sessionID {
+		return
+	}
+
 	s.mu.Lock()
 	state, ok := s.sessions[sessionID]
 	s.mu.Unlock()
@@ -861,7 +969,9 @@ func (s *Service) handlePermissionRequest(sessionID string, req permission.Permi
 		}
 
 		s.logger.Info("Sending session/request_permission to client", "toolCallID", req.ToolCallID, "toolName", req.ToolName)
-		respMsg, err := s.sendRequest(context.Background(), "session/request_permission", rpcReq)
+		permCtx, permCancel := context.WithTimeout(context.Background(), 120*time.Second)
+		defer permCancel()
+		respMsg, err := s.sendRequest(permCtx, "session/request_permission", rpcReq)
 		if err != nil {
 			s.logger.Error("Failed to send permission request or get response", "error", err)
 			_, _ = s.backend.GrantPermission(workspaceID, proto.PermissionGrant{
@@ -958,6 +1068,10 @@ func (s *Service) handlePermissionRequest(sessionID string, req permission.Permi
 
 // handleMessage translates a message.Message event into ACP update notifications.
 func (s *Service) handleMessage(sessionID string, m message.Message) {
+	if m.SessionID != "" && m.SessionID != sessionID {
+		return
+	}
+
 	switch m.Role {
 	case message.User:
 		s.seenMu.Lock()
@@ -1181,7 +1295,9 @@ func (s *Service) handleMessage(sessionID string, m message.Message) {
 // ----- Workspace lookup helpers -----
 
 // findBackendWorkspaceForSession finds the backend.Workspace containing the
-// given session ID.
+// given session ID. If not found in currently active in-memory workspaces
+// (e.g. after process restart), it attempts to load the workspace for the
+// current working directory and query its database.
 func (s *Service) findBackendWorkspaceForSession(sessionID string) (*backend.Workspace, error) {
 	ctx := context.Background()
 	for _, pw := range s.backend.ListWorkspaces() {
@@ -1190,6 +1306,28 @@ func (s *Service) findBackendWorkspaceForSession(sessionID string) (*backend.Wor
 			return s.backend.GetWorkspace(pw.ID)
 		}
 	}
+
+	// Fallback: If workspace is not in memory (e.g. fresh process start on session/resume),
+	// ensure the workspace for the current working directory is loaded and search its database.
+	cwd, err := os.Getwd()
+	if err == nil && cwd != "" {
+		clientID := uuid.New().String()
+		wsProto := proto.Workspace{
+			Path:     cwd,
+			ClientID: clientID,
+		}
+		ws, _, createErr := s.backend.CreateWorkspace(wsProto)
+		if createErr == nil {
+			se, getErr := s.backend.GetSession(ctx, ws.ID, sessionID)
+			if getErr == nil && se.ID == sessionID {
+				if attachErr := s.backend.AttachClient(ws.ID, clientID); attachErr != nil {
+					s.logger.Warn("Failed to attach client during session fallback lookup", "error", attachErr)
+				}
+				return ws, nil
+			}
+		}
+	}
+
 	return nil, fmt.Errorf("workspace not found for session: %s", sessionID)
 }
 

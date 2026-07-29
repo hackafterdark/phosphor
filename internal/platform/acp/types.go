@@ -265,12 +265,11 @@ type stopReason string
 
 // Stop reason type values.
 const (
-	stopReasonEndTurn         = "end_turn"
-	stopReasonMaxTokens       = "max_tokens"
-	stopReasonMaxTurnRequests = "max_turn_requests"
-	stopReasonRefusal         = "refusal"
-	stopReasonCancelled       = "cancelled"
-	stopReasonError           = "error"
+	stopReasonEndTurn         stopReason = "end_turn"
+	stopReasonMaxTokens       stopReason = "max_tokens"
+	stopReasonMaxTurnRequests stopReason = "max_turn_requests"
+	stopReasonRefusal         stopReason = "refusal"
+	stopReasonCancelled       stopReason = "cancelled"
 )
 
 // sessionCancelRequest cancels an ongoing turn (notification, no response).
@@ -587,6 +586,37 @@ type requestPermissionResponse struct {
 type requestPermissionOutcome struct {
 	Outcome  string `json:"outcome"`
 	OptionID string `json:"optionId,omitempty"`
+}
+
+func (o *requestPermissionOutcome) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err == nil {
+		o.Outcome = "selected"
+		o.OptionID = s
+		return nil
+	}
+	type rawOutcome struct {
+		Outcome       string `json:"outcome"`
+		OptionID      string `json:"optionId"`
+		OptionIdSnake string `json:"option_id"`
+		Kind          string `json:"kind"`
+	}
+	var raw rawOutcome
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	o.Outcome = raw.Outcome
+	switch {
+	case raw.OptionID != "":
+		o.OptionID = raw.OptionID
+	case raw.OptionIdSnake != "":
+		o.OptionID = raw.OptionIdSnake
+	case raw.Kind != "":
+		o.OptionID = raw.Kind
+	case raw.Outcome != "" && raw.Outcome != "selected" && raw.Outcome != "cancelled":
+		o.OptionID = raw.Outcome
+	}
+	return nil
 }
 
 // logoutRequest ends an authenticated session.

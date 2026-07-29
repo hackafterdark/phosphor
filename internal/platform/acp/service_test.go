@@ -13,6 +13,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/hackafterdark/phosphor/internal/app"
 	"github.com/hackafterdark/phosphor/internal/backend"
+	"github.com/hackafterdark/phosphor/pkg/agent/notify"
 	"github.com/hackafterdark/phosphor/pkg/message"
 	"github.com/hackafterdark/phosphor/pkg/permission"
 	"github.com/hackafterdark/phosphor/pkg/pubsub"
@@ -1328,6 +1329,118 @@ func TestBuildToolCallTitle(t *testing.T) {
 			t.Parallel()
 			actual := buildToolCallTitle(tc.toolName, tc.inputJson, tc.workspacePath)
 			require.Equal(t, tc.expected, actual)
+		})
+	}
+}
+
+func TestHandleRunComplete_ResolvesPendingPrompt(t *testing.T) {
+	t.Parallel()
+
+	s, _ := newTestService(t)
+	runID := "run-123"
+	sessionID := "sess-1"
+
+	ch, cleanup := s.registerPending(runID, sessionID)
+	defer cleanup()
+
+	rc := notify.RunComplete{
+		SessionID: sessionID,
+		RunID:     runID,
+	}
+	s.handleRunComplete(sessionID, rc)
+
+	select {
+	case resp := <-ch:
+		require.Equal(t, stopReasonEndTurn, resp.StopReason)
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for pending prompt to resolve")
+	}
+}
+
+func TestSessionEventFiltering(t *testing.T) {
+	t.Parallel()
+
+	s, buf := newTestService(t)
+
+	// Message for another session should be ignored
+	msgOther := message.Message{
+		ID:        "msg-other",
+		SessionID: "other-session",
+		Role:      message.User,
+		Parts:     []message.ContentPart{message.TextContent{Text: "ignored message"}},
+	}
+	s.translateAndSend("sess-1", pubsub.Event[tea.Msg]{
+		Type: "message",
+		Payload: pubsub.Event[message.Message]{
+			Type:    "message",
+			Payload: msgOther,
+		},
+	})
+	require.Empty(t, buf.String(), "event for another session should be ignored")
+}
+
+func TestFindBackendWorkspaceForSession_Fallback(t *testing.T) {
+	ctx := context.Background()
+	b := backend.New(ctx, nil, nil)
+
+	s := &Service{
+		backend:  b,
+		logger:   slog.Default(),
+		sessions: make(map[string]*sessionState),
+	}
+
+	// Should fail gracefully when session does not exist even after fallback
+	_, err := s.findBackendWorkspaceForSession("nonexistent-session-id")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "workspace not found for session")
+}
+
+func TestRequestPermissionOutcome_UnmarshalJSON(t *testing.T) {
+	tests := []struct {
+		name     string
+		jsonStr  string
+		expected requestPermissionOutcome
+	}{
+		{
+			name:    "standard optionId",
+			jsonStr: `{"outcome":"selected","optionId":"allow_once"}`,
+			expected: requestPermissionOutcome{
+				Outcome:  "selected",
+				OptionID: "allow_once",
+			},
+		},
+		{
+			name:    "snake_case option_id",
+			jsonStr: `{"outcome":"selected","option_id":"allow_always"}`,
+			expected: requestPermissionOutcome{
+				Outcome:  "selected",
+				OptionID: "allow_always",
+			},
+		},
+		{
+			name:    "kind field",
+			jsonStr: `{"outcome":"selected","kind":"reject_once"}`,
+			expected: requestPermissionOutcome{
+				Outcome:  "selected",
+				OptionID: "reject_once",
+			},
+		},
+		{
+			name:    "direct string",
+			jsonStr: `"allow_once"`,
+			expected: requestPermissionOutcome{
+				Outcome:  "selected",
+				OptionID: "allow_once",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var outcome requestPermissionOutcome
+			err := json.Unmarshal([]byte(tt.jsonStr), &outcome)
+			require.NoError(t, err)
+			require.Equal(t, tt.expected, outcome)
 		})
 	}
 }

@@ -190,3 +190,28 @@ func TestGenerateTitle_EmptyUserPromptParam_DebouncedUpdate(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "Expected Generated Title From History", s.Title)
 }
+
+func TestSessionAutoTitlingSkippedForACP(t *testing.T) {
+	env := testEnv(t)
+	model := &finishStreamModel{text: "ACP Generated Title"}
+	agent := testSessionAgent(env, model, model, "system")
+
+	session, err := env.sessions.Create(t.Context(), "ACP Session")
+	require.NoError(t, err)
+
+	err = env.sessions.UpdateStateless(t.Context(), session.ID, false, "acp")
+	require.NoError(t, err)
+
+	res, err := agent.Run(t.Context(), SessionAgentCall{
+		Prompt:          "Generate a title for this ACP session",
+		SessionID:       session.ID,
+		MaxOutputTokens: 1000,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, res)
+
+	time.Sleep(100 * time.Millisecond)
+	s, err := env.sessions.Get(t.Context(), session.ID)
+	require.NoError(t, err)
+	require.Equal(t, "ACP Session", s.Title)
+}
