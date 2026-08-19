@@ -493,30 +493,10 @@ func (c *Commands) defaultCommands() []*CommandItem {
 		}
 	}
 
-	// Add reasoning toggle for models that support it
-	if agentCfg, ok := cfg.Agents[config.AgentSystem]; ok {
-		providerCfg := cfg.GetProviderForModel(agentCfg.Model)
-		model := cfg.GetModelByType(agentCfg.Model)
-		if providerCfg != nil && model != nil && model.CanReason {
-			selectedModel := cfg.Models[agentCfg.Model]
-
-			// Anthropic models: thinking toggle
-			if model.CanReason && len(model.ReasoningLevels) == 0 {
-				status := "Enable"
-				if selectedModel.Think {
-					status = "Disable"
-				}
-				commands = append(commands, NewCommandItem(c.com.Styles, "toggle_thinking", status+" Thinking Mode", "", ActionToggleThinking{}))
-			}
-
-			// OpenAI models: reasoning effort dialog
-			if len(model.ReasoningLevels) > 0 {
-				commands = append(commands, NewCommandItem(c.com.Styles, "select_reasoning_effort", "Select Reasoning Effort", "", ActionOpenDialog{
-					DialogID: ReasoningID,
-				}))
-			}
-		}
-	}
+	// Add model settings command for tuning sampling and reasoning params.
+	commands = append(commands, NewCommandItem(c.com.Styles, "model_settings", "Model Settings", "", ActionOpenDialog{
+		DialogID: ModelSettingsID,
+	}))
 	// Only show toggle compact mode command if window width is larger than compact breakpoint (120)
 	if c.windowWidth >= sidebarCompactModeBreakpoint && c.hasSession {
 		commands = append(commands, NewCommandItem(c.com.Styles, "toggle_sidebar", "Toggle Sidebar", "", ActionToggleCompactMode{}))

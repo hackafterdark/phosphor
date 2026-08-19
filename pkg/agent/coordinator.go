@@ -720,13 +720,41 @@ func getProviderOptions(model Model, providerCfg config.ProviderConfig) fantasy.
 		policy := defaultProviderPolicy()
 		extraBody["chat_template_kwargs"] = policy.ChatTemplateKwargs
 
+		// An explicit user choice overrides the policy's enable_thinking
+		// kwarg default. io.net manages thinking through its own fields.
+		if (providerCfg.Type == openaicompat.Name || providerCfg.Type == hyper.Name) &&
+			providerCfg.ID != string(catwalk.InferenceProviderIoNet) &&
+			model.ModelCfg.EnableThinking != "" {
+			if kwargs, ok := extraBody["chat_template_kwargs"].(map[string]any); ok {
+				kwargs["enable_thinking"] = model.ModelCfg.EnableThinking == "on"
+			}
+		}
+
+		// Uncataloged models on plain openai-compat providers (local
+		// vLLM, SGLang, llama.cpp, ...) have no declared reasoning
+		// levels, so the catalog gate above would discard a user-set
+		// effort. Engines that don't support reasoning_effort ignore the
+		// field, so pass it through when the catalog declares no levels.
+		compatEffortPassThrough := providerCfg.Type == openaicompat.Name &&
+			providerCfg.ID != string(catwalk.InferenceProviderIoNet) &&
+			len(model.CatwalkCfg.ReasoningLevels) == 0 &&
+			model.ModelCfg.ReasoningEffort != ""
+
 		_, hasReasoningEffort := mergedOptions["reasoning_effort"]
-		if !hasReasoningEffort && shouldSetEffort {
+		if !hasReasoningEffort && (shouldSetEffort || compatEffortPassThrough) {
 			switch providerCfg.ID {
 			case string(catwalk.InferenceProviderIoNet):
 				extraBody["reasoning"] = map[string]string{"effort": model.ModelCfg.ReasoningEffort}
 			default:
 				mergedOptions["reasoning_effort"] = model.ModelCfg.ReasoningEffort
+				// Jinja-based engines (llama.cpp, vLLM, ...) consume
+				// reasoning_effort as a chat template kwarg (e.g. the
+				// Qwen3 template). Inject it there as well.
+				if kwargs, ok := extraBody["chat_template_kwargs"].(map[string]any); ok {
+					if _, hasKwarg := kwargs["reasoning_effort"]; !hasKwarg {
+						kwargs["reasoning_effort"] = model.ModelCfg.ReasoningEffort
+					}
+				}
 			}
 		}
 

@@ -150,6 +150,7 @@ The `models` section selects which model to use for different tasks. Phosphor us
 | `provider` | string | Yes | Provider ID matching a key in the `providers` section |
 | `reasoning_effort` | string | No | Reasoning effort level: `low`, `medium`, `high` (OpenAI models) |
 | `think` | bool | No | Enable thinking mode for Anthropic models |
+| `enable_thinking` | string | No | `on`/`off` override of the `enable_thinking` chat template kwarg for openai-compatible models (llama.cpp, vLLM, ...); omitted leaves the provider default (on) |
 | `max_tokens` | int64 | No | Maximum tokens for model responses (default: from provider catalog) |
 | `temperature` | float64 | No | Sampling temperature (0-1, default: 1.0) |
 | `top_p` | float64 | No | Nucleus sampling parameter (0-1, default: 1.0) |
@@ -211,6 +212,8 @@ Different providers use different field names for reasoning control:
 | OpenRouter | `reasoning.enabled` + `reasoning.effort` | bool + effort level |
 | Vercel | `reasoning.max_tokens` + `reasoning.effort` | int64 + effort level |
 | vLLM/Compat | `extra_body.thinking.max_tokens` | int64 |
+| vLLM/Compat | `reasoning_effort` | `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` (passed through for models without catalog-declared reasoning levels, also injected into `chat_template_kwargs` for Jinja-based engines like llama.cpp/vLLM; engines that don't support the field ignore it) |
+| vLLM/Compat | `enable_thinking` | `on`/`off` (sets `chat_template_kwargs.enable_thinking`, overriding the provider default of `true`; Jinja templates that don't reference the kwarg ignore it) |
 
 ---
 

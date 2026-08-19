@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -27,17 +28,48 @@ func (m *UI) modelInfo(width int) string {
 		if ok {
 			providerName = providerConfig.Name
 
-			// Only check reasoning if model can reason
-			if model.CatwalkCfg.CanReason {
-				if len(model.CatwalkCfg.ReasoningLevels) == 0 {
-					if model.ModelCfg.Think {
-						reasoningInfo = "Thinking On"
-					} else {
-						reasoningInfo = "Thinking Off"
-					}
-				} else {
+			// Only check reasoning if the model can reason or the user
+			// explicitly set a reasoning effort (e.g. for local models
+			// that aren't in the catalog).
+			if model.CatwalkCfg.CanReason || model.ModelCfg.ReasoningEffort != "" {
+				if len(model.CatwalkCfg.ReasoningLevels) > 0 || model.ModelCfg.ReasoningEffort != "" {
 					reasoningEffort := cmp.Or(model.ModelCfg.ReasoningEffort, model.CatwalkCfg.DefaultReasoningEffort)
 					reasoningInfo = fmt.Sprintf("Reasoning %s", common.FormatReasoningEffort(reasoningEffort))
+				} else if model.ModelCfg.Think {
+					reasoningInfo = "Thinking On"
+				} else {
+					reasoningInfo = "Thinking Off"
+				}
+			} else if model.ModelCfg.Think || model.ModelCfg.EnableThinking == "on" {
+				reasoningInfo = "Thinking On"
+			} else if model.ModelCfg.EnableThinking == "off" {
+				reasoningInfo = "Thinking Off"
+			}
+
+			// Append active sampling overrides so the sidebar reflects
+			// the current model settings.
+			var sampling []string
+			if model.ModelCfg.Temperature != nil {
+				sampling = append(sampling, "Temp "+strconv.FormatFloat(*model.ModelCfg.Temperature, 'f', -1, 64))
+			}
+			if model.ModelCfg.TopP != nil {
+				sampling = append(sampling, "TopP "+strconv.FormatFloat(*model.ModelCfg.TopP, 'f', -1, 64))
+			}
+			if model.ModelCfg.TopK != nil {
+				sampling = append(sampling, "TopK "+strconv.FormatInt(*model.ModelCfg.TopK, 10))
+			}
+			if model.ModelCfg.MaxTokens > 0 {
+				sampling = append(sampling, "Max "+strconv.FormatInt(model.ModelCfg.MaxTokens, 10))
+			}
+			if model.ModelCfg.MaxThinkingTokens != nil {
+				sampling = append(sampling, "Think "+strconv.FormatInt(*model.ModelCfg.MaxThinkingTokens, 10))
+			}
+			if len(sampling) > 0 {
+				extra := strings.Join(sampling, " · ")
+				if reasoningInfo != "" {
+					reasoningInfo += " · " + extra
+				} else {
+					reasoningInfo = extra
 				}
 			}
 		}

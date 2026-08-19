@@ -9,6 +9,8 @@ import (
 	"charm.land/fantasy"
 	"charm.land/fantasy/providers/anthropic"
 	"charm.land/fantasy/providers/bedrock"
+	"charm.land/fantasy/providers/openaicompat"
+	"github.com/hackafterdark/phosphor/pkg/agent/hyper"
 	"github.com/hackafterdark/phosphor/pkg/agent/prompt"
 	"github.com/hackafterdark/phosphor/pkg/config"
 	"github.com/stretchr/testify/assert"
@@ -632,6 +634,144 @@ func TestGetProviderOptionsReasoningEffort(t *testing.T) {
 			require.True(t, ok)
 			require.NotNil(t, parsed.Effort)
 			assert.Equal(t, anthropic.Effort("max"), *parsed.Effort)
+		})
+	}
+}
+
+func TestGetProviderOptionsOpenAICompatEffortPassThrough(t *testing.T) {
+	// Uncataloged models (local vLLM, SGLang, llama.cpp, ...) have no
+	// declared reasoning levels. For plain openai-compat providers a
+	// user-set effort is passed through anyway, because engines that
+	// don't support reasoning_effort ignore the field. The strict
+	// catalog gate is preserved when levels are declared, and hyper
+	// and io.net are excluded from the pass-through.
+	tests := []struct {
+		name              string
+		providerType      catwalk.Type
+		providerID        string
+		canReason         bool
+		reasoningLevels   []string
+		effort            string
+		wantEffort        string
+		wantKwarg         string
+		enableThinking    string
+		wantThinkingKwarg bool
+	}{
+		{
+			name:              "uncataloged model passes user-set effort through",
+			providerType:      catwalk.Type(openaicompat.Name),
+			providerID:        "local",
+			effort:            "xhigh",
+			wantEffort:        "xhigh",
+			wantKwarg:         "xhigh",
+			wantThinkingKwarg: true,
+		},
+		{
+			name:              "uncataloged model without effort sends nothing",
+			providerType:      catwalk.Type(openaicompat.Name),
+			providerID:        "local",
+			wantThinkingKwarg: true,
+		},
+		{
+			name:              "cataloged model with levels preserves strict gate",
+			providerType:      catwalk.Type(openaicompat.Name),
+			providerID:        "local",
+			canReason:         true,
+			reasoningLevels:   []string{"max"},
+			effort:            "xhigh",
+			wantThinkingKwarg: true,
+		},
+		{
+			name:              "cataloged model with levels sends effort within levels",
+			providerType:      catwalk.Type(openaicompat.Name),
+			providerID:        "local",
+			canReason:         true,
+			reasoningLevels:   []string{"max"},
+			effort:            "max",
+			wantEffort:        "max",
+			wantKwarg:         "max",
+			wantThinkingKwarg: true,
+		},
+		{
+			name:              "hyper provider is excluded from pass-through",
+			providerType:      catwalk.Type(hyper.Name),
+			providerID:        hyper.Name,
+			effort:            "xhigh",
+			wantThinkingKwarg: true,
+		},
+		{
+			name:              "io.net is excluded from top-level pass-through",
+			providerType:      catwalk.Type(openaicompat.Name),
+			providerID:        string(catwalk.InferenceProviderIoNet),
+			effort:            "xhigh",
+			wantThinkingKwarg: true,
+		},
+		{
+			name:              "uncataloged model with thinking off disables the kwarg",
+			providerType:      catwalk.Type(openaicompat.Name),
+			providerID:        "local",
+			enableThinking:    "off",
+			wantThinkingKwarg: false,
+		},
+		{
+			name:              "uncataloged model with thinking on keeps the kwarg enabled",
+			providerType:      catwalk.Type(openaicompat.Name),
+			providerID:        "local",
+			enableThinking:    "on",
+			wantThinkingKwarg: true,
+		},
+		{
+			name:              "io.net ignores the enable_thinking override",
+			providerType:      catwalk.Type(openaicompat.Name),
+			providerID:        string(catwalk.InferenceProviderIoNet),
+			enableThinking:    "off",
+			wantThinkingKwarg: true,
+		},
+		{
+			name:              "hyper honors the enable_thinking override",
+			providerType:      catwalk.Type(hyper.Name),
+			providerID:        hyper.Name,
+			enableThinking:    "off",
+			wantThinkingKwarg: false,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			model := Model{
+				CatwalkCfg: catwalk.Model{
+					ID:              "qwen3-27b",
+					CanReason:       tc.canReason,
+					ReasoningLevels: tc.reasoningLevels,
+				},
+				ModelCfg: config.SelectedModel{
+					Provider:        tc.providerID,
+					ReasoningEffort: tc.effort,
+					EnableThinking:  tc.enableThinking,
+				},
+			}
+			providerCfg := config.ProviderConfig{ID: tc.providerID, Type: tc.providerType}
+
+			opts := getProviderOptions(model, providerCfg)
+
+			raw, ok := opts[openaicompat.Name]
+			require.True(t, ok, "options should be keyed under openaicompat.Name for type %q", tc.providerType)
+			parsed, ok := raw.(*openaicompat.ProviderOptions)
+			require.True(t, ok)
+			if tc.wantEffort == "" {
+				assert.Nil(t, parsed.ReasoningEffort)
+			} else {
+				require.NotNil(t, parsed.ReasoningEffort)
+				assert.Equal(t, tc.wantEffort, string(*parsed.ReasoningEffort))
+			}
+
+			var gotKwarg string
+			var gotThinkingKwarg bool
+			if kwargs, ok := parsed.ExtraBody["chat_template_kwargs"].(map[string]any); ok {
+				gotKwarg, _ = kwargs["reasoning_effort"].(string)
+				gotThinkingKwarg, _ = kwargs["enable_thinking"].(bool)
+			}
+			assert.Equal(t, tc.wantKwarg, gotKwarg)
+			assert.Equal(t, tc.wantThinkingKwarg, gotThinkingKwarg)
 		})
 	}
 }

@@ -2002,31 +2002,6 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			cmds = append(cmds, cmd)
 		}
 		m.dialog.CloseDialog(dialog.CommandsID)
-	case dialog.ActionToggleThinking:
-		cmds = append(cmds, func() tea.Msg {
-			cfg := m.com.Config()
-			if cfg == nil {
-				return util.ReportError(errors.New("configuration not found"))()
-			}
-
-			agentCfg, ok := cfg.Agents[config.AgentSystem]
-			if !ok {
-				return util.ReportError(errors.New("agent configuration not found"))()
-			}
-
-			currentModel := cfg.Models[agentCfg.Model]
-			currentModel.Think = !currentModel.Think
-			if err := m.com.Workspace.UpdatePreferredModel(config.ScopeGlobal, agentCfg.Model, currentModel); err != nil {
-				return util.ReportError(err)()
-			}
-			m.com.Workspace.UpdateAgentModel(context.TODO())
-			status := "disabled"
-			if currentModel.Think {
-				status = "enabled"
-			}
-			return util.NewInfoMsg("Thinking mode " + status)
-		})
-		m.dialog.CloseDialog(dialog.CommandsID)
 	case dialog.ActionToggleTransparentBackground:
 		cmds = append(cmds, func() tea.Msg {
 			cfg := m.com.Config()
@@ -2068,7 +2043,7 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		if cmd := m.handleSelectModel(msg); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
-	case dialog.ActionSelectReasoningEffort:
+	case dialog.ActionModelSettings:
 		if m.isAgentBusy() {
 			cmds = append(cmds, util.ReportWarn("Agent is busy, please wait..."))
 			break
@@ -2087,17 +2062,38 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		}
 
 		currentModel := cfg.Models[agentCfg.Model]
-		currentModel.ReasoningEffort = msg.Effort
+		if msg.Thinking != nil {
+			currentModel.Think = *msg.Thinking
+		}
+		if msg.EnableThinking != nil {
+			currentModel.EnableThinking = *msg.EnableThinking
+		}
+		if msg.ReasoningEffort != nil {
+			currentModel.ReasoningEffort = *msg.ReasoningEffort
+		}
+		// The text rows are always present in the dialog, so a nil value
+		// means the user cleared the override.
+		currentModel.Temperature = msg.Temperature
+		currentModel.TopP = msg.TopP
+		currentModel.TopK = msg.TopK
+		if msg.MaxTokens != nil {
+			currentModel.MaxTokens = *msg.MaxTokens
+		} else {
+			currentModel.MaxTokens = 0
+		}
+		currentModel.MaxThinkingTokens = msg.MaxThinkingTokens
 		if err := m.com.Workspace.UpdatePreferredModel(config.ScopeGlobal, agentCfg.Model, currentModel); err != nil {
 			cmds = append(cmds, util.ReportError(err))
 			break
 		}
 
 		cmds = append(cmds, func() tea.Msg {
-			m.com.Workspace.UpdateAgentModel(context.TODO())
-			return util.NewInfoMsg("Reasoning effort set to " + msg.Effort)
+			if err := m.com.Workspace.UpdateAgentModel(context.TODO()); err != nil {
+				return util.ReportError(err)()
+			}
+			return util.NewInfoMsg("Model settings updated")
 		})
-		m.dialog.CloseDialog(dialog.ReasoningID)
+		m.dialog.CloseDialog(dialog.ModelSettingsID)
 	case dialog.ActionPermissionResponse:
 		m.dialog.CloseDialog(dialog.PermissionsID)
 		switch msg.Action {
@@ -4406,8 +4402,8 @@ func (m *UI) openDialog(id string) tea.Cmd {
 		if cmd := m.openCommandsDialog(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
-	case dialog.ReasoningID:
-		if cmd := m.openReasoningDialog(); cmd != nil {
+	case dialog.ModelSettingsID:
+		if cmd := m.openModelSettingsDialog(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
 	case dialog.NotificationsID:
@@ -4521,19 +4517,19 @@ func (m *UI) openCommandsDialog() tea.Cmd {
 	return commands.InitialCmd()
 }
 
-// openReasoningDialog opens the reasoning effort dialog.
-func (m *UI) openReasoningDialog() tea.Cmd {
-	if m.dialog.ContainsDialog(dialog.ReasoningID) {
-		m.dialog.BringToFront(dialog.ReasoningID)
+// openModelSettingsDialog opens the model settings dialog.
+func (m *UI) openModelSettingsDialog() tea.Cmd {
+	if m.dialog.ContainsDialog(dialog.ModelSettingsID) {
+		m.dialog.BringToFront(dialog.ModelSettingsID)
 		return nil
 	}
 
-	reasoningDialog, err := dialog.NewReasoning(m.com)
+	modelSettingsDialog, err := dialog.NewModelSettings(m.com)
 	if err != nil {
 		return util.ReportError(err)
 	}
 
-	m.dialog.OpenDialog(reasoningDialog)
+	m.dialog.OpenDialog(modelSettingsDialog)
 	return nil
 }
 

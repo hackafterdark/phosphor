@@ -48,7 +48,6 @@ type (
 	ActionNewSession              struct{}
 	ActionToggleHelp              struct{}
 	ActionToggleCompactMode       struct{}
-	ActionToggleThinking          struct{}
 	ActionTogglePills             struct{}
 	ActionExternalEditor          struct{}
 	ActionToggleYoloMode          struct{}
@@ -63,10 +62,19 @@ type (
 	}
 	ActionClearPrompt   struct{}
 	ActionIndexCodebase struct{}
-	// ActionSelectReasoningEffort is a message indicating a reasoning effort
-	// has been selected.
-	ActionSelectReasoningEffort struct {
-		Effort string
+	// ActionModelSettings is a message indicating the user saved model
+	// settings from the model settings dialog. Text fields are always set
+	// (nil clears the override); Thinking, EnableThinking, and
+	// ReasoningEffort are only set when the active model supports them.
+	ActionModelSettings struct {
+		Thinking          *bool
+		EnableThinking    *string
+		ReasoningEffort   *string
+		Temperature       *float64
+		TopP              *float64
+		TopK              *int64
+		MaxTokens         *int64
+		MaxThinkingTokens *int64
 	}
 	ActionPermissionResponse struct {
 		Permission permission.PermissionRequest

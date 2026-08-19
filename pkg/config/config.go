@@ -77,6 +77,11 @@ type SelectedModel struct {
 	// Used by anthropic models that can reason to indicate if the model should think.
 	Think bool `json:"think,omitempty" jsonschema:"description=Enable thinking mode for Anthropic models that support reasoning"`
 
+	// EnableThinking overrides the enable_thinking chat template kwarg
+	// for openai-compatible providers (llama.cpp, vLLM, SGLang, ...).
+	// "on" or "off"; empty leaves the provider policy default in place.
+	EnableThinking string `json:"enable_thinking,omitempty" jsonschema:"description=Override the enable_thinking template kwarg for openai-compatible models,enum=on,enum=off"`
+
 	// Overrides the default model configuration.
 	MaxTokens        int64    `json:"max_tokens,omitempty" jsonschema:"description=Maximum number of tokens for model responses,maximum=200000,example=4096"`
 	Temperature      *float64 `json:"temperature,omitempty" jsonschema:"description=Sampling temperature,minimum=0,maximum=1,example=0.7"`
