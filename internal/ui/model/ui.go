@@ -2554,26 +2554,18 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 		case uiFocusEditor:
 			// Handle completions if open.
 			if m.completionsOpen {
-				if msg, ok := m.completions.Update(msg); ok {
-					switch msg := msg.(type) {
-					case completions.SelectionMsg[completions.FileCompletionValue]:
-						cmds = append(cmds, m.insertFileCompletion(msg.Value.Path))
-						if !msg.KeepOpen {
-							m.closeCompletions()
-						}
-					case completions.SelectionMsg[completions.ResourceCompletionValue]:
-						cmds = append(cmds, m.insertMCPResourceCompletion(msg.Value))
-						if !msg.KeepOpen {
-							m.closeCompletions()
-						}
-					case completions.SelectionMsg[completions.SlashCommandValue]:
-						cmds = append(cmds, m.insertSlashCommandCompletion(msg.Value.Name))
-						if !msg.KeepOpen {
-							m.closeCompletions()
-						}
-					case completions.ClosedMsg:
-						m.completionsOpen = false
-					}
+				// Accepting a completion must behave identically for Tab and
+				// Enter, so normalize a Tab keypress into an Enter before it
+				// reaches the completions component. This guarantees both keys
+				// run the same file/slash/MCP acceptance path (which adds the
+				// reference as a context chip) and stops a Tab from ever
+				// falling through to the textarea and inserting raw text.
+				selection := msg
+				if key.Matches(msg, m.keyMap.Tab) {
+					selection = tea.KeyPressMsg{Code: tea.KeyEnter}
+				}
+				if msg, ok := m.completions.Update(selection); ok {
+					cmds = append(cmds, m.handleCompletionSelection(msg)...)
 					return tea.Batch(cmds...)
 				}
 			}
@@ -3777,6 +3769,34 @@ func (m *UI) insertCompletionText(text string) bool {
 	m.textarea.MoveToEnd()
 	m.textarea.InsertRune(' ')
 	return true
+}
+
+// handleCompletionSelection dispatches a completion selection emitted by the
+// completions component. It inserts the accepted value, adds it as context
+// where appropriate, and closes the popup unless the selection requested to
+// stay open. Any resulting commands are returned.
+func (m *UI) handleCompletionSelection(msg tea.Msg) []tea.Cmd {
+	var cmds []tea.Cmd
+	switch msg := msg.(type) {
+	case completions.SelectionMsg[completions.FileCompletionValue]:
+		cmds = append(cmds, m.insertFileCompletion(msg.Value.Path))
+		if !msg.KeepOpen {
+			m.closeCompletions()
+		}
+	case completions.SelectionMsg[completions.ResourceCompletionValue]:
+		cmds = append(cmds, m.insertMCPResourceCompletion(msg.Value))
+		if !msg.KeepOpen {
+			m.closeCompletions()
+		}
+	case completions.SelectionMsg[completions.SlashCommandValue]:
+		cmds = append(cmds, m.insertSlashCommandCompletion(msg.Value.Name))
+		if !msg.KeepOpen {
+			m.closeCompletions()
+		}
+	case completions.ClosedMsg:
+		m.completionsOpen = false
+	}
+	return cmds
 }
 
 // insertSlashCommandCompletion inserts the selected slash command into the textarea,
