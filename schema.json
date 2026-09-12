@@ -207,8 +207,7 @@
         },
         "auto_index": {
           "type": "boolean",
-          "description": "Enable automatic index updates on file changes",
-          "default": false
+          "description": "Auto-update index on file changes; defaults to the Enabled value when unset"
         },
         "debounce_ms": {
           "type": "integer",
@@ -226,13 +225,27 @@
           "type": "integer",
           "description": "Maximum file size in bytes to index (0 = unlimited)",
           "default": 1048576
+        },
+        "max_concurrent": {
+          "type": "integer",
+          "description": "Max goroutines for a full index build (0 = derive from CPU count)",
+          "default": 0
+        },
+        "yield_every": {
+          "type": "integer",
+          "description": "Files between cooperative scheduler yields during a build (0 = default 64)",
+          "default": 0
+        },
+        "index_documents": {
+          "type": "boolean",
+          "description": "Extract and index office documents (PDF/DOCX/XLSX/PPTX) into the document tier",
+          "default": true
         }
       },
       "additionalProperties": false,
       "type": "object",
       "required": [
-        "enabled",
-        "auto_index"
+        "enabled"
       ]
     },
     "HookConfig": {

@@ -1,1 +1,9 @@
 grammers/*
+
+# Vendored third-party reference repos. Intentionally kept readable (grep /
+# view / structural_search still reach them for cross-codebase comparison),
+# but excluded from the workspace_search index so their symbols and docs stop
+# outranking first-party code. The indexer only upserts and never deletes
+# rows for files it stops visiting, so a plain Rebuild will NOT drop these
+# once they are indexed -- use Clear, then Rebuild, to purge prior rows.
+other_project_research/

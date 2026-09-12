@@ -10,10 +10,10 @@ import (
 	tea "charm.land/bubbletea/v2"
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/hackafterdark/phosphor/internal/server"
-	"github.com/hackafterdark/phosphor/pkg/db"
 	"github.com/hackafterdark/phosphor/internal/ui/common"
 	ui "github.com/hackafterdark/phosphor/internal/ui/model"
 	"github.com/hackafterdark/phosphor/internal/workspace"
+	"github.com/hackafterdark/phosphor/pkg/db"
 )
 
 // Service wraps the Bubble Tea terminal user interface as a registered platform service.

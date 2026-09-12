@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"charm.land/fantasy"
 	"github.com/hackafterdark/phosphor/internal/workspaceindex"
@@ -63,8 +64,14 @@ func NewWorkspaceSearchTool(workingDir string) fantasy.AgentTool {
 				return fantasy.NewTextErrorResponse(fmt.Sprintf("Search failed: %v", err)), nil
 			}
 
+			progress, _ := store.GetProgress(ctx)
+
 			if len(results) == 0 {
-				return fantasy.NewTextResponse("No matching results found."), nil
+				msg := "No matching results found."
+				if note := coverageMissNote(progress); note != "" {
+					msg += "\n\n" + note
+				}
+				return fantasy.NewTextResponse(msg), nil
 			}
 
 			var sb strings.Builder
@@ -82,6 +89,9 @@ func NewWorkspaceSearchTool(workingDir string) fantasy.AgentTool {
 						i+1, r.Path, content)
 				}
 			}
+			if footer := coverageFooter(progress); footer != "" {
+				fmt.Fprintf(&sb, "\n%s\n", footer)
+			}
 
 			return fantasy.NewTextResponse(sb.String()), nil
 		},
@@ -90,4 +100,55 @@ func NewWorkspaceSearchTool(workingDir string) fantasy.AgentTool {
 
 func workspaceSearchDescription() string {
 	return `Searches the workspace FTS5 index for code symbols and document text. Instant, zero API calls.`
+}
+
+// coverageFooter reports how much of the codebase is actually in the index,
+// so a caller can judge how far to trust a hit.
+func coverageFooter(p *workspaceindex.IndexProgress) string {
+	if p == nil {
+		return ``
+	}
+	rel := `never`
+	if !p.LastBuilt.IsZero() {
+		rel = humanizeDuration(time.Since(p.LastBuilt))
+	}
+	return fmt.Sprintf(`[index coverage: %d/%d files · status %s · last full build %s ago]`,
+		p.FilesIndexed, p.TotalFiles, p.Status, rel)
+}
+
+// coverageMissNote turns a zero-result search into an honest, bounded claim:
+// when coverage is incomplete, `not found` must not be read as `absent`.
+func coverageMissNote(p *workspaceindex.IndexProgress) string {
+	if p == nil || p.FilesIndexed == 0 {
+		return `Index is empty or not enabled; this is not evidence the symbol is absent. Use lsp_references or grep.`
+	}
+	if p.Stale || p.FilesIndexed < p.TotalFiles {
+		return fmt.Sprintf(
+			`Treat this as inconclusive: the index covers only %d/%d files (status %s, last full build %v). A miss here does not mean the symbol is absent — fall back to lsp_references or grep, or trigger a rebuild from the Workspace Index menu.`,
+			p.FilesIndexed, p.TotalFiles, p.Status, humanizeDuration(durationSince(p.LastBuilt)),
+		)
+	}
+	return ``
+}
+
+func durationSince(t time.Time) time.Duration {
+	if t.IsZero() {
+		return time.Duration(0)
+	}
+	return time.Since(t)
+}
+
+func humanizeDuration(d time.Duration) string {
+	switch {
+	case d <= 0:
+		return `never`
+	case d < time.Minute:
+		return `moments`
+	case d < time.Hour:
+		return fmt.Sprintf(`%dm`, int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf(`%dh`, int(d.Hours()))
+	default:
+		return fmt.Sprintf(`%dd`, int(d.Hours()/24))
+	}
 }

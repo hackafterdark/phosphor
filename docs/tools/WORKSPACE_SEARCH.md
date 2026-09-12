@@ -2,7 +2,7 @@
 
 ## Description
 
-`workspace_search` performs full-text search over a local SQLite FTS5 index. It searches code symbols (functions, types, methods) and document text (Markdown, config files, etc.) with zero API calls and sub-millisecond latency.
+`workspace_search` performs full-text search over a local SQLite FTS5 index. It searches code symbols (functions, types, methods) and document text (Markdown, config files, and — when `workspace_search.fulltext.index_documents` is enabled, which it is by default — extracted office documents such as PDF, DOCX, XLSX, and PPTX) with zero API calls and sub-millisecond latency. The document tier is a locator: a hit points you at the right file, so use `view` to read it and reason over its structure (for example a spreadsheet's rows and columns are flattened in the index).
 
 ## Usage
 
@@ -44,7 +44,7 @@ Returns up to `limit` results, each containing:
 ## How It Works
 
 1. Code files are parsed with Tree-sitter to extract symbols (functions, types, methods).
-2. Non-code files (Markdown, configs, etc.) are indexed as plain text.
+2. Non-code files are indexed as text: Markdown and config files directly, and office documents (PDF, DOCX, XLSX, PPTX) via their converters when `workspace_search.fulltext.index_documents` is enabled (on by default).
 3. Both are stored in an FTS5 virtual table (`symbols_fts` and `docs_fts`).
 4. Searches use SQLite FTS5 match queries — instant, local, zero API calls.
 5. File watcher with configurable debounce keeps the index up-to-date.

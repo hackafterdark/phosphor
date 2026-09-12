@@ -493,6 +493,12 @@ func (c *Commands) defaultCommands() []*CommandItem {
 		}
 	}
 
+	// Workspace (FTS5) symbol search dialog. Always reachable so the feature
+	// can be turned on from the UI even when it is currently disabled.
+	commands = append(commands, NewCommandItem(c.com.Styles, "workspace_index", "Workspace Index", "", ActionOpenDialog{
+		DialogID: WorkspaceIndexID,
+	}))
+
 	// Add model settings command for tuning sampling and reasoning params.
 	commands = append(commands, NewCommandItem(c.com.Styles, "model_settings", "Model Settings", "", ActionOpenDialog{
 		DialogID: ModelSettingsID,

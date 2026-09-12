@@ -984,7 +984,7 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, isSubA
 	}
 
 	ft := c.cfg.Config().WorkspaceSearch.FullText
-	if ft != nil && (ft.Enabled || ft.AutoIndex) {
+	if ft != nil && (ft.Enabled || ft.AutoIndexEnabled()) {
 		allTools = append(allTools, tools.NewWorkspaceSearchTool(c.cfg.WorkingDir()))
 	}
 

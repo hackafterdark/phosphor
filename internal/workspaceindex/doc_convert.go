@@ -44,6 +44,25 @@ func ConvertDocument(data []byte, ext string) (string, error) {
 	}
 }
 
+// convertibleExtensions lists the file extensions ConvertDocument knows how to
+// turn into plain text. It is the single source of truth for "is this a
+// document we can extract?", so the indexer can decide whether a binary
+// extension is worth reading instead of being skipped as opaque data. Keep it
+// in sync with the switch in ConvertDocument.
+var convertibleExtensions = map[string]bool{
+	".pptx": true, ".pdf": true, ".docx": true,
+	".xlsx": true, ".xls": true, ".rtf": true,
+	".html": true, ".htm": true, ".xml": true,
+}
+
+// IsConvertibleDocument reports whether ConvertDocument can extract text from
+// a file with the given extension (the extension may include a leading dot and
+// be in any case). Legacy .doc/.ppt are intentionally absent — they are not
+// supported and stay treated as binary.
+func IsConvertibleDocument(ext string) bool {
+	return convertibleExtensions[strings.ToLower(ext)]
+}
+
 // convertPDF extracts text from PDF data.
 // Tier 1: gxpdf (full text extraction).
 // Tier 2: pdfcpu (raw stream extraction fallback).

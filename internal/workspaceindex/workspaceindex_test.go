@@ -1,6 +1,7 @@
 package workspaceindex
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	"github.com/xuri/excelize/v2"
 	_ "modernc.org/sqlite"
 )
 
@@ -98,6 +100,105 @@ func TestSearchAll(t *testing.T) {
 	}
 	if len(results) != 2 {
 		t.Errorf("expected 2 results, got %d", len(results))
+	}
+}
+
+// TestSearchSymbols_RanksNameMatchAboveDocComment is the ranking regression
+// guard. Before weighted bm25, SearchSymbols returned rows in rowid order, so
+// a symbol that merely mentioned the term in its doc comment could outrank the
+// symbol actually named for it. The documentation-only match is inserted first
+// on purpose: under the old rowid ordering it would come back first, so this
+// asserting the name match is first proves ranking is doing its job.
+func TestSearchSymbols_RanksNameMatchAboveDocComment(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	store, err := NewStore(dir)
+	if err != nil {
+		t.Fatalf("NewStore() error: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	// Inserted first: matches "zzwidget" only via the documentation column.
+	if err := store.InsertSymbol(ctx, "pkg/b.go", "Loader", "pkg.Loader", "func Loader()", "manages the zzwidget lifecycle"); err != nil {
+		t.Fatalf("InsertSymbol() error: %v", err)
+	}
+	// Inserted second: is literally named "zzwidget" (name column match).
+	if err := store.InsertSymbol(ctx, "pkg/a.go", "zzwidget", "pkg.zzwidget", "func zzwidget()", "a thing"); err != nil {
+		t.Fatalf("InsertSymbol() error: %v", err)
+	}
+
+	results, err := store.SearchSymbols(ctx, "zzwidget", 10)
+	if err != nil {
+		t.Fatalf("SearchSymbols() error: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+	if results[0].Name != "zzwidget" {
+		t.Errorf("name match should rank first under bm25, got results[0]=%q (rowid order leaked through)", results[0].Name)
+	}
+	if !(results[0].Score <= results[1].Score) {
+		t.Errorf("results not sorted by ascending bm25 score: %v then %v", results[0].Score, results[1].Score)
+	}
+}
+
+// TestSearchAll_MergesBothSourcesAndSortsByScore guards the Tier 2 merge: the
+// two tables are searched independently then interleaved by score, so results
+// must be globally ascending by score, must not drop either source, and must
+// still honor the limit after widening the per-source candidate pool.
+func TestSearchAll_MergesBothSourcesAndSortsByScore(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	store, err := NewStore(dir)
+	if err != nil {
+		t.Fatalf("NewStore() error: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	if err := store.InsertSymbol(ctx, "pkg/a.go", "AlphaSym", "pkg.AlphaSym", "func AlphaSym()", "mentions mergecheck"); err != nil {
+		t.Fatalf("InsertSymbol() error: %v", err)
+	}
+	if err := store.InsertSymbol(ctx, "pkg/b.go", "BetaSym", "pkg.BetaSym", "func BetaSym()", "mentions mergecheck"); err != nil {
+		t.Fatalf("InsertSymbol() error: %v", err)
+	}
+	if err := store.InsertDoc(ctx, "d1.md", "mergecheck mergecheck mergecheck strong hit"); err != nil {
+		t.Fatalf("InsertDoc() error: %v", err)
+	}
+	if err := store.InsertDoc(ctx, "d2.md", "mergecheck"); err != nil {
+		t.Fatalf("InsertDoc() error: %v", err)
+	}
+
+	results, err := store.SearchAll(ctx, "mergecheck", 10)
+	if err != nil {
+		t.Fatalf("SearchAll() error: %v", err)
+	}
+	if len(results) != 4 {
+		t.Fatalf("expected 4 merged results, got %d", len(results))
+	}
+
+	var sawSymbol, sawDoc bool
+	for i := range results {
+		if i > 0 && !(results[i-1].Score <= results[i].Score) {
+			t.Errorf("merged results not ascending by score at %d: %v then %v", i, results[i-1].Score, results[i].Score)
+		}
+		if results[i].Name != "" {
+			sawSymbol = true
+		} else if results[i].Content != "" {
+			sawDoc = true
+		}
+	}
+	if !sawSymbol || !sawDoc {
+		t.Errorf("merge should return both a symbol and a doc, sawSymbol=%v sawDoc=%v", sawSymbol, sawDoc)
+	}
+
+	trimmed, err := store.SearchAll(ctx, "mergecheck", 2)
+	if err != nil {
+		t.Fatalf("SearchAll() trim error: %v", err)
+	}
+	if len(trimmed) != 2 {
+		t.Errorf("expected trimmed result of 2, got %d", len(trimmed))
 	}
 }
 
@@ -375,6 +476,8 @@ func TestWatcherRemoveEvent(t *testing.T) {
 
 	ctx := context.Background()
 	store.InsertSymbol(ctx, "test.go", "TestFunc", "pkg.TestFunc", "func TestFunc()", "")
+	store.InsertDoc(ctx, "test.go", "doc content for test.go")
+	store.UpsertFileHash(ctx, "test.go", "hash-for-test-go")
 
 	watcher := NewWatcher(store, dir, nil, 50)
 	defer watcher.Stop()
@@ -389,6 +492,13 @@ func TestWatcherRemoveEvent(t *testing.T) {
 	symbols, _ := store.CountSymbols(ctx)
 	if symbols != 0 {
 		t.Errorf("expected 0 symbols after remove, got %d", symbols)
+	}
+	docs, _ := store.CountDocs(ctx)
+	if docs != 0 {
+		t.Errorf("expected 0 docs after remove, got %d", docs)
+	}
+	if _, exists, _ := store.GetFileHash(ctx, "test.go"); exists {
+		t.Error("expected file_hashes ledger row to be removed after remove event")
 	}
 }
 
@@ -556,5 +666,249 @@ func TestIndexProgress(t *testing.T) {
 	}
 	if !progress.Complete {
 		t.Error("index with files should be marked complete")
+	}
+}
+
+func TestIgnoreMatcherHonorsDirectorySubtrees(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name     string
+		path     string
+		pattern  string
+		expected bool
+	}{
+		{"nested file under ignored dir", "other_project_research/hermes-agent/apps/desktop/electron/main.cjs", "other_project_research/", true},
+		{"bare dir name without trailing slash", "other_project_research/hermes/x.ts", "other_project_research", true},
+		{"interior path segment", "vendor/sub/pkg/a.go", "vendor", true},
+		{"multi segment directory prefix", "docs/plans/roadmap.md", "docs/plans", true},
+		{"basement glob still matches", "logs/app.log", "*.log", true},
+		{"exact relative path matches", "docs/plans/x.md", "docs/plans/x.md", true},
+		{"partial segment must not match", "src/my_other_project_research_tool/main.go", "other_project_research", false},
+		{"unrelated file is kept", "internal/ui/model/ui.go", "other_project_research/", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := isExcluded(c.path, []string{c.pattern}); got != c.expected {
+				t.Fatalf("isExcluded(%q, [%q]) = %v, want %v", c.path, c.pattern, got, c.expected)
+			}
+		})
+	}
+}
+
+// TestIndexerReconcileDropsDeletedAndIgnored is the end-to-end guard for the
+// reconcile pass that runs at the tail of IndexWorkspace. After a full walk the
+// visited, non-excluded files are the source of truth: any previously-indexed
+// path the walk did not visit has since been deleted or moved behind an ignore
+// rule, so its symbol, doc, and hash rows must be dropped while still-present
+// files keep theirs.
+func TestIndexerReconcileDropsDeletedAndIgnored(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	store, err := NewStore(dir)
+	if err != nil {
+		t.Fatalf("NewStore() error: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	indexer := NewIndexer(store, 0)
+
+	// keep.go stays present and indexable for the whole test.
+	if err := os.WriteFile(filepath.Join(dir, "keep.go"),
+		[]byte("package keep\n\nfunc KeepFunc() {}\n"), 0o644); err != nil {
+		t.Fatalf("write keep.go: %v", err)
+	}
+	// gone.go is indexed on the first pass, then deleted before the second.
+	if err := os.WriteFile(filepath.Join(dir, "gone.go"),
+		[]byte("package gone\n\nfunc GoneFunc() {}\n"), 0o644); err != nil {
+		t.Fatalf("write gone.go: %v", err)
+	}
+	// secret.go stays on disk the whole time but becomes ignored on pass two.
+	secretDir := filepath.Join(dir, "ignored")
+	if err := os.MkdirAll(secretDir, 0o755); err != nil {
+		t.Fatalf("mkdir ignored: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(secretDir, "secret.go"),
+		[]byte("package secret\n\nfunc SecretFunc() {}\n"), 0o644); err != nil {
+		t.Fatalf("write secret.go: %v", err)
+	}
+
+	// First pass: nothing ignored, so all three symbols are indexed.
+	if err := indexer.IndexWorkspace(ctx, dir, nil); err != nil {
+		t.Fatalf("first IndexWorkspace() error: %v", err)
+	}
+	for _, name := range []string{"KeepFunc", "GoneFunc", "SecretFunc"} {
+		results, err := store.SearchSymbols(ctx, name, 10)
+		if err != nil {
+			t.Fatalf("search %s: %v", name, err)
+		}
+		if len(results) != 1 {
+			t.Fatalf("before changes: expected %s indexed once, got %d", name, len(results))
+		}
+	}
+
+	// Delete gone.go from disk so the second walk no longer visits it.
+	if err := os.Remove(filepath.Join(dir, "gone.go")); err != nil {
+		t.Fatalf("remove gone.go: %v", err)
+	}
+
+	// Second pass: ignored/ is now excluded. keep.go must survive; gone.go
+	// (deleted) and ignored/secret.go (newly hidden) must both be reconciled.
+	if err := indexer.IndexWorkspace(ctx, dir, []string{"ignored/"}); err != nil {
+		t.Fatalf("second IndexWorkspace() error: %v", err)
+	}
+
+	if results, err := store.SearchSymbols(ctx, "KeepFunc", 10); err != nil || len(results) != 1 {
+		t.Errorf("keep.go symbol should survive reconcile, got %d results (err=%v)", len(results), err)
+	}
+	for _, name := range []string{"GoneFunc", "SecretFunc"} {
+		results, err := store.SearchSymbols(ctx, name, 10)
+		if err != nil {
+			t.Fatalf("search %s: %v", name, err)
+		}
+		if len(results) != 0 {
+			t.Errorf("%s rows should be pruned after reconcile, got %d", name, len(results))
+		}
+	}
+
+	// The hash ledger must no longer list the two removed files, while the
+	// surviving file's ledger row stays intact.
+	goneRel, _ := filepath.Rel(dir, filepath.Join(dir, "gone.go"))
+	if _, exists, _ := store.GetFileHash(ctx, goneRel); exists {
+		t.Errorf("gone.go hash should be pruned, still present at %q", goneRel)
+	}
+	secretRel, _ := filepath.Rel(dir, filepath.Join(secretDir, "secret.go"))
+	if _, exists, _ := store.GetFileHash(ctx, secretRel); exists {
+		t.Errorf("ignored/secret.go hash should be pruned, still present at %q", secretRel)
+	}
+	keepRel, _ := filepath.Rel(dir, filepath.Join(dir, "keep.go"))
+	if _, exists, _ := store.GetFileHash(ctx, keepRel); !exists {
+		t.Errorf("keep.go hash should survive reconcile, missing at %q", keepRel)
+	}
+
+	if files, _ := store.CountFiles(ctx); files != 1 {
+		t.Errorf("expected 1 file in ledger after reconcile, got %d", files)
+	}
+}
+
+// writeTestXLSX builds a single-sheet workbook whose only cell holds token and
+// writes it to path, giving the tests a real office document that converts to
+// searchable text without depending on an external fixture.
+func writeTestXLSX(t *testing.T, path, token string) {
+	t.Helper()
+	f := excelize.NewFile()
+	sheet, err := f.NewSheet("Sheet1")
+	if err != nil {
+		t.Fatalf("NewSheet() error: %v", err)
+	}
+	f.SetCellValue("Sheet1", "A1", token)
+	f.SetActiveSheet(sheet)
+	buf := new(bytes.Buffer)
+	if _, err := f.WriteTo(buf); err != nil {
+		t.Fatalf("WriteTo() error: %v", err)
+	}
+	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+}
+
+// TestIndexerIndexDocumentsEnabled proves that, by default, an office document
+// that the binary skip-list would once have dropped is now run through the
+// converter and its extracted text becomes searchable in the doc tier.
+func TestIndexerIndexDocumentsEnabled(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	store, err := NewStore(dir)
+	if err != nil {
+		t.Fatalf("NewStore() error: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	indexer := NewIndexer(store, 0) // document indexing is on by default.
+	writeTestXLSX(t, filepath.Join(dir, "budget.xlsx"), "quantumwidget")
+
+	if err := indexer.IndexWorkspace(ctx, dir, nil); err != nil {
+		t.Fatalf("IndexWorkspace() error: %v", err)
+	}
+
+	results, err := store.SearchDocs(ctx, "quantumwidget", 10)
+	if err != nil {
+		t.Fatalf("SearchDocs() error: %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatal("expected the XLSX cell text to be indexed and searchable")
+	}
+	var found bool
+	for _, r := range results {
+		if filepath.Base(r.Path) == "budget.xlsx" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected a hit for budget.xlsx, got %+v", results)
+	}
+}
+
+// TestIndexerIndexDocumentsDisabledSkipsOfficeDocs proves the escape hatch:
+// with document indexing turned off the same office file is treated as opaque
+// binary and neither its text nor a hash row is recorded.
+func TestIndexerIndexDocumentsDisabledSkipsOfficeDocs(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	store, err := NewStore(dir)
+	if err != nil {
+		t.Fatalf("NewStore() error: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	indexer := NewIndexer(store, 0)
+	indexer.SetIndexDocuments(false)
+	writeTestXLSX(t, filepath.Join(dir, "budget.xlsx"), "quantumwidget")
+
+	if err := indexer.IndexWorkspace(ctx, dir, nil); err != nil {
+		t.Fatalf("IndexWorkspace() error: %v", err)
+	}
+
+	if docs, _ := store.CountDocs(ctx); docs != 0 {
+		t.Errorf("expected no docs indexed while disabled, got %d", docs)
+	}
+	results, err := store.SearchDocs(ctx, "quantumwidget", 10)
+	if err != nil {
+		t.Fatalf("SearchDocs() error: %v", err)
+	}
+	if len(results) != 0 {
+		t.Errorf("expected office doc to be skipped while disabled, got %d hits", len(results))
+	}
+}
+
+// TestIndexerUndecodableBinaryDocIsSkipped guards the safety property behind
+// the gate: a file carrying an office extension whose bytes cannot be turned
+// into text is dropped outright instead of having its raw bytes indexed as
+// garbage document content.
+func TestIndexerUndecodableBinaryDocIsSkipped(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	store, err := NewStore(dir)
+	if err != nil {
+		t.Fatalf("NewStore() error: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	indexer := NewIndexer(store, 0)
+	// A "pdf" with none of the markers any converter tier or the raw-stream
+	// fallback looks for, so every extraction path yields nothing.
+	if err := os.WriteFile(filepath.Join(dir, "junk.pdf"),
+		[]byte("\x00\x01\x02\x03 binary garbage without markers"), 0o644); err != nil {
+		t.Fatalf("write junk.pdf: %v", err)
+	}
+
+	if err := indexer.IndexWorkspace(ctx, dir, nil); err != nil {
+		t.Fatalf("IndexWorkspace() error: %v", err)
+	}
+	if docs, _ := store.CountDocs(ctx); docs != 0 {
+		t.Errorf("expected undecodable office doc to be skipped, got %d docs", docs)
 	}
 }

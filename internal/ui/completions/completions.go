@@ -352,14 +352,27 @@ func (c *Completions) Update(msg tea.KeyPressMsg) (tea.Msg, bool) {
 
 	case key.Matches(msg, c.keyMap.UpInsert):
 		c.selectPrev()
-		return c.selectCurrent(true), true
+		if sel := c.selectCurrent(true); sel != nil {
+			return sel, true
+		}
+		return nil, false
 
 	case key.Matches(msg, c.keyMap.DownInsert):
 		c.selectNext()
-		return c.selectCurrent(true), true
+		if sel := c.selectCurrent(true); sel != nil {
+			return sel, true
+		}
+		return nil, false
 
 	case key.Matches(msg, c.keyMap.Select):
-		return c.selectCurrent(false), true
+		// Only consume the key when there is actually an item to accept. An
+		// open-but-empty popup (the filter matched nothing) must let Enter/Tab
+		// fall through so the editor can send the message instead of the
+		// keystroke being silently swallowed.
+		if sel := c.selectCurrent(false); sel != nil {
+			return sel, true
+		}
+		return nil, false
 
 	case key.Matches(msg, c.keyMap.Cancel):
 		c.Close()

@@ -148,13 +148,14 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore, skillsMgr
 			},
 		)
 
-		if cfg.WorkspaceSearch != nil && cfg.WorkspaceSearch.FullText != nil && cfg.WorkspaceSearch.FullText.AutoIndex {
+		if cfg.WorkspaceSearch != nil && cfg.WorkspaceSearch.FullText != nil && cfg.WorkspaceSearch.FullText.AutoIndexEnabled() {
 			wi := cfg.WorkspaceSearch.FullText
 			debounceMs := wi.DebounceMs
 			if debounceMs == 0 {
 				debounceMs = 2000
 			}
 			watcher := workspaceindex.NewWatcher(indexStore, store.WorkingDir(), wi.ExcludePatterns, debounceMs)
+			watcher.SetIndexDocuments(wi.IndexDocumentsEnabled())
 			if err := watcher.Start(); err != nil {
 				slog.Warn("Failed to start workspace index watcher", "error", err)
 			} else {
@@ -169,27 +170,30 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore, skillsMgr
 			}
 		}
 
-		// Build the initial workspace index in the background.
-		if cfg.WorkspaceSearch != nil && cfg.WorkspaceSearch.FullText != nil && cfg.WorkspaceSearch.FullText.Enabled {
-			wi := cfg.WorkspaceSearch.FullText
+		// Build the initial workspace index in the background. A failure to
+		// take the lock (another process is building) must only skip this
+		// build, never abort the rest of app initialization.
+		if wi := cfg.WorkspaceSearch.FullText; wi != nil && wi.Enabled {
 			lockPath := filepath.Join(store.WorkingDir(), ".phosphor", "workspace_index.lock")
-			release, err := lock.TryFile(lockPath)
-			if err != nil {
-				slog.Warn("Another process is building the workspace index, skipping", "error", err)
-				return app, nil
+			release, lockErr := lock.TryFile(lockPath)
+			if lockErr != nil {
+				slog.Warn("Another process is building the workspace index; skipping the background build", "error", lockErr)
+			} else {
+				app.indexBuildWG.Go(func() {
+					defer release()
+					indexer := workspaceindex.NewIndexer(indexStore, wi.MaxFileSize)
+					indexer.SetLimits(wi.MaxConcurrent, wi.YieldEvery)
+					indexer.SetIndexDocuments(wi.IndexDocumentsEnabled())
+					if err := indexer.IndexWorkspace(ctx, store.WorkingDir(), wi.ExcludePatterns); err != nil {
+						slog.Warn("Failed to build workspace index", "error", err)
+					} else {
+						files, _ := indexStore.CountFiles(ctx)
+						symbols, _ := indexStore.CountSymbols(ctx)
+						docs, _ := indexStore.CountDocs(ctx)
+						slog.Info("Workspace index built", "files", files, "symbols", symbols, "docs", docs)
+					}
+				})
 			}
-			app.indexBuildWG.Go(func() {
-				defer release()
-				indexer := workspaceindex.NewIndexer(indexStore, wi.MaxFileSize)
-				if err := indexer.IndexWorkspace(ctx, store.WorkingDir(), wi.ExcludePatterns); err != nil {
-					slog.Warn("Failed to build workspace index", "error", err)
-				} else {
-					files, _ := indexStore.CountFiles(ctx)
-					symbols, _ := indexStore.CountSymbols(ctx)
-					docs, _ := indexStore.CountDocs(ctx)
-					slog.Info("Workspace index built", "files", files, "symbols", symbols, "docs", docs)
-				}
-			})
 		}
 	}
 

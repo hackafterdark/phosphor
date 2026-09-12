@@ -999,11 +999,44 @@ type WorkspaceSearch struct {
 
 // FullTextIndex holds settings for the FTS5-based workspace search.
 type FullTextIndex struct {
-	Enabled         bool     `json:"enabled" jsonschema:"description=Enable FTS5 workspace indexing,default=false"`
-	AutoIndex       bool     `json:"auto_index" jsonschema:"description=Enable automatic index updates on file changes,default=false"`
+	Enabled bool `json:"enabled" jsonschema:"description=Enable FTS5 workspace indexing,default=false"`
+	// AutoIndex is tri-state: when nil it follows Enabled (turning the
+	// feature on also keeps the index fresh automatically, since tree-sitter
+	// indexing is cheap); set it explicitly to true/false to override.
+	AutoIndex       *bool    `json:"auto_index,omitempty" jsonschema:"description=Auto-update index on file changes; defaults to the Enabled value when unset"`
 	DebounceMs      int      `json:"debounce_ms,omitempty" jsonschema:"description=Debounce interval in milliseconds,default=2000"`
 	ExcludePatterns []string `json:"exclude_patterns,omitempty" jsonschema:"description=Glob patterns to exclude from indexing"`
 	MaxFileSize     int      `json:"max_file_size,omitempty" jsonschema:"description=Maximum file size in bytes to index (0 = unlimited),default=1048576"`
+	MaxConcurrent   int      `json:"max_concurrent,omitempty" jsonschema:"description=Max goroutines for a full index build (0 = derive from CPU count),default=0"`
+	YieldEvery      int      `json:"yield_every,omitempty" jsonschema:"description=Files between cooperative scheduler yields during a build (0 = default 64),default=0"`
+	// IndexDocuments is tri-state: when nil, office documents (PDF, DOCX,
+	// XLSX, PPTX) are extracted and indexed into docs_fts; set it to false to
+	// keep treating them as binary and skip them outright.
+	IndexDocuments *bool `json:"index_documents,omitempty" jsonschema:"description=Extract and index office documents (PDF/DOCX/XLSX/PPTX) into the document tier,default=true"`
+}
+
+// IndexDocumentsEnabled resolves the tri-state IndexDocuments flag. When it is
+// unset, office documents are indexed by default.
+func (f *FullTextIndex) IndexDocumentsEnabled() bool {
+	if f == nil {
+		return true
+	}
+	if f.IndexDocuments != nil {
+		return *f.IndexDocuments
+	}
+	return true
+}
+
+// AutoIndexEnabled resolves the tri-state AutoIndex against Enabled so the
+// feature stays fresh automatically whenever it is turned on.
+func (f *FullTextIndex) AutoIndexEnabled() bool {
+	if f == nil {
+		return false
+	}
+	if f.AutoIndex != nil {
+		return *f.AutoIndex
+	}
+	return f.Enabled
 }
 
 // VectorEmbeddingIndex holds settings for vector-based codebase search.

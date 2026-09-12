@@ -24,7 +24,7 @@ Both strategies are **configurable and optional**. FTS5 is the default fast path
 ## Rationale
 
 - **FTS5 for structured content**: Code symbols (functions, structs, interfaces, variables) are well-suited for exact or near-exact keyword matching. FTS5 provides instant lookups without network calls.
-- **Document conversion pipeline**: PDF, DOCX, XLSX, RTF, HTML, and XML files are converted to plain text and indexed into `docs_fts`, enabling keyword search across non-code content.
+- **Document conversion pipeline**: PDF, DOCX, XLSX, RTF, HTML, and XML files are converted to plain text and indexed into `docs_fts`, enabling keyword search across non-code content. This tier is a **locator**: it answers "which file mentions X?", so the agent can then read the real file (the `view` tool extracts these same formats) to reason over it. Note that extracted office text is flat (e.g. an RBAC matrix's cells lose their row/column structure when flattened), so the `docs_fts` hit points you to the right spreadsheet; answering over the matrix itself still needs structured reading of the file.
 - **Vector embeddings for conceptual queries**: Natural language queries ("how to configure X") benefit from semantic similarity search. This is reserved for fallback when FTS5 alone cannot answer.
 - **Dual strategy coverage**: FTS5 handles ~90% of queries (symbol lookups, keyword matches). Vector search covers the remaining conceptual queries. Together they provide comprehensive coverage.
 - **Future-proofing**: Supporting multiple document formats positions Phosphor beyond code editing — enabling document Q&A, knowledge-base search, and cross-format information retrieval.
@@ -46,11 +46,20 @@ CREATE VIRTUAL TABLE docs_fts USING fts5(
 
 | Format | Go Package | Target Table |
 |---|---|---|
-| PDF | `github.com/coregx/gxpdf` | `docs_fts` |
-| DOCX | `github.com/unidoc/unioffice` | `docs_fts` |
+| PDF | `github.com/coregx/gxpdf` → fallback `github.com/pdfcpu/pdfcpu` → stdlib stream parse | `docs_fts` |
+| DOCX | stdlib `archive/zip` + `encoding/xml` (`word/document.xml`) | `docs_fts` |
 | XLSX | `github.com/xuri/excelize/v2` | `docs_fts` |
 | RTF | `github.com/attilabuti/striprtf` | `docs_fts` |
-| HTML/XML | `golang.org/x/net/html` + `encoding/xml` | `docs_fts` |
+| PPTX | stdlib `archive/zip` + `encoding/xml` (`ppt/slides/*`) | `docs_fts` |
+| HTML/XML | stdlib `encoding/xml` (HTML passed through) | `docs_fts` |
+
+All converter dependencies are open source: `gxpdf` (MIT), `pdfcpu` (Apache-2.0,
+used only as the PDF fallback tier), `excelize` (MIT), and `striprtf` (MIT); the
+DOCX/PPTX paths use only the Go standard library. DOCX is deliberately parsed
+with stdlib `archive/zip` + `encoding/xml` rather than a third-party office
+suite — `unidoc/unioffice` ("UniOffice") was evaluated early on but is a
+commercial, EULA-licensed product that needs a paid license key, so it is not a
+dependency here.
 
 ### Agent Tool
 
@@ -61,14 +70,22 @@ The `workspace_search` tool queries both FTS5 tables. Optional semantic fallback
 ```json
 {
   "workspace_search": {
-    "enabled": true,
-    "max_file_size": 1048576,
+    "fulltext": {
+      "enabled": true,
+      "auto_index": true,
+      "max_file_size": 1048576,
+      "index_documents": true
+    },
     "vector_embeddings": {
       "enabled": false
     }
   }
 }
 ```
+
+`index_documents` (default `true`) controls whether office documents (PDF,
+DOCX, XLSX, PPTX) are extracted into `docs_fts`; set it to `false` to treat
+those files as opaque binary and skip them.
 
 ## Consequences
 

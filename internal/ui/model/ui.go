@@ -37,6 +37,7 @@ import (
 	"github.com/hackafterdark/phosphor/internal/embeddings"
 	"github.com/hackafterdark/phosphor/internal/fsext"
 	"github.com/hackafterdark/phosphor/internal/home"
+	"github.com/hackafterdark/phosphor/internal/lock"
 	"github.com/hackafterdark/phosphor/internal/stringext"
 	"github.com/hackafterdark/phosphor/internal/ui/anim"
 	"github.com/hackafterdark/phosphor/internal/ui/attachments"
@@ -1517,13 +1518,19 @@ func (m *UI) appendSessionMessage(msg message.Message) tea.Cmd {
 		if cmd := m.chat.ScrollToBottomAndAnimate(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
-		// User message confirmed in chat; now safe to clear the textarea.
+		// User message confirmed in chat; the submit path normally clears the
+		// textarea eagerly. This is a safety net for the (rare) case where the
+		// box was not cleared at submit time. Only clear it when it is still
+		// empty of any fresh draft, so a queued message echoing back later does
+		// not wipe text the user has meanwhile typed for the next prompt.
 		if m.userMessageAwaited {
 			m.userMessageAwaited = false
-			prevHeight := m.textarea.Height()
-			m.textarea.Reset()
-			if cmd := m.handleTextareaHeightChange(prevHeight); cmd != nil {
-				cmds = append(cmds, cmd)
+			if strings.TrimSpace(m.textarea.Value()) == "" {
+				prevHeight := m.textarea.Height()
+				m.textarea.Reset()
+				if cmd := m.handleTextareaHeightChange(prevHeight); cmd != nil {
+					cmds = append(cmds, cmd)
+				}
 			}
 		}
 	case message.Assistant:
@@ -1954,6 +1961,66 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			cmds = append(cmds, util.ReportInfo("Auto-index disabled"))
 		}
 		m.dialog.CloseDialog(dialog.CodebaseIndexID)
+	case dialog.ActionToggleWorkspaceFullTextEnabled:
+		wi := workspaceFullText(m.com.Config())
+		newVal := !(wi != nil && wi.Enabled)
+		if err := m.com.Workspace.SetConfigField(config.ScopeGlobal, "workspace_search.fulltext.enabled", newVal); err != nil {
+			cmds = append(cmds, util.ReportError(err))
+			break
+		}
+		if ws := m.com.Config().WorkspaceSearch; ws != nil && ws.FullText != nil {
+			ws.FullText.Enabled = newVal
+		}
+		if newVal {
+			cmds = append(cmds, util.ReportInfo("Workspace index enabled"))
+			cmds = append(cmds, m.startWorkspaceIndexBuild())
+		} else {
+			cmds = append(cmds, util.ReportInfo("Workspace index disabled (restart to stop the live watcher)"))
+		}
+	case dialog.ActionToggleWorkspaceFullTextAutoIndex:
+		wi := workspaceFullText(m.com.Config())
+		if wi == nil || !wi.Enabled {
+			cmds = append(cmds, util.ReportWarn("Enable the workspace index first to configure auto-update"))
+			break
+		}
+		newVal := !wi.AutoIndexEnabled()
+		if err := m.com.Workspace.SetConfigField(config.ScopeGlobal, "workspace_search.fulltext.auto_index", newVal); err != nil {
+			cmds = append(cmds, util.ReportError(err))
+			break
+		}
+		if ws := m.com.Config().WorkspaceSearch; ws != nil && ws.FullText != nil {
+			v := newVal
+			ws.FullText.AutoIndex = &v
+		}
+		if newVal {
+			cmds = append(cmds, util.ReportInfo("Auto-update enabled (restart to start the watcher)"))
+		} else {
+			cmds = append(cmds, util.ReportInfo("Auto-update disabled (restart to stop the watcher)"))
+		}
+	case dialog.ActionUpdateWorkspaceIndex:
+		if m.symbolIndex == nil {
+			cmds = append(cmds, util.ReportWarn("Workspace index is not available"))
+			break
+		}
+		cmds = append(cmds, m.startWorkspaceIndexBuild())
+	case dialog.ActionRebuildWorkspaceIndex:
+		if m.symbolIndex == nil {
+			cmds = append(cmds, util.ReportWarn("Workspace index is not available"))
+			break
+		}
+		cmds = append(cmds, m.startWorkspaceIndexRebuild())
+	case dialog.ActionClearWorkspaceIndex:
+		if m.symbolIndex == nil {
+			cmds = append(cmds, util.ReportWarn("Workspace index is not available"))
+			break
+		}
+		store := m.symbolIndex
+		cmds = append(cmds, func() tea.Msg {
+			if err := store.Clear(context.Background()); err != nil {
+				return util.NewErrorMsg(err)
+			}
+			return util.NewInfoMsg("Workspace index cleared")
+		})
 	case dialog.ActionPruneSessions:
 		// Deprecated: prune now goes through the PruneDays dialog.
 		// Kept for backwards compatibility.
@@ -2560,12 +2627,20 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				// run the same file/slash/MCP acceptance path (which adds the
 				// reference as a context chip) and stops a Tab from ever
 				// falling through to the textarea and inserting raw text.
+				isTab := key.Matches(msg, m.keyMap.Tab)
 				selection := msg
-				if key.Matches(msg, m.keyMap.Tab) {
+				if isTab {
 					selection = tea.KeyPressMsg{Code: tea.KeyEnter}
 				}
-				if msg, ok := m.completions.Update(selection); ok {
-					cmds = append(cmds, m.handleCompletionSelection(msg)...)
+				if selMsg, ok := m.completions.Update(selection); ok {
+					cmds = append(cmds, m.handleCompletionSelection(selMsg)...)
+					return tea.Batch(cmds...)
+				}
+				// Nothing was there to accept. A Tab must not fall through to
+				// the editor's Tab handler (which moves focus to the chat pane),
+				// so neutralize it; an Enter is allowed to fall through so the
+				// message can still be sent.
+				if isTab {
 					return tea.Batch(cmds...)
 				}
 			}
@@ -2635,7 +2710,20 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				m.randomizePlaceholders()
 				m.historyReset()
 
-				return tea.Batch(m.sendMessage(value, attachments...), m.loadPromptHistory())
+				// Clear the prompt immediately on submit. The normal flow relies
+				// on the user message echoing back into the chat to clear the
+				// textarea, but that echo never arrives for a prompt that is
+				// queued while the agent is mid-turn, so the text would linger
+				// and a second Enter would re-queue the very same message. The
+				// chat-echo clear below stays as a safety net but now only fires
+				// when the box is still empty, so it never wipes a fresh draft.
+				m.textarea.Reset()
+				if cmd := m.handleTextareaHeightChange(prevHeight); cmd != nil {
+					cmds = append(cmds, cmd)
+				}
+				m.closeCompletions()
+
+				return tea.Batch(append(cmds, m.sendMessage(value, attachments...), m.loadPromptHistory())...)
 			case key.Matches(msg, m.keyMap.Chat.NewSession):
 				if !m.hasSession() {
 					break
@@ -3751,7 +3839,9 @@ func (m *UI) closeCompletions() {
 	m.completionsOpen = false
 	m.completionsQuery = ""
 	m.completionsStartIndex = 0
-	m.completions.Close()
+	if m.completions != nil {
+		m.completions.Close()
+	}
 }
 
 // insertCompletionText replaces the @query in the textarea with the given text.
@@ -4450,6 +4540,10 @@ func (m *UI) openDialog(id string) tea.Cmd {
 		if cmd := m.openCodebaseIndexDialog(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
+	case dialog.WorkspaceIndexID:
+		if cmd := m.openWorkspaceIndexDialog(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 	default:
 		// Unknown dialog
 		break
@@ -4618,6 +4712,121 @@ func (m *UI) openCodebaseIndexDialog() tea.Cmd {
 	codebaseIndexDialog := dialog.NewCodebaseIndexDialog(m.com)
 	m.dialog.OpenDialog(codebaseIndexDialog)
 	return nil
+}
+
+// openWorkspaceIndexDialog opens the FTS5 workspace symbol search dialog.
+func (m *UI) openWorkspaceIndexDialog() tea.Cmd {
+	if m.dialog.ContainsDialog(dialog.WorkspaceIndexID) {
+		m.dialog.BringToFront(dialog.WorkspaceIndexID)
+		return nil
+	}
+
+	workspaceIndexDialog := dialog.NewWorkspaceIndex(m.com, m.symbolIndex)
+	m.dialog.OpenDialog(workspaceIndexDialog)
+	return workspaceIndexDialog.InitialCmd()
+}
+
+// workspaceFullText returns the FTS5 (workspace search) config block, or nil
+// when it has not been configured.
+func workspaceFullText(cfg *config.Config) *config.FullTextIndex {
+	if cfg == nil || cfg.WorkspaceSearch == nil {
+		return nil
+	}
+	return cfg.WorkspaceSearch.FullText
+}
+
+// startWorkspaceIndexBuild runs a full FTS5 index build in the background and
+// reports the outcome. It guards against overlapping builds with the same
+// cross-process lock the startup build uses, and the store's single-writer
+// serialization keeps concurrent inserts safe. The blocking work lives in the
+// returned [tea.Cmd] so it stays off the UI thread.
+func (m *UI) startWorkspaceIndexBuild() tea.Cmd {
+	store := m.symbolIndex
+	root := m.com.Workspace.WorkingDir()
+	wi := workspaceFullText(m.com.Config())
+	var (
+		maxSize  int
+		conc     int
+		yield    int
+		excludes []string
+	)
+	if wi != nil {
+		maxSize = wi.MaxFileSize
+		conc = wi.MaxConcurrent
+		yield = wi.YieldEvery
+		excludes = wi.ExcludePatterns
+	}
+	return func() tea.Msg {
+		if store == nil {
+			return util.NewWarnMsg("Workspace index is not available")
+		}
+		lockPath := filepath.Join(root, ".phosphor", "workspace_index.lock")
+		release, err := lock.TryFile(lockPath)
+		if err != nil {
+			return util.NewWarnMsg("A workspace index build is already running")
+		}
+		defer release()
+		indexer := workspaceindex.NewIndexer(store, maxSize)
+		indexer.SetLimits(conc, yield)
+		indexer.SetIndexDocuments(wi.IndexDocumentsEnabled())
+		if err := indexer.IndexWorkspace(context.Background(), root, excludes); err != nil {
+			slog.Warn("Workspace index build failed", "error", err)
+			return util.NewErrorMsg(err)
+		}
+		files, _ := store.CountFiles(context.Background())
+		symbols, _ := store.CountSymbols(context.Background())
+		docs, _ := store.CountDocs(context.Background())
+		return util.NewInfoMsg(fmt.Sprintf("Workspace index built: %d files, %d symbols, %d docs", files, symbols, docs))
+	}
+}
+
+// startWorkspaceIndexRebuild clears the FTS5 index and re-walks the workspace
+// from scratch under a single cross-process lock, so no stale rows can survive
+// between the clear and the re-index. The blocking work lives in the returned
+// [tea.Cmd] so it stays off the UI thread.
+func (m *UI) startWorkspaceIndexRebuild() tea.Cmd {
+	store := m.symbolIndex
+	root := m.com.Workspace.WorkingDir()
+	wi := workspaceFullText(m.com.Config())
+	var (
+		maxSize  int
+		conc     int
+		yield    int
+		excludes []string
+	)
+	if wi != nil {
+		maxSize = wi.MaxFileSize
+		conc = wi.MaxConcurrent
+		yield = wi.YieldEvery
+		excludes = wi.ExcludePatterns
+	}
+	return func() tea.Msg {
+		if store == nil {
+			return util.NewWarnMsg("Workspace index is not available")
+		}
+		lockPath := filepath.Join(root, ".phosphor", "workspace_index.lock")
+		release, err := lock.TryFile(lockPath)
+		if err != nil {
+			return util.NewWarnMsg("A workspace index build is already running")
+		}
+		defer release()
+		ctx := context.Background()
+		if err := store.Clear(ctx); err != nil {
+			slog.Warn("Workspace index clear failed", "error", err)
+			return util.NewErrorMsg(err)
+		}
+		indexer := workspaceindex.NewIndexer(store, maxSize)
+		indexer.SetLimits(conc, yield)
+		indexer.SetIndexDocuments(wi.IndexDocumentsEnabled())
+		if err := indexer.IndexWorkspace(ctx, root, excludes); err != nil {
+			slog.Warn("Workspace index rebuild failed", "error", err)
+			return util.NewErrorMsg(err)
+		}
+		files, _ := store.CountFiles(ctx)
+		symbols, _ := store.CountSymbols(ctx)
+		docs, _ := store.CountDocs(ctx)
+		return util.NewInfoMsg(fmt.Sprintf("Workspace index rebuilt: %d files, %d symbols, %d docs", files, symbols, docs))
+	}
 }
 
 // it brings it to the front. Otherwise, it will list all the sessions and open

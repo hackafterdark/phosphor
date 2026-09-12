@@ -12,6 +12,7 @@ import (
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/hackafterdark/phosphor/internal/ui/common"
 	"github.com/hackafterdark/phosphor/internal/ui/logo"
+	"github.com/hackafterdark/phosphor/internal/workspaceindex"
 	"github.com/hackafterdark/phosphor/pkg/config"
 )
 
@@ -148,12 +149,23 @@ func (m *UI) codebaseIndexInfo(width int) string {
 		}
 		if m.indexProgress != nil {
 			p := m.indexProgress
-			if p.Complete {
-				statusParts = append(statusParts, t.ModelInfo.Provider.Render("Files: "+abbrevNumber(p.FilesIndexed)))
-				statusParts = append(statusParts, t.ModelInfo.Provider.Render("Symbols: "+abbrevNumber(p.SymbolsIndexed)))
-				statusParts = append(statusParts, t.ModelInfo.Provider.Render("Docs: "+abbrevNumber(p.DocsIndexed)))
-			} else {
-				statusParts = append(statusParts, t.ModelInfo.Provider.Render("Building index..."))
+			switch p.Status {
+			case workspaceindex.IndexStatusIndexing:
+				line := "Building index… " + abbrevNumber(p.FilesIndexed) + "/" + abbrevNumber(p.TotalFiles)
+				statusParts = append(statusParts, t.ModelInfo.Provider.Render(line))
+				if p.CurrentFile != "" {
+					statusParts = append(statusParts, t.ModelInfo.Provider.Render("  "+truncRunes(p.CurrentFile, max(4, width-4))))
+				}
+			case workspaceindex.IndexStatusError:
+				statusParts = append(statusParts, t.ModelInfo.Provider.Render("Index error — open Workspace Index"))
+			default:
+				counts, hint := indexStatusLines(p, wi.AutoIndexEnabled(), width, t.ModelInfo.Provider, t.ModelInfo.Reasoning)
+				for _, line := range counts {
+					statusParts = append(statusParts, t.ModelInfo.Provider.Render(line))
+				}
+				for _, line := range hint {
+					statusParts = append(statusParts, t.ModelInfo.Reasoning.Render(line))
+				}
 			}
 		}
 	}
@@ -162,6 +174,91 @@ func (m *UI) codebaseIndexInfo(width int) string {
 	}
 
 	return lipgloss.JoinVertical(lipgloss.Left, lipgloss.JoinVertical(lipgloss.Left, parts...))
+}
+
+// indexStatusLines renders the Workspace Search counts and a build-freshness
+// hint as two independently style-able groups. On a wide sidebar the three
+// counts share one line and the hint a second; on a narrow sidebar each count
+// drops to its own short line so the trailing values are never truncated away.
+// It measures fit against the *rendered* width (via the same styles the caller
+// will apply), so styles that add padding — the hint's Reasoning style pads two
+// columns — are accounted for and nothing clips.
+func indexStatusLines(p *workspaceindex.IndexProgress, autoUpdate bool, width int, countsStyle, hintStyle lipgloss.Style) (counts, hint []string) {
+	files := "Files " + abbrevNumber(p.FilesIndexed)
+	syms := "Symbols " + abbrevNumber(p.SymbolsIndexed)
+	docs := "Docs " + abbrevNumber(p.DocsIndexed)
+
+	if joined := strings.Join([]string{files, syms, docs}, " · "); statusFits(countsStyle, joined, width) {
+		counts = append(counts, joined)
+	} else {
+		counts = append(counts, files, syms, docs)
+	}
+
+	auto := "auto-update off"
+	if autoUpdate {
+		auto = "auto-update on"
+	}
+	fresh := indexFreshness(p)
+	if joined := auto + " · " + fresh; statusFits(hintStyle, joined, width) {
+		hint = append(hint, joined)
+	} else {
+		hint = append(hint, auto, fresh)
+	}
+	return counts, hint
+}
+
+// indexFreshness collapses the staleness signals into a single compact token.
+func indexFreshness(p *workspaceindex.IndexProgress) string {
+	switch {
+	case p.Stale:
+		return "partial (rebuild)"
+	case p.UpdatedSinceBuild > 0 && !p.LastBuilt.IsZero():
+		return "built " + relTimeStr(p.LastBuilt) + " (pending)"
+	case !p.LastBuilt.IsZero():
+		return "built " + relTimeStr(p.LastBuilt)
+	default:
+		return "never built"
+	}
+}
+
+// statusFits reports whether s, once rendered with the given style, fits within
+// width visible cells. Measuring the styled output (not the raw string) means
+// style padding — such as the hint's two-column left pad — is counted, so the
+// caller's width budget matches what the terminal actually draws.
+func statusFits(style lipgloss.Style, s string, width int) bool {
+	return lipgloss.Width(style.Render(s)) <= width
+}
+
+// truncRunes elides the middle of s so it fits within n runes.
+func truncRunes(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n || n <= 1 {
+		return s
+	}
+	if n <= 3 {
+		return string(r[:n-1]) + "…"
+	}
+	head := (n - 1) / 2
+	tail := (n - 1) - head
+	return string(r[:head]) + "…" + string(r[len(r)-tail:])
+}
+
+// relTimeStr renders a coarse "x ago" string for a timestamp.
+func relTimeStr(t time.Time) string {
+	if t.IsZero() {
+		return "never"
+	}
+	d := time.Since(t)
+	switch {
+	case d < time.Minute:
+		return "just now"
+	case d < time.Hour:
+		return strconv.Itoa(int(d.Minutes())) + "m ago"
+	case d < 24*time.Hour:
+		return strconv.Itoa(int(d.Hours())) + "h ago"
+	default:
+		return strconv.Itoa(int(d.Hours()/24)) + "d ago"
+	}
 }
 
 func (m *UI) drawSidebar(scr uv.Screen, area uv.Rectangle) {
