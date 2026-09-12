@@ -80,6 +80,7 @@ type UsageStats struct {
 	DaysAgo          int
 	PromptTokens     int64
 	CompletionTokens int64
+	ReasoningTokens  int64
 }
 
 // Usage represents the usage stats dialog.
@@ -186,8 +187,10 @@ func (u *Usage) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 	// Legend
 	inColor := u.themeColor(u.styles.WorkingGradFromColor)
 	outColor := u.themeColor(u.styles.WorkingGradToColor)
-	rc.AddPart("  Tokens In      " + v1lipgloss.NewStyle().Foreground(inColor).Render("█"))
-	rc.AddPart("  Tokens Out     " + v1lipgloss.NewStyle().Foreground(outColor).Render("█"))
+	reasonColor := u.reasonSeriesColor()
+	rc.AddPart("  Tokens In      " + v1lipgloss.NewStyle().Foreground(inColor).Render("\u2588"))
+	rc.AddPart("  Tokens Out     " + v1lipgloss.NewStyle().Foreground(outColor).Render("\u2588"))
+	rc.AddPart("  Tokens Think   " + v1lipgloss.NewStyle().Foreground(reasonColor).Render("\u2588"))
 
 	// Spacing below legend (above chart)
 	rc.AddPart(" ")
@@ -216,15 +219,18 @@ func (u *Usage) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 	rc.AddPart(" ")
 
 	// Total tokens summary
-	var totalPrompt, totalCompletion int64
+	var totalPrompt, totalCompletion, totalReasoning int64
 	for _, d := range u.usageData {
 		totalPrompt += d.PromptTokens
 		totalCompletion += d.CompletionTokens
+		totalReasoning += d.ReasoningTokens
 	}
 	total := totalPrompt + totalCompletion
 
 	rc.AddPart(fmt.Sprintf("  Total: %s tokens", formatTokenCount(total)))
-	rc.AddPart("  In: " + formatTokenCount(totalPrompt) + "  Out: " + formatTokenCount(totalCompletion))
+	rc.AddPart("  In: " + formatTokenCount(totalPrompt) +
+		"  Out: " + formatTokenCount(totalCompletion) +
+		"  Think: " + formatTokenCount(totalReasoning))
 
 	// Spacing below totals summary (above help line)
 	rc.AddPart(" ")
@@ -300,16 +306,21 @@ func (u *Usage) loadUsageData() {
 		day, _ := row.Day.(string)
 		promptTokens := int64(0)
 		completionTokens := int64(0)
+		reasoningTokens := int64(0)
 		if row.PromptTokens.Valid {
 			promptTokens = int64(row.PromptTokens.Float64)
 		}
 		if row.CompletionTokens.Valid {
 			completionTokens = int64(row.CompletionTokens.Float64)
 		}
+		if row.ReasoningTokens.Valid {
+			reasoningTokens = int64(row.ReasoningTokens.Float64)
+		}
 		u.usageData = append(u.usageData, UsageStats{
 			Day:              day,
 			PromptTokens:     promptTokens,
 			CompletionTokens: completionTokens,
+			ReasoningTokens:  reasoningTokens,
 		})
 	}
 
@@ -333,6 +344,16 @@ func (u *Usage) themeColor(c color.Color) v1lipgloss.Color {
 	}
 	r, g, b, _ := c.RGBA()
 	return v1lipgloss.Color(fmt.Sprintf("#%02x%02x%02x", r>>8, g>>8, b>>8))
+}
+
+// reasonSeriesColor returns the color for the reasoning token series.
+// It follows the theme via the info accent so it stays consistent across
+// themes, falling back to a neutral ANSI code when unset.
+func (u *Usage) reasonSeriesColor() v1lipgloss.Color {
+	if fg := u.styles.LSP.InfoDiagnostic.GetForeground(); fg != nil {
+		return u.themeColor(fg)
+	}
+	return v1lipgloss.Color("33")
 }
 
 func (u *Usage) buildChart() {
@@ -373,6 +394,7 @@ func (u *Usage) buildChart() {
 
 	inColor := u.themeColor(u.styles.WorkingGradFromColor)
 	outColor := u.themeColor(u.styles.WorkingGradToColor)
+	reasonColor := u.reasonSeriesColor()
 
 	for _, d := range data {
 		bar := barchart.BarData{
@@ -387,6 +409,11 @@ func (u *Usage) buildChart() {
 					Name:  "Tokens Out",
 					Value: float64(d.CompletionTokens),
 					Style: v1lipgloss.NewStyle().Foreground(outColor),
+				},
+				{
+					Name:  "Tokens Think",
+					Value: float64(d.ReasoningTokens),
+					Style: v1lipgloss.NewStyle().Foreground(reasonColor),
 				},
 			},
 		}
@@ -408,6 +435,7 @@ func (u *Usage) postProcessChart() {
 
 	inColor := u.themeColor(u.styles.WorkingGradFromColor)
 	outColor := u.themeColor(u.styles.WorkingGradToColor)
+	reasonColor := u.reasonSeriesColor()
 
 	// Scan the canvas columns from left to right.
 	for x := 0; x < canvasModel.Width(); x++ {
@@ -449,8 +477,57 @@ func (u *Usage) postProcessChart() {
 			continue
 		}
 
-		hPurple := float64(d.PromptTokens) * sf
-		hTotal := float64(d.PromptTokens+d.CompletionTokens) * sf
+		hIn := float64(d.PromptTokens) * sf
+		hOut := float64(d.PromptTokens+d.CompletionTokens) * sf
+		hReason := float64(d.PromptTokens+d.CompletionTokens+d.ReasoningTokens) * sf
+
+		// Tiny series (e.g. reasoning vs. 100k-token prompts) would round
+		// down to zero cells, so give every nonzero segment at least one
+		// visible cell, keeping the stacked order intact.
+		if d.PromptTokens > 0 && hIn < 1 {
+			hIn = 1
+		}
+		if hOut < hIn {
+			hOut = hIn
+		}
+		if d.CompletionTokens > 0 && hOut < hIn+1 {
+			hOut = hIn + 1
+		}
+		if hReason < hOut {
+			hReason = hOut
+		}
+		if d.ReasoningTokens > 0 && hReason < hOut+1 {
+			hReason = hOut + 1
+		}
+		if maxH := float64(originY - 1); hReason > maxH {
+			hReason = maxH
+			if hOut > hReason {
+				hOut = hReason
+			}
+			if hIn > hOut {
+				hIn = hOut
+			}
+		}
+
+		segs := []struct {
+			end float64
+			col v1lipgloss.Color
+		}{
+			{end: hIn, col: inColor},
+			{end: hOut, col: outColor},
+			{end: hReason, col: reasonColor},
+		}
+
+		// segIdxAt returns the index of the stacked segment covering height h,
+		// or -1 when h is at or above the top of the bar.
+		segIdxAt := func(h float64) int {
+			for i, seg := range segs {
+				if h < seg.end {
+					return i
+				}
+			}
+			return -1
+		}
 
 		// Re-draw the column using our custom logic that handles stacked backgrounds.
 		for i := 0; i < originY; i++ {
@@ -458,41 +535,34 @@ func (u *Usage) postProcessChart() {
 			low := float64(i)
 			high := float64(i + 1)
 
-			var r rune
-			var style v1lipgloss.Style
-
-			if high <= hPurple {
-				// Fully purple (Tokens In)
-				r = runes.FullBlock
-				style = v1lipgloss.NewStyle().Foreground(inColor)
-			} else if low >= hTotal {
-				// Fully empty
-				r = runes.Null
-				style = v1lipgloss.NewStyle()
-			} else if low >= hPurple && high <= hTotal {
-				// Fully pink (Tokens Out)
-				r = runes.FullBlock
-				style = v1lipgloss.NewStyle().Foreground(outColor)
-			} else if hPurple >= low && hPurple < high {
-				// Transition from purple to pink/empty
-				purpleFraction := hPurple - low
-				r = runes.LowerBlockElementFromFloat64(purpleFraction)
-				style = v1lipgloss.NewStyle().Foreground(inColor)
-				if hTotal > hPurple {
-					style = style.Background(outColor)
-				}
-			} else if low >= hPurple && hTotal >= low && hTotal < high {
-				// Transition from pink to empty
-				pinkFraction := hTotal - low
-				r = runes.LowerBlockElementFromFloat64(pinkFraction)
-				style = v1lipgloss.NewStyle().Foreground(outColor)
-			}
-
-			if r == runes.Null {
+			lowIdx := segIdxAt(low)
+			if lowIdx < 0 {
 				canvasModel.SetCell(canvas.Point{X: x, Y: y}, canvas.NewCell(0))
-			} else {
-				canvasModel.SetCell(canvas.Point{X: x, Y: y}, canvas.NewCellWithStyle(r, style))
+				continue
 			}
+
+			// Find the first segment boundary that crosses this cell.
+			boundary := -1.0
+			for _, cand := range []float64{hIn, hOut, hReason} {
+				if cand > low && cand < high {
+					boundary = cand
+					break
+				}
+			}
+
+			if boundary < 0 {
+				canvasModel.SetCell(canvas.Point{X: x, Y: y},
+					canvas.NewCellWithStyle(runes.FullBlock,
+						v1lipgloss.NewStyle().Foreground(segs[lowIdx].col)))
+				continue
+			}
+
+			r := runes.LowerBlockElementFromFloat64(boundary - low)
+			style := v1lipgloss.NewStyle().Foreground(segs[lowIdx].col)
+			if highIdx := segIdxAt(boundary); highIdx >= 0 {
+				style = style.Background(segs[highIdx].col)
+			}
+			canvasModel.SetCell(canvas.Point{X: x, Y: y}, canvas.NewCellWithStyle(r, style))
 		}
 	}
 }
@@ -564,6 +634,7 @@ func (u *Usage) aggregateWeekly() []UsageStats {
 		}
 		weeks[weekNum].PromptTokens += d.PromptTokens
 		weeks[weekNum].CompletionTokens += d.CompletionTokens
+		weeks[weekNum].ReasoningTokens += d.ReasoningTokens
 	}
 
 	// Sort by week number and build result in descending order (oldest week first).

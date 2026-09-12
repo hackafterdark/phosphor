@@ -2296,6 +2296,7 @@ func (a *sessionAgent) GenerateTitle(ctx context.Context, sessionID string, user
 
 	promptTokens := resp.TotalUsage.InputTokens + resp.TotalUsage.CacheCreationTokens
 	completionTokens := resp.TotalUsage.OutputTokens
+	reasoningTokens := resp.TotalUsage.ReasoningTokens
 
 	// Atomically update only title and usage fields to avoid overriding other
 	// concurrent session updates.
@@ -2305,7 +2306,7 @@ func (a *sessionAgent) GenerateTitle(ctx context.Context, sessionID string, user
 		return
 	}
 	if a.sessions != nil {
-		err := a.sessions.RecordTokenUsage(ctx, sessionID, model.ModelCfg.Model, model.ModelCfg.Provider, promptTokens, completionTokens, cost)
+		err := a.sessions.RecordTokenUsage(ctx, sessionID, model.ModelCfg.Model, model.ModelCfg.Provider, promptTokens, completionTokens, reasoningTokens, cost)
 		if err != nil {
 			slog.Error("Failed to record title generation token usage", "session_id", sessionID, "error", err)
 		}
@@ -2373,8 +2374,9 @@ func (a *sessionAgent) updateSessionUsage(ctx context.Context, model Model, sess
 	if !estimated && a.sessions != nil {
 		promptTokens := usage.InputTokens + usage.CacheReadTokens + usage.CacheCreationTokens
 		completionTokens := usage.OutputTokens
-		if promptTokens > 0 || completionTokens > 0 || cost > 0 {
-			err := a.sessions.RecordTokenUsage(ctx, session.ID, model.ModelCfg.Model, model.ModelCfg.Provider, promptTokens, completionTokens, cost)
+		reasoningTokens := usage.ReasoningTokens
+		if promptTokens > 0 || completionTokens > 0 || reasoningTokens > 0 || cost > 0 {
+			err := a.sessions.RecordTokenUsage(ctx, session.ID, model.ModelCfg.Model, model.ModelCfg.Provider, promptTokens, completionTokens, reasoningTokens, cost)
 			if err != nil {
 				slog.Error("Failed to record token usage", "session_id", session.ID, "error", err)
 			}

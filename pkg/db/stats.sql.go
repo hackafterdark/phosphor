@@ -156,22 +156,30 @@ func (q *Queries) GetToolUsage(ctx context.Context) ([]GetToolUsageRow, error) {
 const getTotalStats = `-- name: GetTotalStats :one
 SELECT
     (SELECT COUNT(*) FROM sessions WHERE parent_session_id IS NULL) as total_sessions,
+    COALESCE((SELECT COUNT(DISTINCT session_id) FROM token_usage WHERE session_id IS NOT NULL), 0) as total_sessions_with_usage,
     COALESCE((SELECT SUM(prompt_tokens) FROM token_usage), 0) as total_prompt_tokens,
     COALESCE((SELECT SUM(completion_tokens) FROM token_usage), 0) as total_completion_tokens,
     COALESCE((SELECT SUM(cost) FROM token_usage), 0) as total_cost,
+    COALESCE((SELECT SUM(prompt_tokens) FROM token_usage WHERE session_id IS NOT NULL), 0) as active_prompt_tokens,
+    COALESCE((SELECT SUM(completion_tokens) FROM token_usage WHERE session_id IS NOT NULL), 0) as active_completion_tokens,
+    COALESCE((SELECT SUM(cost) FROM token_usage WHERE session_id IS NOT NULL), 0) as active_cost,
     COALESCE((SELECT SUM(message_count) FROM sessions WHERE parent_session_id IS NULL), 0) as total_messages,
-    COALESCE((SELECT AVG(session_sum) FROM (SELECT SUM(prompt_tokens + completion_tokens) as session_sum FROM token_usage GROUP BY session_id)), 0) as avg_tokens_per_session,
+    COALESCE((SELECT AVG(session_sum) FROM (SELECT SUM(prompt_tokens + completion_tokens) as session_sum FROM token_usage WHERE session_id IS NOT NULL GROUP BY session_id)), 0) as avg_tokens_per_session,
     COALESCE((SELECT AVG(message_count) FROM sessions WHERE parent_session_id IS NULL), 0) as avg_messages_per_session
 `
 
 type GetTotalStatsRow struct {
-	TotalSessions         int64       `json:"total_sessions"`
-	TotalPromptTokens     interface{} `json:"total_prompt_tokens"`
-	TotalCompletionTokens interface{} `json:"total_completion_tokens"`
-	TotalCost             interface{} `json:"total_cost"`
-	TotalMessages         interface{} `json:"total_messages"`
-	AvgTokensPerSession   interface{} `json:"avg_tokens_per_session"`
-	AvgMessagesPerSession interface{} `json:"avg_messages_per_session"`
+	TotalSessions          int64       `json:"total_sessions"`
+	TotalSessionsWithUsage int64       `json:"total_sessions_with_usage"`
+	TotalPromptTokens      interface{} `json:"total_prompt_tokens"`
+	TotalCompletionTokens  interface{} `json:"total_completion_tokens"`
+	TotalCost              interface{} `json:"total_cost"`
+	ActivePromptTokens     interface{} `json:"active_prompt_tokens"`
+	ActiveCompletionTokens interface{} `json:"active_completion_tokens"`
+	ActiveCost             interface{} `json:"active_cost"`
+	TotalMessages          interface{} `json:"total_messages"`
+	AvgTokensPerSession    interface{} `json:"avg_tokens_per_session"`
+	AvgMessagesPerSession  interface{} `json:"avg_messages_per_session"`
 }
 
 func (q *Queries) GetTotalStats(ctx context.Context) (GetTotalStatsRow, error) {
@@ -179,9 +187,13 @@ func (q *Queries) GetTotalStats(ctx context.Context) (GetTotalStatsRow, error) {
 	var i GetTotalStatsRow
 	err := row.Scan(
 		&i.TotalSessions,
+		&i.TotalSessionsWithUsage,
 		&i.TotalPromptTokens,
 		&i.TotalCompletionTokens,
 		&i.TotalCost,
+		&i.ActivePromptTokens,
+		&i.ActiveCompletionTokens,
+		&i.ActiveCost,
 		&i.TotalMessages,
 		&i.AvgTokensPerSession,
 		&i.AvgMessagesPerSession,
@@ -194,6 +206,7 @@ SELECT
     date(tu.created_at, 'unixepoch') as day,
     SUM(tu.prompt_tokens) as prompt_tokens,
     SUM(tu.completion_tokens) as completion_tokens,
+    SUM(tu.reasoning_tokens) as reasoning_tokens,
     SUM(tu.cost) as cost,
     COUNT(DISTINCT COALESCE(s.parent_session_id, tu.session_id)) as session_count
 FROM token_usage tu
@@ -206,6 +219,7 @@ type GetUsageByDayRow struct {
 	Day              interface{}     `json:"day"`
 	PromptTokens     sql.NullFloat64 `json:"prompt_tokens"`
 	CompletionTokens sql.NullFloat64 `json:"completion_tokens"`
+	ReasoningTokens  sql.NullFloat64 `json:"reasoning_tokens"`
 	Cost             sql.NullFloat64 `json:"cost"`
 	SessionCount     int64           `json:"session_count"`
 }
@@ -223,6 +237,7 @@ func (q *Queries) GetUsageByDay(ctx context.Context) ([]GetUsageByDayRow, error)
 			&i.Day,
 			&i.PromptTokens,
 			&i.CompletionTokens,
+			&i.ReasoningTokens,
 			&i.Cost,
 			&i.SessionCount,
 		); err != nil {
@@ -291,6 +306,7 @@ SELECT
     date(tu.created_at, 'unixepoch') as day,
     SUM(tu.prompt_tokens) as prompt_tokens,
     SUM(tu.completion_tokens) as completion_tokens,
+    SUM(tu.reasoning_tokens) as reasoning_tokens,
     SUM(tu.cost) as cost,
     COUNT(DISTINCT COALESCE(s.parent_session_id, tu.session_id)) as session_count
 FROM token_usage tu
@@ -304,6 +320,7 @@ type GetUsageByDayRangeRow struct {
 	Day              interface{}     `json:"day"`
 	PromptTokens     sql.NullFloat64 `json:"prompt_tokens"`
 	CompletionTokens sql.NullFloat64 `json:"completion_tokens"`
+	ReasoningTokens  sql.NullFloat64 `json:"reasoning_tokens"`
 	Cost             sql.NullFloat64 `json:"cost"`
 	SessionCount     int64           `json:"session_count"`
 }
@@ -321,6 +338,7 @@ func (q *Queries) GetUsageByDayRange(ctx context.Context, strftime interface{}) 
 			&i.Day,
 			&i.PromptTokens,
 			&i.CompletionTokens,
+			&i.ReasoningTokens,
 			&i.Cost,
 			&i.SessionCount,
 		); err != nil {
@@ -380,8 +398,7 @@ SELECT
     COALESCE(model, 'unknown') as model,
     COALESCE(provider, 'unknown') as provider,
     COUNT(*) as message_count
-FROM messages
-WHERE role = 'assistant'
+FROM token_usage
 GROUP BY model, provider
 ORDER BY message_count DESC
 `
@@ -424,9 +441,11 @@ INSERT INTO token_usage (
     prompt_tokens,
     completion_tokens,
     cost,
-    created_at
+    created_at,
+    is_subagent,
+    reasoning_tokens
 ) VALUES (
-    ?, ?, ?, ?, ?, ?, ?, strftime('%s', 'now')
+    ?, ?, ?, ?, ?, ?, ?, strftime('%s', 'now'), ?, ?
 )
 `
 
@@ -438,6 +457,8 @@ type RecordTokenUsageParams struct {
 	PromptTokens     int64   `json:"prompt_tokens"`
 	CompletionTokens int64   `json:"completion_tokens"`
 	Cost             float64 `json:"cost"`
+	IsSubagent       int64   `json:"is_subagent"`
+	ReasoningTokens  int64   `json:"reasoning_tokens"`
 }
 
 func (q *Queries) RecordTokenUsage(ctx context.Context, arg RecordTokenUsageParams) error {
@@ -449,6 +470,8 @@ func (q *Queries) RecordTokenUsage(ctx context.Context, arg RecordTokenUsagePara
 		arg.PromptTokens,
 		arg.CompletionTokens,
 		arg.Cost,
+		arg.IsSubagent,
+		arg.ReasoningTokens,
 	)
 	return err
 }

@@ -56,20 +56,34 @@ type Stats struct {
 }
 
 type TotalStats struct {
-	TotalSessions         int64   `json:"total_sessions"`
-	TotalPromptTokens     int64   `json:"total_prompt_tokens"`
-	TotalCompletionTokens int64   `json:"total_completion_tokens"`
-	TotalTokens           int64   `json:"total_tokens"`
-	TotalCost             float64 `json:"total_cost"`
-	TotalMessages         int64   `json:"total_messages"`
-	AvgTokensPerSession   float64 `json:"avg_tokens_per_session"`
-	AvgMessagesPerSession float64 `json:"avg_messages_per_session"`
+	TotalSessions            int64   `json:"total_sessions"`
+	SessionsWithUsage        int64   `json:"sessions_with_usage"`
+	TotalPromptTokens        int64   `json:"total_prompt_tokens"`
+	TotalCompletionTokens    int64   `json:"total_completion_tokens"`
+	TotalTokens              int64   `json:"total_tokens"`
+	TotalCost                float64 `json:"total_cost"`
+	ReasoningTokens          int64   `json:"reasoning_tokens"`
+	ActivePromptTokens       int64   `json:"active_prompt_tokens"`
+	ActiveCompletionTokens   int64   `json:"active_completion_tokens"`
+	ActiveTokens             int64   `json:"active_tokens"`
+	ActiveCost               float64 `json:"active_cost"`
+	ActiveReasoningTokens    int64   `json:"active_reasoning_tokens"`
+	SubagentPromptTokens     int64   `json:"subagent_prompt_tokens"`
+	SubagentCompletionTokens int64   `json:"subagent_completion_tokens"`
+	SubagentTokens           int64   `json:"subagent_tokens"`
+	ActiveSubagentTokens     int64   `json:"active_subagent_tokens"`
+	PrimaryTokens            int64   `json:"primary_tokens"`
+	ActivePrimaryTokens      int64   `json:"active_primary_tokens"`
+	TotalMessages            int64   `json:"total_messages"`
+	AvgTokensPerSession      float64 `json:"avg_tokens_per_session"`
+	AvgMessagesPerSession    float64 `json:"avg_messages_per_session"`
 }
 
 type DailyUsage struct {
 	Day              string  `json:"day"`
 	PromptTokens     int64   `json:"prompt_tokens"`
 	CompletionTokens int64   `json:"completion_tokens"`
+	ReasoningTokens  int64   `json:"reasoning_tokens"`
 	TotalTokens      int64   `json:"total_tokens"`
 	Cost             float64 `json:"cost"`
 	SessionCount     int64   `json:"session_count"`
@@ -134,8 +148,8 @@ func runStats(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("failed to gather stats: %w", err)
 	}
 
-	if stats.Total.TotalSessions == 0 {
-		return fmt.Errorf("no data available: no sessions found in database")
+	if stats.Total.TotalSessions == 0 && stats.Total.TotalTokens == 0 {
+		return fmt.Errorf("no data available: no sessions or recorded usage found in database")
 	}
 
 	currentUser, err := user.Current()
@@ -176,16 +190,48 @@ func gatherStats(ctx context.Context, conn *sql.DB) (*Stats, error) {
 	if err != nil {
 		return nil, fmt.Errorf("get total stats: %w", err)
 	}
+	activePrompt := toInt64(total.ActivePromptTokens)
+	activeCompletion := toInt64(total.ActiveCompletionTokens)
 	stats.Total = TotalStats{
-		TotalSessions:         total.TotalSessions,
-		TotalPromptTokens:     toInt64(total.TotalPromptTokens),
-		TotalCompletionTokens: toInt64(total.TotalCompletionTokens),
-		TotalTokens:           toInt64(total.TotalPromptTokens) + toInt64(total.TotalCompletionTokens),
-		TotalCost:             toFloat64(total.TotalCost),
-		TotalMessages:         toInt64(total.TotalMessages),
-		AvgTokensPerSession:   toFloat64(total.AvgTokensPerSession),
-		AvgMessagesPerSession: toFloat64(total.AvgMessagesPerSession),
+		TotalSessions:          total.TotalSessions,
+		SessionsWithUsage:      toInt64(total.TotalSessionsWithUsage),
+		TotalPromptTokens:      toInt64(total.TotalPromptTokens),
+		TotalCompletionTokens:  toInt64(total.TotalCompletionTokens),
+		TotalTokens:            toInt64(total.TotalPromptTokens) + toInt64(total.TotalCompletionTokens),
+		TotalCost:              toFloat64(total.TotalCost),
+		ActivePromptTokens:     activePrompt,
+		ActiveCompletionTokens: activeCompletion,
+		ActiveTokens:           activePrompt + activeCompletion,
+		ActiveCost:             toFloat64(total.ActiveCost),
+		TotalMessages:          toInt64(total.TotalMessages),
+		AvgTokensPerSession:    toFloat64(total.AvgTokensPerSession),
+		AvgMessagesPerSession:  toFloat64(total.AvgMessagesPerSession),
 	}
+
+	// Sub-agent split and reasoning totals. Usage rows carry an is_subagent flag
+	// captured at record time, so the split survives the session_id being nulled
+	// when a session (or its sub-agents) is later pruned. Reasoning tokens are
+	// tracked separately from in/out and are never folded into either.
+	var subPrompt, subCompletion, activeSub, totalReasoning, activeReasoning int64
+	subRow := conn.QueryRowContext(ctx, `
+		SELECT
+			COALESCE(SUM(CASE WHEN is_subagent = 1 THEN prompt_tokens ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN is_subagent = 1 THEN completion_tokens ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN is_subagent = 1 AND session_id IS NOT NULL THEN prompt_tokens + completion_tokens ELSE 0 END), 0),
+			COALESCE(SUM(reasoning_tokens), 0),
+			COALESCE(SUM(CASE WHEN session_id IS NOT NULL THEN reasoning_tokens ELSE 0 END), 0)
+		FROM token_usage`)
+	if err := subRow.Scan(&subPrompt, &subCompletion, &activeSub, &totalReasoning, &activeReasoning); err != nil {
+		return nil, fmt.Errorf("get subagent usage: %w", err)
+	}
+	stats.Total.ReasoningTokens = totalReasoning
+	stats.Total.ActiveReasoningTokens = activeReasoning
+	stats.Total.SubagentPromptTokens = subPrompt
+	stats.Total.SubagentCompletionTokens = subCompletion
+	stats.Total.SubagentTokens = subPrompt + subCompletion
+	stats.Total.ActiveSubagentTokens = activeSub
+	stats.Total.PrimaryTokens = stats.Total.TotalTokens - stats.Total.SubagentTokens
+	stats.Total.ActivePrimaryTokens = stats.Total.ActiveTokens - activeSub
 
 	// Usage by day.
 	dailyUsage, err := queries.GetUsageByDay(ctx)
@@ -195,10 +241,12 @@ func gatherStats(ctx context.Context, conn *sql.DB) (*Stats, error) {
 	for _, d := range dailyUsage {
 		prompt := nullFloat64ToInt64(d.PromptTokens)
 		completion := nullFloat64ToInt64(d.CompletionTokens)
+		reasoning := nullFloat64ToInt64(d.ReasoningTokens)
 		stats.UsageByDay = append(stats.UsageByDay, DailyUsage{
 			Day:              fmt.Sprintf("%v", d.Day),
 			PromptTokens:     prompt,
 			CompletionTokens: completion,
+			ReasoningTokens:  reasoning,
 			TotalTokens:      prompt + completion,
 			Cost:             d.Cost.Float64,
 			SessionCount:     d.SessionCount,

@@ -67,11 +67,26 @@ function getTopItemsWithOthers(items, countKey, labelKey, topN = 10) {
 document.getElementById("total-sessions").textContent = formatNumber(
   stats.total.total_sessions,
 );
+document.getElementById("total-sessions-used").textContent = formatNumber(
+  stats.total.sessions_with_usage,
+);
 document.getElementById("total-messages").textContent = formatCompact(
   stats.total.total_messages,
 );
 document.getElementById("total-tokens").textContent = formatCompact(
   stats.total.total_tokens,
+);
+document.getElementById("active-tokens").textContent = formatCompact(
+  stats.total.active_tokens,
+);
+document.getElementById("subagent-tokens").textContent = formatCompact(
+  stats.total.subagent_tokens,
+);
+document.getElementById("active-subagent-tokens").textContent = formatCompact(
+  stats.total.active_subagent_tokens,
+);
+document.getElementById("reasoning-tokens").textContent = formatCompact(
+  stats.total.reasoning_tokens,
 );
 document.getElementById("total-cost").textContent = formatCost(
   stats.total.total_cost,
@@ -240,14 +255,15 @@ if (stats.tool_usage?.length > 0) {
 new Chart(document.getElementById("tokenPieChart"), {
   type: "doughnut",
   data: {
-    labels: ["Prompt Tokens", "Completion Tokens"],
+    labels: ["Prompt Tokens", "Completion Tokens", "Reasoning Tokens"],
     datasets: [
       {
         data: [
           stats.total.total_prompt_tokens,
           stats.total.total_completion_tokens,
+          stats.total.reasoning_tokens,
         ],
-        backgroundColor: [colors.primary, colors.tertiary],
+        backgroundColor: [colors.primary, colors.tertiary, colors.blue],
         borderWidth: 0,
       },
     ],
@@ -347,6 +363,8 @@ if (stats.usage_by_day?.length > 0) {
       d.prompt_tokens,
     )}</td><td>${formatNumber(
       d.completion_tokens,
+    )}</td><td>${formatNumber(
+      d.reasoning_tokens,
     )}</td><td>${formatNumber(d.total_tokens)}</td><td>${formatCost(
       d.cost,
     )}</td>`;

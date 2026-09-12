@@ -76,7 +76,7 @@ type Service interface {
 	List(ctx context.Context) ([]Session, error)
 	Save(ctx context.Context, session Session) (Session, error)
 	UpdateTitleAndUsage(ctx context.Context, sessionID, title string, promptTokens, completionTokens int64, cost float64) error
-	RecordTokenUsage(ctx context.Context, sessionID, model, provider string, promptTokens, completionTokens int64, cost float64) error
+	RecordTokenUsage(ctx context.Context, sessionID, model, provider string, promptTokens, completionTokens, reasoningTokens int64, cost float64) error
 	Rename(ctx context.Context, id string, title string) error
 	UpdateStateless(ctx context.Context, sessionID string, stateless bool, service string) error
 	Delete(ctx context.Context, id string) error
@@ -183,6 +183,13 @@ func (s *service) Delete(ctx context.Context, id string) error {
 	if err = qtx.DeleteSessionFiles(ctx, dbSession.ID); err != nil {
 		return fmt.Errorf("deleting session files: %w", err)
 	}
+	// Detach the token usage of this session and any of its sub-agent sessions
+	// so the sub-agent rows do not remain counted as active after the parent is
+	// removed. Runs before DeleteSession so the child session rows are still
+	// present for the subquery to match.
+	if _, err := tx.ExecContext(ctx, detachTokenUsageForSessionTreeSQL, dbSession.ID, dbSession.ID); err != nil {
+		return fmt.Errorf("detaching subagent token usage: %w", err)
+	}
 	if err = qtx.DeleteSession(ctx, dbSession.ID); err != nil {
 		return fmt.Errorf("deleting session: %w", err)
 	}
@@ -265,9 +272,45 @@ func (s *service) UpdateTitleAndUsage(ctx context.Context, sessionID, title stri
 	return nil
 }
 
-// RecordTokenUsage inserts a new token usage record.
-func (s *service) RecordTokenUsage(ctx context.Context, sessionID, model, provider string, promptTokens, completionTokens int64, cost float64) error {
+// detachTokenUsageForSessionTreeSQL nulls the session_id on token usage rows
+// recorded against a session and its sub-agent (child) sessions. The foreign
+// key already detaches the target session's own rows when the session row is
+// deleted, but BulkDeleteSessions and Delete do not delete the child session
+// rows themselves, so their usage must be detached explicitly to keep it out
+// of the active totals once the parent is gone.
+const detachTokenUsageForSessionTreeSQL = `
+UPDATE token_usage
+SET session_id = NULL
+WHERE session_id = ?
+   OR session_id IN (
+       SELECT id FROM sessions WHERE parent_session_id = ?
+   )`
+
+// detachTokenUsageForPrunedSubagentsSQL detaches the token usage rows of
+// sub-agent sessions whose top-level parent is older than the prune cutoff
+// and will be removed by BulkDeleteSessions.
+const detachTokenUsageForPrunedSubagentsSQL = `
+UPDATE token_usage
+SET session_id = NULL
+WHERE session_id IN (
+    SELECT id FROM sessions
+    WHERE parent_session_id IN (
+        SELECT id FROM sessions
+        WHERE parent_session_id IS NULL AND is_pinned = 0 AND updated_at <= ?
+    )
+)`
+
+// RecordTokenUsage inserts a new token usage record. The is_subagent flag is
+// derived from the owning session's parent so that the reporting can split
+// sub-agent activity from primary usage even after the row's session_id is
+// nulled when the session is later pruned.
+func (s *service) RecordTokenUsage(ctx context.Context, sessionID, model, provider string, promptTokens, completionTokens, reasoningTokens int64, cost float64) error {
 	id := uuid.New().String()
+	var isSubagent int64
+	if row, err := s.q.GetSessionByID(ctx, sessionID); err == nil &&
+		row.ParentSessionID.Valid && row.ParentSessionID.String != "" {
+		isSubagent = 1
+	}
 	return s.q.RecordTokenUsage(ctx, db.RecordTokenUsageParams{
 		ID:               id,
 		SessionID:        sessionID,
@@ -276,6 +319,8 @@ func (s *service) RecordTokenUsage(ctx context.Context, sessionID, model, provid
 		PromptTokens:     promptTokens,
 		CompletionTokens: completionTokens,
 		Cost:             cost,
+		IsSubagent:       isSubagent,
+		ReasoningTokens:  reasoningTokens,
 	})
 }
 
@@ -490,6 +535,10 @@ func (s *service) BulkDeleteSessions(ctx context.Context, before time.Time) (int
 		return 0, err
 	}
 
+	if err := s.detachPrunedSubagentUsage(ctx, before); err != nil {
+		return 0, err
+	}
+
 	if err := s.q.BulkDeleteSessions(ctx, before.Unix()); err != nil {
 		return 0, fmt.Errorf("bulk deleting sessions: %w", err)
 	}
@@ -498,6 +547,18 @@ func (s *service) BulkDeleteSessions(ctx context.Context, before time.Time) (int
 		s.Publish(pubsub.DeletedEvent, session)
 	}
 	return len(sessions), nil
+}
+
+// detachPrunedSubagentUsage nulls the session_id on token usage rows recorded
+// against sub-agent sessions whose top-level parent will be removed by the
+// matching BulkDeleteSessions call. It runs just before the delete so the
+// parent rows are still present for the subquery to match. The parent's own
+// usage is detached by the ON DELETE SET NULL foreign key during the delete.
+func (s *service) detachPrunedSubagentUsage(ctx context.Context, before time.Time) error {
+	if _, err := s.db.ExecContext(ctx, detachTokenUsageForPrunedSubagentsSQL, before.Unix()); err != nil {
+		return fmt.Errorf("detaching pruned subagent token usage: %w", err)
+	}
+	return nil
 }
 
 func NewService(q *db.Queries, conn *sql.DB) Service {

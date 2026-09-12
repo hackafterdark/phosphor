@@ -95,7 +95,7 @@ func TestRecordTokenUsage(t *testing.T) {
 	created, err := sessions.Create(t.Context(), "test")
 	require.NoError(t, err)
 
-	err = sessions.RecordTokenUsage(t.Context(), created.ID, "gpt-4", "openai", 100, 50, 0.003)
+	err = sessions.RecordTokenUsage(t.Context(), created.ID, "gpt-4", "openai", 100, 50, 0, 0.003)
 	require.NoError(t, err)
 
 	var model, provider string
