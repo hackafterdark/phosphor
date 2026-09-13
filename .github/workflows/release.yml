@@ -1,0 +1,122 @@
+name: "release"
+
+# Publishes native binaries for Windows, macOS and Linux to the GitHub Release
+# that matches the pushed tag. The version stamped into the binary is the tag
+# itself (e.g. v1.1.1). Built with CGO_ENABLED=1 so the shipped binaries
+# include the tree-sitter structural-search backend.
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to (re)publish, e.g. v1.1.1"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  # The tag being released: github.ref_name on a tag push, the manual input on
+  # a dispatch. Both resolve to a plain semver tag like v1.1.1.
+  RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+  # Match the local toolchain expectations from the Taskfile.
+  CGO_ENABLED: "1"
+  GOEXPERIMENT: greenteagc
+  GOTOOLCHAIN: auto
+
+jobs:
+  # Create the GitHub Release once, idempotently, before the matrix uploads
+  # assets into it. Keeps the matrix jobs free of create/exists races.
+  create-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Create GitHub Release for the tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "${RELEASE_TAG}" 2>&1 \
+            || gh release create "${RELEASE_TAG}" --title "${RELEASE_TAG}" --verify-tag --generate-notes
+          echo "release ready for ${RELEASE_TAG}"
+
+  build:
+    needs: create-release
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Every entry is a native build (build host arch == target arch), so
+          # cgo/tree-sitter links against the platform's own toolchain. No
+          # fragile cgo cross-compilation.
+          - runner: ubuntu-latest
+            goos: linux
+            goarch: amd64
+            cc: gcc
+            ext: ""
+          - runner: ubuntu-24.04-arm64
+            goos: linux
+            goarch: arm64
+            cc: gcc
+            ext: ""
+          - runner: macos-latest
+            goos: darwin
+            goarch: arm64
+            cc: cc
+            ext: ""
+          - runner: windows-latest
+            goos: windows
+            goarch: amd64
+            cc: C:/Tools/mingw64/bin/gcc.exe
+            ext: ".exe"
+    env:
+      GOOS: ${{ matrix.goos }}
+      GOARCH: ${{ matrix.goarch }}
+      CGO_CC: ${{ matrix.cc }}
+      BIN: phosphor-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: stable
+          cache: true
+
+      # Windows runners ship no C compiler; cgo (tree-sitter) needs one. The
+      # Chocolatey mingw package installs to C:/Tools/mingw64, which the CGO_CC
+      # matrix value above points at.
+      - name: Install MinGW (Windows cgo toolchain)
+        if: matrix.goos == 'windows'
+        run: choco install mingw --no-progress -y
+
+      - name: Build
+        run: |
+          mkdir -p dist
+          go build -v -o "dist/${BIN}" -ldflags "-X github.com/hackafterdark/phosphor/internal/version.Version=${RELEASE_TAG} -X github.com/hackafterdark/phosphor/pkg/phosphordocs.Version=${RELEASE_TAG} -X github.com/hackafterdark/phosphor/internal/version.Commit=${GITHUB_SHA}" .
+        shell: bash
+
+      - name: Checksum
+        run: |
+          cd dist
+          sha256sum "${BIN}" | awk '{print $1"  "$2}' > "${BIN}.sha256"
+          cat "${BIN}.sha256"
+        shell: bash
+
+      - name: Upload assets to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload-asset "${RELEASE_TAG}" --clobber "dist/${BIN}" "dist/${BIN}.sha256"
+        shell: bash

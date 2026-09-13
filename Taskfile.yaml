@@ -42,8 +42,10 @@ tasks:
 
   build:
     desc: Run build
+    deps:
+      - docs:embed
     vars:
-      LDFLAGS: '{{if .VERSION}}-ldflags="-X github.com/hackafterdark/phosphor/internal/version.Version={{.VERSION}}"{{end}}'
+      LDFLAGS: '{{if .VERSION}}-ldflags="-X github.com/hackafterdark/phosphor/internal/version.Version={{.VERSION}} -X github.com/hackafterdark/phosphor/pkg/phosphordocs.Version={{.VERSION}}"{{end}}'
     cmds:
       - "go build -v {{if .RACE}}-race{{end}} {{.LDFLAGS}} ."
     sources:
@@ -52,6 +54,7 @@ tasks:
       - pkg/agent/**/*.md
       - pkg/agent/**/*.md.tpl
       - pkg/agent/hyper/provider.json
+      - pkg/phosphordocs/content/**
     generates:
       - phosphor{{exeExt}}
 
@@ -116,7 +119,7 @@ tasks:
   install:
     desc: Install the application
     vars:
-      LDFLAGS: '{{if .VERSION}}-ldflags="-X github.com/hackafterdark/phosphor/internal/version.Version={{.VERSION}}"{{end}}'
+      LDFLAGS: '{{if .VERSION}}-ldflags="-X github.com/hackafterdark/phosphor/internal/version.Version={{.VERSION}} -X github.com/hackafterdark/phosphor/pkg/phosphordocs.Version={{.VERSION}}"{{end}}'
     cmds:
       - task: fetch-tags
       - go install {{.LDFLAGS}} -v .
@@ -126,6 +129,7 @@ tasks:
       - pkg/agent/**/*.md
       - pkg/agent/**/*.md.tpl
       - pkg/agent/hyper/provider.json
+      - pkg/phosphordocs/content/**
 
   profile:cpu:
     desc: 10s CPU profile
@@ -157,6 +161,23 @@ tasks:
     generates:
       - ./pkg/agent/hyper/provider.json
 
+  docs:embed:
+    desc: Regenerate the embedded docs corpus (pkg/phosphordocs/content) from docs/
+    cmds:
+      - go run github.com/hackafterdark/phosphor/pkg/phosphordocs/gen
+    sources:
+      - docs/**/*
+      - pkg/phosphordocs/gen/*.go
+      - pkg/phosphordocs/allowlist.go
+      - go.mod
+    generates:
+      - pkg/phosphordocs/content/**
+
+  docs:embed:check:
+    desc: Fail if the embedded docs corpus has drifted from the canonical docs/
+    cmds:
+      - go test -count=1 github.com/hackafterdark/phosphor/pkg/phosphordocs -run TestDriftGuard
+
   release:
     desc: Create and push a new tag following semver
     vars:
@@ -168,10 +189,10 @@ tasks:
         msg: Not on main branch
       - sh: "[ $(git status --porcelain=2 | wc -l) = 0 ]"
         msg: "Git is dirty"
-      - sh: 'gh run list --workflow build.yml --commit $(git rev-parse HEAD) --status success --json conclusion -q ".[0].conclusion" | grep -q success'
-        msg: "Test build for this commit failed or not present"
-      - sh: 'gh run list --workflow snapshot.yml --commit $(git rev-parse HEAD) --status success --json conclusion -q ".[0].conclusion" | grep -q success'
-        msg: "Snapshot build for this commit failed or not present"
+      - sh: "go test -count=1 github.com/hackafterdark/phosphor/pkg/phosphordocs -run TestDriftGuard"
+        msg: "Embedded docs corpus is stale relative to docs/ — run `task docs:embed` and commit pkg/phosphordocs/content"
+      - sh: 'gh run list --workflow build.yml --branch main --commit $(git rev-parse HEAD) --status success --json conclusion -q ".[0].conclusion" | grep -q success'
+        msg: "CI build (build.yml) for this commit failed or not present — push to main and wait for it to go green"
     cmds:
       - task: fetch-tags
       - git commit --allow-empty -m "{{.NEXT}}"

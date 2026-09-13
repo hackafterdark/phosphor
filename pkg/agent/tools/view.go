@@ -24,6 +24,7 @@ import (
 	"github.com/hackafterdark/phosphor/pkg/lsp"
 	"github.com/hackafterdark/phosphor/pkg/otel"
 	"github.com/hackafterdark/phosphor/pkg/permission"
+	"github.com/hackafterdark/phosphor/pkg/phosphordocs"
 	"github.com/hackafterdark/phosphor/pkg/skills"
 	"go.opentelemetry.io/otel/attribute"
 )
@@ -77,6 +78,7 @@ type ViewResourceType string
 const (
 	ViewResourceUnset ViewResourceType = ""
 	ViewResourceSkill ViewResourceType = "skill"
+	ViewResourceDocs  ViewResourceType = "docs"
 )
 
 type ViewResponseMetadata struct {
@@ -130,6 +132,14 @@ func NewViewTool(
 			if strings.HasPrefix(params.FilePath, skills.BuiltinPrefix) {
 				resp, err := readBuiltinFile(params, skillTracker)
 				return resp, err
+			}
+
+			// Handle embedded documentation files (phosphor://docs/ prefix). Served
+			// from the binary, so they resolve from any workspace without touching
+			// disk. Kept side-effect-free: no permission gate, filetracker, or LSP
+			// diagnostics, and handled ahead of the workspace bounds check.
+			if phosphordocs.IsDocsPath(params.FilePath) {
+				return readDocsFile(params), nil
 			}
 
 			// Handle relative paths
@@ -487,4 +497,53 @@ func readBuiltinFile(params ViewParams, skillTracker *skills.Tracker) (fantasy.T
 		fantasy.NewTextResponse(output),
 		meta,
 	), nil
+}
+
+// readDocsFile serves an embedded documentation file from the binary. It mirrors
+// readBuiltinFile but is bounded by DefaultReadLimit (a single doc must not be able
+// to flood a turn) and stays side-effect-free: it never runs the permission gate,
+// records into the file tracker, or triggers LSP diagnostics, because an embedded
+// doc is read-only product help rather than a workspace file.
+func readDocsFile(params ViewParams) fantasy.ToolResponse {
+	data, ok := phosphordocs.ReadFile(params.FilePath)
+	if !ok {
+		return fantasy.NewTextErrorResponse(fmt.Sprintf(
+			"Embedded doc not found: %s. Use the phosphor_docs tool to search the corpus, or open %sREADME.md for the index.",
+			params.FilePath, phosphordocs.DocsPrefix))
+	}
+
+	content := string(data)
+	if !utf8.ValidString(content) {
+		return fantasy.NewTextErrorResponse("Doc content is not valid UTF-8")
+	}
+
+	limit := params.Limit
+	if limit <= 0 {
+		limit = DefaultReadLimit
+	}
+
+	lines := strings.Split(content, "\n")
+	offset := min(params.Offset, len(lines))
+	lines = lines[offset:]
+
+	hasMore := len(lines) > limit
+	if hasMore {
+		lines = lines[:limit]
+	}
+
+	output := "<file>\n"
+	output += addLineNumbers(strings.Join(lines, "\n"), offset+1, params.UseHashline)
+	if hasMore {
+		output += fmt.Sprintf("\n\n(File has more lines. Use 'offset' parameter to read beyond line %d)",
+			offset+len(lines))
+	}
+	output += "\n</file>\n"
+
+	meta := ViewResponseMetadata{
+		FilePath:     params.FilePath,
+		Content:      strings.Join(lines, "\n"),
+		ResourceType: ViewResourceDocs,
+		ResourceName: phosphordocs.RelFromVirtual(params.FilePath),
+	}
+	return fantasy.WithResponseMetadata(fantasy.NewTextResponse(output), meta)
 }

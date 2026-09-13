@@ -1,0 +1,133 @@
+sequenceDiagram
+    autonumber
+    title Phosphor User-Agent Conversation Flow
+
+    participant U as User (TUI/CLI)
+    participant App as App Layer
+    participant Coord as Coordinator
+    participant Agent as SessionAgent
+    participant DB as SQLite DB
+    participant LLM as LLM Provider
+    participant Tools as Tools & Hooks
+    participant PubSub as Pub/Sub Events
+
+    Note over U,PubSub: === INITIALIZATION ===
+    App->>Coord: NewCoordinator(ctx)
+    Coord->>Coord: Build system prompt & tools
+    Coord->>Agent: NewSessionAgent(opts)
+    Agent->>DB: Initialize message service
+
+    Note over U,PubSub: === USER PROMPT INCOMING ===
+    U->>App: Send prompt + sessionID
+    App->>App: resolveSession() (create/continue)
+    App->>Coord: Run(ctx, sessionID, prompt)
+
+    Note over Coord,LLM: === COORDINATOR PREPARATION ===
+    Coord->>Coord: UpdateModels() (refresh LLM models)
+    Coord->>Coord: Merge call options (temp, topP, etc.)
+    Coord->>Coord: Check OAuth token expiry
+    
+    alt Token expired
+        Coord->>Coord: RefreshOAuth2Token()
+    end
+
+    Note over Coord,LLM: === SESSION AGENT RUN ===
+    Coord->>Agent: Run(ctx, SessionAgentCall)
+    
+    Agent->>Agent: ValidateCall() (check prompt not empty)
+    Agent->>DB: Create user message
+    DB-->>Agent: User message created
+    
+    Agent->>Agent: preparePrompt()
+    Note over Agent: - Fetch conversation history<br/>- Filter orphaned tool results<br/>- Deduplicate reasoning content<br/>- Process attachments
+    
+    Agent->>LLM: agent.Stream(call)
+    
+    Note over Agent,LLM: === STREAMING TURN ===
+    
+    LLM-->>Agent: PrepareStep callback
+    Agent->>Agent: Create assistant message in DB
+    Agent->>DB: Update assistant (empty)
+    
+    loop Streaming tokens
+        LLM-->>Agent: OnTextDelta(text)
+        Agent->>DB: Append text to assistant
+        Agent->>PubSub: Publish message update
+        
+        alt Tool call detected
+            LLM-->>Agent: OnToolCall(tc)
+            Agent->>DB: Add tool call to assistant
+            Agent->>Tools: Execute tool (bash/edit/view/etc.)
+            Tools->>Tools: Run PreToolUse hooks
+            Tools->>Tools: Check permissions
+            
+            alt Hook halts/perm denied
+                Tools-->>Agent: StopTurn = true
+            else Tool succeeds
+                Tools-->>Agent: Tool result
+                Agent->>DB: Create tool message
+                Agent->>PubSub: Publish tool result
+            end
+        end
+        
+        alt Reasoning content
+            LLM-->>Agent: OnReasoningDelta(text)
+            Agent->>DB: Append reasoning to assistant
+        end
+    end
+    
+    LLM-->>Agent: OnStepFinish(stepResult)
+    Agent->>DB: Mark assistant finish reason
+    Agent->>DB: Update session usage (tokens, cost)
+    
+    Note over Agent,LLM: === POST-STREAM HANDLING ===
+    
+    alt Context window exceeded threshold
+        Agent->>Agent: Auto-summarize
+        Agent->>LLM: Summarize() with summary prompt
+        LLM-->>Agent: Summary response
+        Agent->>DB: Create summary message
+        Note over Agent: Re-queue interrupted prompt
+    end
+    
+    alt Reflection detected (<reflection> tags)
+        Agent->>Agent: Add correction system message
+        Agent->>LLM: Run() again with correction
+    end
+    
+    alt Queued prompts exist
+        Agent->>Agent: drainQueueForStep()
+        Note over Agent: - Drop canceled prompts<br/>- Fold uncanceled prompts into current turn<br/>- Keep other queued prompts for next turn
+    end
+    
+    Agent->>PubSub: Publish RunComplete event
+    Agent->>App: Notify agent finished
+    
+    Note over U,PubSub: === RESPONSE TO USER ===
+    PubSub->>U: Stream assistant text via TUI
+    U-->>U: Display response
+
+    Note over Coord,LLM: === ERROR HANDLING PATHS ===
+    
+    alt Unauthorized (401)
+        LLM-->>Coord: ProviderError 401
+        Coord->>Coord: runWithUnauthorizedRetry()
+        Coord->>Coord: Refresh token & retry
+    end
+    
+    alt Bad Request (400)
+        LLM-->>Coord: ProviderError 400
+        Coord->>Coord: Retry once
+        alt Still 400
+            Coord->>Coord: Strip last tool call
+            Coord->>Coord: Inject tool observation
+            Coord->>Agent: Run() with stripped context
+        end
+    end
+    
+    alt User cancel (Escape)
+        U->>Agent: Cancel(sessionID)
+        Agent->>Agent: Cancel active request
+        Agent->>DB: Persist canceled turn
+        Agent-->>Coord: Return nil, context.Canceled
+    end

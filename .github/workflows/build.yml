@@ -1,0 +1,92 @@
+name: "build"
+
+# CI build for every commit on main and every pull request. Compiles and
+# packages the CGO (tree-sitter) enabled binaries for all shipped platforms so
+# a build break is caught on main/PR before it is ever cut as a release tag.
+# Publishes nothing; artifacts land on the workflow run for inspection.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref_name }}
+  cancel-in-progress: true
+
+env:
+  # Match the local toolchain expectations from the Taskfile.
+  CGO_ENABLED: "1"
+  GOEXPERIMENT: greenteagc
+  GOTOOLCHAIN: auto
+
+jobs:
+  build:
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Every entry is a native build (build host arch == target arch), so
+          # cgo/tree-sitter links against the platform's own toolchain. Mirrors
+          # the platform set shipped by release.yml.
+          - runner: ubuntu-latest
+            goos: linux
+            goarch: amd64
+            cc: gcc
+            ext: ""
+          - runner: ubuntu-24.04-arm64
+            goos: linux
+            goarch: arm64
+            cc: gcc
+            ext: ""
+          - runner: macos-latest
+            goos: darwin
+            goarch: arm64
+            cc: cc
+            ext: ""
+          - runner: windows-latest
+            goos: windows
+            goarch: amd64
+            cc: C:/Tools/mingw64/bin/gcc.exe
+            ext: ".exe"
+    env:
+      GOOS: ${{ matrix.goos }}
+      GOARCH: ${{ matrix.goarch }}
+      CGO_CC: ${{ matrix.cc }}
+      BIN: phosphor-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: stable
+          cache: true
+
+      # Windows runners ship no C compiler; cgo (tree-sitter) needs one. The
+      # Chocolatey mingw package installs to C:/Tools/mingw64, which the CGO_CC
+      # matrix value above points at.
+      - name: Install MinGW (Windows cgo toolchain)
+        if: matrix.goos == 'windows'
+        run: choco install mingw --no-progress -y
+
+      - name: Build
+        run: |
+          mkdir -p dist
+          SHORT="${GITHUB_SHA:0:7}"
+          go build -v -o "dist/${BIN}" -ldflags "-X github.com/hackafterdark/phosphor/internal/version.Version=${SHORT} -X github.com/hackafterdark/phosphor/pkg/phosphordocs.Version=${SHORT} -X github.com/hackafterdark/phosphor/internal/version.Commit=${GITHUB_SHA}" .
+        shell: bash
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: phosphor-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist
+          if-no-match-files: warn
+          retention-days: 7

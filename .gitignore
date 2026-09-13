@@ -55,3 +55,6 @@ completions/phosphor.*sh
 .prettierignore
 .task
 .obsidian
+# Machine-local environment overrides (never committed; see .envrc.windows.ps1)
+.env.*.local
+.envrc.windows.ps1

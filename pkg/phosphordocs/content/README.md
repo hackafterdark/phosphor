@@ -1,0 +1,46 @@
+# Phosphor Documentation
+
+This is the corpus of user-facing Phosphor docs compiled into the binary.
+Search it with the `phosphor_docs` tool, or open a file below with the
+`view` tool using its virtual path.
+
+## Index
+
+- [Codebase Indexing](phosphor://docs/CODEBASE_INDEXING.md)
+- [Context Window Compaction (Auto-Summarization)](phosphor://docs/COMPACTION.md)
+- [Agent Context Chain](phosphor://docs/CONTEXT_CHAIN.md)
+- [Phosphor Core Philosophy](phosphor://docs/CORE_PHILOSOPHY.md)
+- [Chat History Pagination and Performance Configuration](phosphor://docs/HISTORY_LIMIT.md)
+- [Logo Customization](phosphor://docs/LOGO_CUSTOMIZATION.md)
+- [Mermaid Rendering Service](phosphor://docs/MERMAID.md)
+- [Models and Providers Configuration](phosphor://docs/MODELS_AND_PROVIDERS_CONFIG.md)
+- [Programmatic Client SDK](phosphor://docs/SDK.md)
+- [Phosphor Skill System Architecture](phosphor://docs/SKILLS.md)
+- [System Prompt Engine](phosphor://docs/SYSTEM_PROMPT.md)
+- [TUI Theme System](phosphor://docs/THEMES.md)
+- [UI Layout Configuration](phosphor://docs/UI_LAYOUT_CONFIG.md)
+- [The `/goal` Slash Command & Session Goals](phosphor://docs/commands/GOAL.md)
+- [The `/languages` Slash Command](phosphor://docs/commands/LANGUAGES.md)
+- [The `/learn` Slash Command](phosphor://docs/commands/LEARN.md)
+- [The `/menu` Slash Command](phosphor://docs/commands/MENU.md)
+- [The `/name` Slash Command](phosphor://docs/commands/NAME.md)
+- [Pining and Unpinning Sessions](phosphor://docs/commands/PIN_SESSION.md)
+- [The `/quit` Slash Command](phosphor://docs/commands/QUIT.md)
+- [The `/stats` Slash Command](phosphor://docs/commands/STATS.md)
+- [Hooks](phosphor://docs/hooks/README.md)
+- [Logging Configuration](phosphor://docs/observability/LOGGING.md)
+- [OpenTelemetry Instrumentation](phosphor://docs/observability/OPEN_TELEMETRY.md)
+- [Agent Client Protocol (ACP)](phosphor://docs/platform/ACP.md)
+- [Scheduled Jobs](phosphor://docs/platform/SCHEDULED_JOBS.md)
+- [OpenAI-Compatible API](phosphor://docs/platform/openai-api.md)
+- [Phosphor Security Configuration](phosphor://docs/security/CONFIGURATION.md)
+- [Environment Variable Hardening](phosphor://docs/security/ENVIRONMENT_HARDENING.md)
+- [Network Egress Hardening](phosphor://docs/security/NETWORK_EGRESS_HARDENING.md)
+- [Workspace Filesystem Hardening](phosphor://docs/security/WORKSPACE_HARDENING.md)
+- [Structural Search Language Configuration](phosphor://docs/structural_search/CONFIGURATION.md)
+- [Structural Search Language Notes](phosphor://docs/structural_search/LANGUAGE_NOTES.md)
+- [Tree-Sitter Structural Search](phosphor://docs/structural_search/README.md)
+- [Agent Tools Overview](phosphor://docs/tools/OVERVIEW.md)
+- [Semantic Search](phosphor://docs/tools/SEMANTIC_SEARCH.md)
+- [Workspace Search (FTS5)](phosphor://docs/tools/WORKSPACE_SEARCH.md)
+- [Edit and Multi-Edit Tools](phosphor://docs/tools/edit_tools.md)

@@ -380,3 +380,48 @@ func TestViewToolWithHashline(t *testing.T) {
 	require.Contains(t, resp.Content, "     3:")
 	require.Contains(t, resp.Content, "|go hashline")
 }
+
+func TestReadDocsFile(t *testing.T) {
+	t.Parallel()
+
+	t.Run("reads a shipped doc", func(t *testing.T) {
+		t.Parallel()
+
+		resp := readDocsFile(ViewParams{FilePath: "phosphor://docs/commands/GOAL.md"})
+		require.False(t, resp.IsError)
+		require.Contains(t, resp.Content, "goal")
+	})
+
+	t.Run("sets docs resource metadata", func(t *testing.T) {
+		t.Parallel()
+
+		resp := readDocsFile(ViewParams{FilePath: "phosphor://docs/commands/GOAL.md"})
+		var meta ViewResponseMetadata
+		require.NoError(t, json.Unmarshal([]byte(resp.Metadata), &meta))
+		require.Equal(t, ViewResourceDocs, meta.ResourceType)
+		require.Equal(t, "commands/GOAL.md", meta.ResourceName)
+	})
+
+	t.Run("not found is a soft error", func(t *testing.T) {
+		t.Parallel()
+
+		resp := readDocsFile(ViewParams{FilePath: "phosphor://docs/nope/nope.md"})
+		require.True(t, resp.IsError)
+	})
+
+	t.Run("serves from an unrelated workspace", func(t *testing.T) {
+		t.Parallel()
+
+		// The whole point of embedding: docs resolve even when the working directory
+		// is some empty, unrelated project dir (a fresh workspace) that contains no
+		// docs at all. This is the guarantee that distinguishes embedded docs from a
+		// disk read or an online lookup.
+		tool := newViewToolForTest(t.TempDir())
+		resp := runViewTool(t, tool, context.Background(), ViewParams{
+			FilePath: "phosphor://docs/commands/GOAL.md",
+		})
+		require.False(t, resp.IsError)
+		require.NotContains(t, resp.Content, "outside workspace")
+		require.Contains(t, resp.Content, "goal")
+	})
+}
