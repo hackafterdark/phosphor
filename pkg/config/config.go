@@ -474,6 +474,14 @@ type AgentConfig struct {
 	// means no limit. This prevents runaway agent loops on complex tasks.
 	MaxTurns int `json:"max_turns,omitempty" jsonschema:"description=Maximum number of tool-use turns per prompt (0 = unlimited),default=0"`
 
+	// MaxContinuations caps the number of synthetic continuation turns the
+	// goal runtime may start for a single active goal before the goal is
+	// auto-paused and the user is asked to review progress and resume. A
+	// value of 0 means use the built-in default (25); a negative value
+	// disables the budget entirely (unlimited). This is the guardrail that
+	// stops a goal that never calls update_goal from burning tokens forever.
+	MaxContinuations int `json:"max_continuations,omitempty" jsonschema:"description=Maximum number of goal continuation turns before the goal is auto-paused for review (0 = default 25, negative = unlimited),default=0"`
+
 	// StructuralSearchLanguages restricts which languages appear in the
 	// structural_search tool description in the system prompt. When empty,
 	// all supported languages are listed. Setting a non-empty list causes

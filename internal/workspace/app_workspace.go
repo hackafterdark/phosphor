@@ -242,6 +242,9 @@ func (w *AppWorkspace) GoalSet(ctx context.Context, sessionID, objective string)
 	if err != nil {
 		return nil, err
 	}
+	if w.app.GoalRuntime != nil {
+		w.app.GoalRuntime.ResetContinuations(sessionID)
+	}
 	go func() {
 		if err := w.app.GoalRuntime.MaybeContinue(context.Background(), sessionID); err != nil {
 			slog.Error("Goal continuation failed after set", "session_id", sessionID, "error", err)
@@ -267,6 +270,9 @@ func (w *AppWorkspace) GoalResume(ctx context.Context, sessionID string) (*goal.
 	if err != nil {
 		return nil, err
 	}
+	if w.app.GoalRuntime != nil {
+		w.app.GoalRuntime.ResetContinuations(sessionID)
+	}
 	go func() {
 		if err := w.app.GoalRuntime.MaybeContinue(context.Background(), sessionID); err != nil {
 			slog.Error("Goal continuation failed after resume", "session_id", sessionID, "error", err)
@@ -285,6 +291,9 @@ func (w *AppWorkspace) GoalStart(ctx context.Context, sessionID string) error {
 }
 
 func (w *AppWorkspace) GoalClear(ctx context.Context, sessionID string) (*goal.Goal, error) {
+	if w.app.GoalRuntime != nil {
+		w.app.GoalRuntime.ResetContinuations(sessionID)
+	}
 	return w.app.GoalService.Clear(ctx, sessionID)
 }
 

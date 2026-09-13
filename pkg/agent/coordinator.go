@@ -210,7 +210,12 @@ func NewCoordinator(
 		activeSkills: activeSkills,
 		skillTracker: skillTracker,
 	}
-	c.goalRuntime = goal.NewRuntime(goalService, c, notify)
+	c.goalRuntime = goal.NewRuntime(goalService, c, notify, func() int {
+		if a := cfg.Config().Options.Agent; a != nil {
+			return a.MaxContinuations
+		}
+		return 0
+	})
 
 	// Wire the TUI allow-prompt callback. The tool (e.g. web_fetch) invokes
 	// this when a host is not in any allow list; the TUI shows
@@ -486,10 +491,12 @@ func (c *coordinator) run(ctx context.Context, accept *AcceptedRun, sessionID st
 		}
 	}
 
-	if originalErr == nil && c.goalRuntime != nil {
-		go func() {
-			c.goalRuntime.OnTurnFinished(context.Background(), sessionID)
-		}()
+	if originalErr == nil {
+		if c.goalRuntime != nil {
+			go func() {
+				c.goalRuntime.OnTurnFinished(context.Background(), sessionID)
+			}()
+		}
 	} else {
 		slog.Warn("Goal continuation skipped due to agent error; use /goal resume to continue", "session_id", sessionID, "error", originalErr)
 	}
@@ -879,6 +886,7 @@ func (c *coordinator) buildAgent(ctx context.Context, prompt *prompt.Prompt, age
 		IsYolo:               c.permissions.SkipRequests(),
 		Sessions:             c.sessions,
 		Messages:             c.messages,
+		GoalService:          c.goalService,
 		Tools:                nil,
 		Notify:               c.notify,
 		RunComplete:          c.runComplete,

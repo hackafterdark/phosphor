@@ -4967,6 +4967,19 @@ func (m *UI) handleAgentNotification(n notify.Notification) tea.Cmd {
 	case notify.TypeGoalContinue:
 		m.workingPlaceholder = "Continuing goal..."
 		return nil
+	case notify.TypeGoalPaused:
+		m.workingPlaceholder = "Goal paused"
+		msg := "Goal paused at the continuation limit."
+		if n.Message != "" {
+			msg = n.Message
+		}
+		return tea.Batch(
+			util.ReportWarn(msg),
+			m.sendNotification(notification.Notification{
+				Title:   "Goal paused",
+				Message: fmt.Sprintf("Goal paused in \"%s\" — review progress, then open the Commands menu (Ctrl+P) and choose \"Resume Goal\".", n.SessionTitle),
+			}),
+		)
 	default:
 		return nil
 	}

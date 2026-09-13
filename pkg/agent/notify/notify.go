@@ -15,6 +15,11 @@ const (
 	// TypeGoalContinue indicates that a synthetic continuation turn
 	// is about to start.
 	TypeGoalContinue Type = "goal_continue"
+	// TypeGoalPaused indicates that the goal runtime auto-paused an
+	// active goal because it reached the configured continuation budget.
+	// The user must review progress and resume. The human-readable
+	// reason is carried in Notification.Message.
+	TypeGoalPaused Type = "goal_paused"
 	// TypeAgentError indicates the agent's turn terminated with an
 	// error. The error text is carried in Notification.Message.
 	TypeAgentError Type = "error"
