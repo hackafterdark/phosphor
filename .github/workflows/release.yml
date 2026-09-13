@@ -2,8 +2,9 @@ name: "release"
 
 # Publishes native binaries for Windows, macOS and Linux to the GitHub Release
 # that matches the pushed tag. The version stamped into the binary is the tag
-# itself (e.g. v1.1.1). Built with CGO_ENABLED=1 so the shipped binaries
-# include the tree-sitter structural-search backend.
+# itself (e.g. v1.1.1). Shipped with CGO_ENABLED=1 so the binaries include the
+# tree-sitter structural-search backend, except linux/arm64 which is pure Go
+# (see the matrix note below).
 
 on:
   push:
@@ -26,8 +27,8 @@ env:
   # The tag being released: github.ref_name on a tag push, the manual input on
   # a dispatch. Both resolve to a plain semver tag like v1.1.1.
   RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
-  # Match the local toolchain expectations from the Taskfile.
-  CGO_ENABLED: "1"
+  # Match the local toolchain expectations from the Taskfile. CGO_ENABLED is set
+  # per matrix entry in the build job (linux/arm64 ships without it).
   GOEXPERIMENT: greenteagc
   GOTOOLCHAIN: auto
 
@@ -56,35 +57,40 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Each entry runs on the matching native runner so cgo/tree-sitter
-          # links against that platform's own toolchain. Linux/arm64 is the one
-          # exception: it cross-compiles on ubuntu-latest via the distro
-          # aarch64-linux-gnu gcc — the single well-supported cgo cross case
-          # (same OS, so the cross gcc supplies libc and the linker).
+          # Native build per platform so cgo/tree-sitter links against that
+          # platform's own toolchain. linux/arm64 ships with cgo OFF
+          # (CGO_ENABLED=0): cross-compiling tree-sitter's C for arm64 from the
+          # amd64 runner is unreliable, so that one target loses structural_search
+          # (falls back to grep) to stay buildable on stock hosted runners. Flip
+          # its cgo to "1" once you enable native ARM64 hosted runners.
           - runner: ubuntu-latest
             goos: linux
             goarch: amd64
             cc: gcc
+            cgo: "1"
             ext: ""
           - runner: ubuntu-latest
             goos: linux
             goarch: arm64
-            cc: aarch64-linux-gnu-gcc
+            cc: ""
+            cgo: "0"
             ext: ""
-            cross: true
           - runner: macos-latest
             goos: darwin
             goarch: arm64
             cc: cc
+            cgo: "1"
             ext: ""
           - runner: windows-latest
             goos: windows
             goarch: amd64
             cc: C:/Tools/mingw64/bin/gcc.exe
+            cgo: "1"
             ext: ".exe"
     env:
       GOOS: ${{ matrix.goos }}
       GOARCH: ${{ matrix.goarch }}
+      CGO_ENABLED: ${{ matrix.cgo }}
       CGO_CC: ${{ matrix.cc }}
       BIN: phosphor-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}
     steps:
@@ -103,13 +109,6 @@ jobs:
       - name: Install MinGW (Windows cgo toolchain)
         if: matrix.goos == 'windows'
         run: choco install mingw --no-progress -y
-
-      # Linux/arm64 cross-compiles on the amd64 ubuntu-latest runner; the distro
-      # package below provides the aarch64 gcc that Go uses as CGO_CC above.
-      - name: Install ARM64 cross toolchain (Linux arm64)
-        if: matrix.cross
-        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
-        shell: bash
 
       - name: Build
         run: |
