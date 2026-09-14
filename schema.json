@@ -1354,6 +1354,13 @@
         "allow_inline_execution": {
           "type": "boolean",
           "description": "Allow interpreters and shells to be invoked with inline code execution flags (-c"
+        },
+        "trusted_extra_roots": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Additional absolute directories that bash may access alongside the workspace. The OS temporary directory is trusted by default."
         }
       },
       "additionalProperties": false,

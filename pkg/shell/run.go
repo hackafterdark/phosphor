@@ -14,6 +14,8 @@ import (
 	"mvdan.cc/sh/v3/expand"
 	"mvdan.cc/sh/v3/interp"
 	"mvdan.cc/sh/v3/syntax"
+
+	"github.com/hackafterdark/phosphor/internal/pathguard"
 )
 
 // RunOptions configures a single stateless shell execution via [Run].
@@ -44,6 +46,14 @@ type RunOptions struct {
 	// BlockFuncs is an optional list of deny-list matchers applied before
 	// each command reaches the exec layer. nil disables blocking entirely.
 	BlockFuncs []BlockFunc
+	// Workspace is the absolute workspace root used to confine fully expanded
+	// argv. Empty disables post-expansion path confinement.
+	Workspace string
+	// ExtraTrustedRoots are additional absolute directories that argv may
+	// reference alongside Workspace.
+	ExtraTrustedRoots []string
+	// DisableTempRoot opts out of trusting the OS temporary directory.
+	DisableTempRoot bool
 	// TermWidth is the terminal width in columns for PTY execution.
 	// Zero uses a default of 200.
 	TermWidth int
@@ -84,7 +94,7 @@ func Run(ctx context.Context, opts RunOptions) (err error) {
 		return fmt.Errorf("could not parse command: %w", err)
 	}
 
-	runner, err := newRunner(opts.Cwd, opts.Env, opts.Stdin, stdout, stderr, opts.BlockFuncs)
+	runner, err := newRunner(opts.Cwd, opts.Env, opts.Stdin, stdout, stderr, opts.BlockFuncs, newConfinement(opts.Workspace, opts.ExtraTrustedRoots, opts.DisableTempRoot))
 	if err != nil {
 		return fmt.Errorf("could not run command: %w", err)
 	}
@@ -183,15 +193,29 @@ func RunAndCapturePTY(ctx context.Context, opts RunOptions) (CaptureResult, erro
 // newRunner constructs an [interp.Runner] configured with the standard
 // Phosphor handler stack. Shared by the stateless [Run] entrypoint and the
 // stateful [Shell] so the two surfaces cannot drift.
-func newRunner(cwd string, env []string, stdin io.Reader, stdout, stderr io.Writer, blockFuncs []BlockFunc) (*interp.Runner, error) {
+func newRunner(cwd string, env []string, stdin io.Reader, stdout, stderr io.Writer, blockFuncs []BlockFunc, conf *pathguard.Confinement) (*interp.Runner, error) {
 	env = withNonInteractiveEnv(env)
 	return interp.New(
 		interp.StdIO(stdin, stdout, stderr),
 		interp.Interactive(false),
 		interp.Env(expand.ListEnviron(env...)),
 		interp.Dir(cwd),
-		execHandlerOption(blockFuncs),
+		execHandlerOption(blockFuncs, conf),
 	)
+}
+
+// newConfinement builds the shared post-expansion policy. A missing workspace
+// root intentionally disables confinement so trusted, caller-owned execution
+// surfaces (notably hooks) remain usable.
+func newConfinement(workspace string, extraRoots []string, disableTempRoot bool) *pathguard.Confinement {
+	if workspace == "" {
+		return nil
+	}
+	return &pathguard.Confinement{
+		WorkspaceRoot:  workspace,
+		TrustTempRoots: !disableTempRoot,
+		ExtraRoots:     extraRoots,
+	}
 }
 
 // execHandlerOption returns an interp.RunnerOption that installs the
@@ -204,10 +228,10 @@ func newRunner(cwd string, env []string, stdin io.Reader, stdout, stderr io.Writ
 // isolation. Without isolation, shells like zsh that set up job control
 // when sourcing framework files can send SIGINT/SIGTERM to Phosphor's process
 // group and crash the parent.
-func execHandlerOption(blockFuncs []BlockFunc) interp.RunnerOption {
+func execHandlerOption(blockFuncs []BlockFunc, conf *pathguard.Confinement) interp.RunnerOption {
 	base := processGroupExecHandler(defaultKillTimeout)
 	handler := base
-	for _, mw := range slices.Backward(standardHandlers(blockFuncs)) {
+	for _, mw := range slices.Backward(standardHandlers(blockFuncs, conf)) {
 		handler = mw(handler)
 	}
 	return interp.ExecHandler(handler) //nolint:staticcheck // ExecHandlers always appends DefaultExecHandler which lacks process isolation.
@@ -261,12 +285,14 @@ func withNonInteractiveEnv(env []string) []string {
 //     that deny rules see the already-resolved argv of anything the
 //     script exec's rather than the outer path-prefixed wrapper;
 //  3. block list;
-//  4. optional Go coreutils (only when useGoCoreUtils is on).
-func standardHandlers(blockFuncs []BlockFunc) []func(next interp.ExecHandlerFunc) interp.ExecHandlerFunc {
+//  4. post-expansion path confinement;
+//  5. optional Go coreutils (only when useGoCoreUtils is on).
+func standardHandlers(blockFuncs []BlockFunc, conf *pathguard.Confinement) []func(next interp.ExecHandlerFunc) interp.ExecHandlerFunc {
 	handlers := []func(next interp.ExecHandlerFunc) interp.ExecHandlerFunc{
 		builtinHandler(),
-		scriptDispatchHandler(blockFuncs),
+		scriptDispatchHandler(blockFuncs, conf),
 		blockHandler(blockFuncs),
+		pathConfinementHandler(conf),
 	}
 	if useGoCoreUtils {
 		handlers = append(handlers, coreutils.ExecHandler)

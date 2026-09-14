@@ -85,8 +85,20 @@ func GetBackgroundShellManager() *BackgroundShellManager {
 	return backgroundManager
 }
 
+// StartOption customizes a background shell before its Shell instance is
+// constructed.
+type StartOption func(*Options)
+
+// WithTrustedRoots configures additional absolute directories that the
+// background shell may access in addition to its workspace root.
+func WithTrustedRoots(roots []string) StartOption {
+	return func(opts *Options) {
+		opts.ExtraTrustedRoots = roots
+	}
+}
+
 // Start creates and starts a new background shell with the given command.
-func (m *BackgroundShellManager) Start(ctx context.Context, workingDir string, workspace string, blockFuncs []BlockFunc, command string, description string) (*BackgroundShell, error) {
+func (m *BackgroundShellManager) Start(ctx context.Context, workingDir string, workspace string, blockFuncs []BlockFunc, command string, description string, opts ...StartOption) (*BackgroundShell, error) {
 	// Check job limit
 	if m.shells.Len() >= MaxBackgroundJobs {
 		return nil, fmt.Errorf("maximum number of background jobs (%d) reached. Please terminate or wait for some jobs to complete", MaxBackgroundJobs)
@@ -94,11 +106,16 @@ func (m *BackgroundShellManager) Start(ctx context.Context, workingDir string, w
 
 	id := fmt.Sprintf("%03X", idCounter.Add(1))
 
-	shell := NewShell(&Options{
+	shellOpts := &Options{
 		WorkingDir: workingDir,
 		Workspace:  workspace,
 		BlockFuncs: blockFuncs,
-	})
+	}
+	for _, opt := range opts {
+		opt(shellOpts)
+	}
+
+	shell := NewShell(shellOpts)
 
 	shellCtx, cancel := context.WithCancel(ctx)
 

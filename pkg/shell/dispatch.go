@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/hackafterdark/phosphor/internal/filepathext"
+	"github.com/hackafterdark/phosphor/internal/pathguard"
 	"mvdan.cc/sh/v3/expand"
 	"mvdan.cc/sh/v3/interp"
 	"mvdan.cc/sh/v3/syntax"
@@ -45,7 +46,7 @@ const probeWindow = 128
 // blockFuncs is the block list used when building the nested runner for the
 // shell-source case, so deny rules apply recursively to commands invoked
 // from in-process scripts.
-func scriptDispatchHandler(blockFuncs []BlockFunc) func(next interp.ExecHandlerFunc) interp.ExecHandlerFunc {
+func scriptDispatchHandler(blockFuncs []BlockFunc, conf *pathguard.Confinement) func(next interp.ExecHandlerFunc) interp.ExecHandlerFunc {
 	return func(next interp.ExecHandlerFunc) interp.ExecHandlerFunc {
 		return func(ctx context.Context, args []string) error {
 			if len(args) == 0 || !isPathPrefixed(args[0]) {
@@ -67,7 +68,7 @@ func scriptDispatchHandler(blockFuncs []BlockFunc) func(next interp.ExecHandlerF
 			case isBinary(probe):
 				return next(ctx, args)
 			default:
-				return runShellSource(ctx, scriptPath, args, blockFuncs)
+				return runShellSource(ctx, scriptPath, args, blockFuncs, conf)
 			}
 		}
 	}
@@ -375,7 +376,7 @@ func parseEnvShebang(rest string) (*shebang, error) {
 // This is the only branch that reads the full file; probeFile keeps its
 // read to probeWindow bytes so the binary/shebang paths never touch more
 // than 128 bytes of I/O.
-func runShellSource(ctx context.Context, path string, args []string, blockFuncs []BlockFunc) error {
+func runShellSource(ctx context.Context, path string, args []string, blockFuncs []BlockFunc, conf *pathguard.Confinement) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
@@ -393,7 +394,7 @@ func runShellSource(ctx context.Context, path string, args []string, blockFuncs 
 		interp.Interactive(false),
 		interp.Env(hc.Env),
 		interp.Dir(hc.Dir),
-		execHandlerOption(blockFuncs),
+		execHandlerOption(blockFuncs, conf),
 	}
 	if len(args) > 1 {
 		// Params with a leading "--" avoids any of args[1:] being

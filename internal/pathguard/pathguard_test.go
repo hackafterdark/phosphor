@@ -1,4 +1,4 @@
-package tools
+package pathguard
 
 import (
 	"os"
@@ -10,11 +10,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestValidateCommandPaths_BackslashJoinBug verifies that paths containing
+// TestCommandEscapesWorkspace_BackslashJoinBug verifies that paths containing
 // backslashes are normalized to forward slashes before joining with the
 // workspace root. This prevents filepath.Join from treating backslashes as
 // literal characters in edge cases.
-func TestValidateCommandPaths_BackslashJoinBug(t *testing.T) {
+func TestCommandEscapesWorkspace_BackslashJoinBug(t *testing.T) {
 	t.Parallel()
 
 	workspace := `F:\hackafterdark\phosphor`
@@ -35,10 +35,10 @@ func TestValidateCommandPaths_BackslashJoinBug(t *testing.T) {
 		"ToSlash should be idempotent for forward-slash paths")
 }
 
-// TestValidateCommandPaths_RelativePathResolution verifies that relative paths
+// TestCommandEscapesWorkspace_RelativePathResolution verifies that relative paths
 // extracted from commands are correctly resolved against the workspace root
 // using ToSlash normalization + filepath.Clean.
-func TestValidateCommandPaths_RelativePathResolution(t *testing.T) {
+func TestCommandEscapesWorkspace_RelativePathResolution(t *testing.T) {
 	t.Parallel()
 
 	workspace := t.TempDir()
@@ -72,9 +72,9 @@ func TestValidateCommandPaths_RelativePathResolution(t *testing.T) {
 	}
 }
 
-// TestValidateCommandPaths_AbsolutePathClean verifies that absolute paths are
+// TestCommandEscapesWorkspace_AbsolutePathClean verifies that absolute paths are
 // cleaned (not joined) and that traversal attempts are caught.
-func TestValidateCommandPaths_AbsolutePathClean(t *testing.T) {
+func TestCommandEscapesWorkspace_AbsolutePathClean(t *testing.T) {
 	t.Parallel()
 
 	workspace := t.TempDir()
@@ -99,10 +99,10 @@ func TestValidateCommandPaths_AbsolutePathClean(t *testing.T) {
 	}
 }
 
-// TestValidateCommandPaths_NonIOCommands verifies that ordinary build/test
+// TestCommandEscapesWorkspace_NonIOCommands verifies that ordinary build/test
 // commands whose operands cannot escape the workspace pass validation without
 // error, and that cd is recognised as a directory-change (not a file access).
-func TestValidateCommandPaths_NonIOCommands(t *testing.T) {
+func TestCommandEscapesWorkspace_NonIOCommands(t *testing.T) {
 	t.Parallel()
 
 	workspace := t.TempDir()
@@ -113,7 +113,7 @@ func TestValidateCommandPaths_NonIOCommands(t *testing.T) {
 		`go test ./internal/agent -run TestFoo`,
 		`git status`,
 	} {
-		require.NoError(t, validateCommandPaths(cmd, workspace), cmd)
+		require.NoError(t, ValidateCommandPaths(cmd, workspace), cmd)
 	}
 
 	require.True(t, isCDCommand("cd F:/some/path"),
@@ -153,10 +153,10 @@ func TestIsEscapablePathToken(t *testing.T) {
 	}
 }
 
-// TestValidateCommandPaths_CDCommandSkipped verifies that cd commands bypass
+// TestCommandEscapesWorkspace_CDCommandSkipped verifies that cd commands bypass
 // path validation entirely. The shell's workspace boundary enforcement
 // (updateShellFromRunner) already prevents cd from escaping the workspace.
-func TestValidateCommandPaths_CDCommandSkipped(t *testing.T) {
+func TestCommandEscapesWorkspace_CDCommandSkipped(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
@@ -182,9 +182,9 @@ func TestValidateCommandPaths_CDCommandSkipped(t *testing.T) {
 	}
 }
 
-// TestValidateCommandPaths_PathTraversalBlocked verifies that ".." traversal
+// TestCommandEscapesWorkspace_PathTraversalBlocked verifies that ".." traversal
 // attempts are caught even when they look like they start inside the workspace.
-func TestValidateCommandPaths_PathTraversalBlocked(t *testing.T) {
+func TestCommandEscapesWorkspace_PathTraversalBlocked(t *testing.T) {
 	t.Parallel()
 
 	workspace := t.TempDir()
@@ -288,11 +288,11 @@ func TestCorrectCommandPaths_PreservesURLsDomainsAndRelative(t *testing.T) {
 	}
 }
 
-// TestValidateCommandPaths_BlocksEscapesRegardlessOfIOKeyword verifies that
+// TestCommandEscapesWorkspace_BlocksEscapesRegardlessOfIOKeyword verifies that
 // workspace-escaping paths are caught even when the command does not contain a
 // recognised I/O keyword, closing the bypass where cp/tee/dd/redirections and
 // UNC/drive/file-URL smuggety skipped validation entirely.
-func TestValidateCommandPaths_BlocksEscapesRegardlessOfIOKeyword(t *testing.T) {
+func TestCommandEscapesWorkspace_BlocksEscapesRegardlessOfIOKeyword(t *testing.T) {
 	t.Parallel()
 
 	workspace := t.TempDir()
@@ -314,7 +314,7 @@ func TestValidateCommandPaths_BlocksEscapesRegardlessOfIOKeyword(t *testing.T) {
 	for _, cmd := range blocked {
 		t.Run("block:"+cmd, func(t *testing.T) {
 			t.Parallel()
-			err := validateCommandPaths(cmd, workspace)
+			err := ValidateCommandPaths(cmd, workspace)
 			require.Error(t, err, "expected escape to be blocked")
 			require.Contains(t, err.Error(), "outside workspace")
 		})
@@ -333,7 +333,7 @@ func TestValidateCommandPaths_BlocksEscapesRegardlessOfIOKeyword(t *testing.T) {
 	for _, cmd := range allowed {
 		t.Run("allow:"+cmd, func(t *testing.T) {
 			t.Parallel()
-			require.NoError(t, validateCommandPaths(cmd, workspace))
+			require.NoError(t, ValidateCommandPaths(cmd, workspace))
 		})
 	}
 }
@@ -364,10 +364,10 @@ func TestIsRemoteURL(t *testing.T) {
 	}
 }
 
-// TestValidateCommandPaths_BlocksTilde verifies that home-expansion paths are
+// TestCommandEscapesWorkspace_BlocksTilde verifies that home-expansion paths are
 // rejected: the shell expands "~" at execution time to the user profile, which
 // lives outside the workspace, so the static checker must not trust it.
-func TestValidateCommandPaths_BlocksTilde(t *testing.T) {
+func TestCommandEscapesWorkspace_BlocksTilde(t *testing.T) {
 	t.Parallel()
 
 	workspace := t.TempDir()
@@ -379,18 +379,18 @@ func TestValidateCommandPaths_BlocksTilde(t *testing.T) {
 	} {
 		t.Run(cmd, func(t *testing.T) {
 			t.Parallel()
-			require.Error(t, validateCommandPaths(cmd, workspace), cmd)
+			require.Error(t, ValidateCommandPaths(cmd, workspace), cmd)
 		})
 	}
 
-	require.NoError(t, validateCommandPaths(`cat ./notes.txt`, workspace))
+	require.NoError(t, ValidateCommandPaths(`cat ./notes.txt`, workspace))
 }
 
-// TestValidateCommandPaths_BlocksEnvVarPaths verifies that a path embedding a
-// home/temp/system environment variable is rejected (its value is unknown
-// until execution and points outside the workspace), while unrelated variables
-// and non-path uses are allowed.
-func TestValidateCommandPaths_BlocksEnvVarPaths(t *testing.T) {
+// TestCommandEscapesWorkspace_BlocksEnvVarPaths verifies that a path embedding a
+// home/system environment variable is rejected (its value is unknown until
+// execution and points outside the workspace), while trusted temporary-directory
+// variables, unrelated variables, and non-path uses are allowed.
+func TestCommandEscapesWorkspace_BlocksEnvVarPaths(t *testing.T) {
 	t.Parallel()
 
 	workspace := t.TempDir()
@@ -399,13 +399,12 @@ func TestValidateCommandPaths_BlocksEnvVarPaths(t *testing.T) {
 		`cat $HOME/.ssh/id_ed25519`,
 		`cat ${HOME}/secrets`,
 		`echo x > %USERPROFILE%\out.txt`,
-		`tee $TMPDIR/leak`,
 		`cp a.txt $APPDATA\..\x`,
 	}
 	for _, cmd := range blocked {
 		t.Run(cmd, func(t *testing.T) {
 			t.Parallel()
-			require.Error(t, validateCommandPaths(cmd, workspace), cmd)
+			require.Error(t, ValidateCommandPaths(cmd, workspace), cmd)
 		})
 	}
 
@@ -413,11 +412,156 @@ func TestValidateCommandPaths_BlocksEnvVarPaths(t *testing.T) {
 		`echo $BUILD_TAG`,          // no path separator, not a path
 		`cat $CUSTOM_DIR/file.txt`, // unknown variable, not an outside target
 		`go build -ldflags -X main.v=$VER`,
+		`tee $TMPDIR/leak`, // the OS temporary directory is trusted by default
 	}
 	for _, cmd := range allowed {
 		t.Run(cmd, func(t *testing.T) {
 			t.Parallel()
-			require.NoError(t, validateCommandPaths(cmd, workspace), cmd)
+			require.NoError(t, ValidateCommandPaths(cmd, workspace), cmd)
 		})
 	}
+}
+
+// TestConfinement_BlockedPostExpansion is the core Phase 1 suite. The argv
+// passed to Blocked is what the interpreter hands the exec handler AFTER it has
+// already substituted $VAR, $(…), backticks, globs and brace expansion, so
+// these cases simulate the escapes that are invisible to the static,
+// pre-expansion pass. In particular the {cat /etc/passwd} style argv is exactly
+// what `cat $LEAK` becomes once the model sets LEAK=/etc/passwd in the same
+// command.
+func TestConfinement_BlockedPostExpansion(t *testing.T) {
+	t.Parallel()
+
+	workspace := t.TempDir()
+	inside := filepath.Join(workspace, "sub", "f.go")
+	outside := filepath.Join(filepath.Dir(filepath.Clean(os.TempDir())), "phosphor-pathguard-outside")
+	require.NoError(t, os.MkdirAll(filepath.Dir(inside), 0o755))
+	require.NoError(t, os.WriteFile(inside, []byte("x"), 0o644))
+
+	conf := Confinement{WorkspaceRoot: workspace, TrustTempRoots: true}
+
+	t.Run("program path itself is not inspected", func(t *testing.T) {
+		require.NoError(t, conf.Blocked([]string{"/usr/bin/cat", "./sub/f.go"}, workspace))
+	})
+	t.Run("relative in-tree operand allowed", func(t *testing.T) {
+		require.NoError(t, conf.Blocked([]string{"cat", "./sub/f.go"}, workspace))
+	})
+	t.Run("in-tree absolute operand allowed", func(t *testing.T) {
+		require.NoError(t, conf.Blocked([]string{"cat", inside}, workspace))
+	})
+	t.Run("bare relative file allowed", func(t *testing.T) {
+		require.NoError(t, conf.Blocked([]string{"echo", "hi"}, workspace))
+	})
+	t.Run("go style patterns allowed", func(t *testing.T) {
+		require.NoError(t, conf.Blocked([]string{"go", "test", "./internal/agent", "-run", "TestFoo"}, workspace))
+	})
+	t.Run("remote url allowed", func(t *testing.T) {
+		require.NoError(t, conf.Blocked([]string{"gh", "api", "https://api.github.com/x/y"}, workspace))
+	})
+	t.Run("expanded var resolving outside is blocked", func(t *testing.T) {
+		// cat $LEAK  where the model set LEAK=/etc/passwd earlier in the line.
+		err := conf.Blocked([]string{"cat", "/etc/passwd"}, workspace)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "outside workspace")
+	})
+	t.Run("absolute outside operand blocked", func(t *testing.T) {
+		require.Error(t, conf.Blocked([]string{"cat", outside}, workspace))
+	})
+	t.Run("command substitution produced absolute blocked", func(t *testing.T) {
+		// cp $(echo /root)secret ...  -> argv contains /root/secret after expansion.
+		require.Error(t, conf.Blocked([]string{"cp", "/root/secret.txt", "./dst"}, workspace))
+	})
+	t.Run("tilde operand blocked", func(t *testing.T) {
+		require.Error(t, conf.Blocked([]string{"cat", "~/.ssh/id_ed25519"}, workspace))
+	})
+	t.Run("traversal operand blocked", func(t *testing.T) {
+		require.Error(t, conf.Blocked([]string{"cat", "../../../../etc/passwd"}, workspace))
+	})
+	t.Run("filesystem root argument blocked", func(t *testing.T) {
+		// find /  ls /  rm -rf /  — the whole-FS recon/destroy vectors.
+		require.Error(t, conf.Blocked([]string{"find", "/"}, workspace))
+		require.Error(t, conf.Blocked([]string{"ls", "/"}, workspace))
+		require.Error(t, conf.Blocked([]string{"rm", "-rf", "/"}, workspace))
+	})
+	t.Run("unquoted home env var blocked", func(t *testing.T) {
+		require.Error(t, conf.Blocked([]string{"cat", "$HOME/x"}, workspace))
+	})
+}
+
+// TestConfinement_DeviceFiles covers the well-known device nodes that stay
+// reachable even though they are written as absolute paths.
+func TestConfinement_DeviceFiles(t *testing.T) {
+	t.Parallel()
+
+	workspace := t.TempDir()
+	conf := Confinement{WorkspaceRoot: workspace, TrustTempRoots: true}
+
+	for _, dev := range []string{"/dev/null", "/dev/stdin", "/dev/stdout", "/dev/stderr", "/dev/zero"} {
+		t.Run(dev, func(t *testing.T) {
+			require.NoError(t, conf.Blocked([]string{"tee", dev}, workspace))
+			require.NoError(t, conf.Blocked([]string{"cmd", ">", dev}, workspace))
+		})
+	}
+}
+
+// TestConfinement_TempRootIsTrusted verifies the default OS temp directory is a
+// trusted root, and that disabling the trust re-confines it.
+func TestConfinement_TempRootIsTrusted(t *testing.T) {
+	t.Parallel()
+
+	workspace := t.TempDir()
+	tempFile := filepath.Join(os.TempDir(), "phosphor-confinement-probe")
+	require.NoError(t, os.WriteFile(tempFile, []byte("x"), 0o644))
+
+	trusted := Confinement{WorkspaceRoot: workspace, TrustTempRoots: true}
+	require.NoError(t, trusted.Blocked([]string{"cp", "./src", tempFile}, workspace),
+		"writes into the OS temp dir must be permitted when temp trust is on")
+
+	untrusted := Confinement{WorkspaceRoot: workspace, TrustTempRoots: false}
+	require.Error(t, untrusted.Blocked([]string{"cp", "./src", tempFile}, workspace),
+		"the same path must be confined once temp trust is disabled")
+}
+
+// TestConfinement_ExtraRoots verifies the config-driven trusted roots work.
+func TestConfinement_ExtraRoots(t *testing.T) {
+	t.Parallel()
+
+	workspace := t.TempDir()
+	extra := t.TempDir()
+	extraFile := filepath.Join(extra, "shared", "lib.go")
+	require.NoError(t, os.MkdirAll(filepath.Dir(extraFile), 0o755))
+
+	conf := Confinement{WorkspaceRoot: workspace, ExtraRoots: []string{extra}}
+	require.NoError(t, conf.Blocked([]string{"cp", extraFile, "./dst"}, workspace))
+	// Without the extra root the very same path is confined.
+	strict := Confinement{WorkspaceRoot: workspace}
+	require.Error(t, strict.Blocked([]string{"cp", extraFile, "./dst"}, workspace))
+}
+
+// TestConfinement_DisabledWhenNoWorkspace pins the trusted hook runner case: a
+// zero-value Confinement (empty WorkspaceRoot) never blocks anything.
+func TestConfinement_DisabledWhenNoWorkspace(t *testing.T) {
+	t.Parallel()
+
+	var conf Confinement
+	require.NoError(t, conf.Blocked([]string{"cat", "/etc/passwd"}, "/anywhere"))
+	require.NoError(t, conf.Blocked([]string{"rm", "-rf", "/"}, "/"))
+}
+
+// TestConfinement_TempVarResolvesOutsideStillBlocked pins that trusting temp
+// roots does not become a wildcard for temp environment variables: a literal
+// $HOME reference is always rejected and a temp-variable reference is only
+// tolerated when temp trust is enabled.
+func TestConfinement_TempVarResolvesOutsideStillBlocked(t *testing.T) {
+	t.Parallel()
+
+	workspace := t.TempDir()
+
+	// HOME is never tolerated.
+	require.Error(t, Confinement{WorkspaceRoot: workspace}.Blocked([]string{"cat", "$HOME/x"}, workspace))
+	require.Error(t, Confinement{WorkspaceRoot: workspace, TrustTempRoots: true}.Blocked([]string{"cat", "$HOME/x"}, workspace))
+
+	// A literal (unexpanded) temp variable is tolerated only with temp trust.
+	require.NoError(t, Confinement{WorkspaceRoot: workspace, TrustTempRoots: true}.Blocked([]string{"cat", "$TMPDIR/x"}, workspace))
+	require.Error(t, Confinement{WorkspaceRoot: workspace, TrustTempRoots: false}.Blocked([]string{"cat", "$TMPDIR/x"}, workspace))
 }

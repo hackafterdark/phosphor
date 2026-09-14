@@ -832,6 +832,11 @@ type ToolBash struct {
 	// controls by executing arbitrary code in another runtime. Normal script
 	// invocation (python script.py, node build.js) is unaffected.
 	AllowInlineExecution bool `json:"allow_inline_execution,omitempty" jsonschema:"description=Allow interpreters and shells to be invoked with inline code execution flags (-c, -e, -r). Default false (blocked)."`
+
+	// TrustedExtraRoots are additional absolute directories that the bash
+	// tool's post-expansion path confinement may access alongside the
+	// workspace. The OS temporary directory is trusted by default.
+	TrustedExtraRoots []string `json:"trusted_extra_roots,omitempty" jsonschema:"description=Additional absolute directories that bash may access alongside the workspace. The OS temporary directory is trusted by default."`
 }
 
 type ToolLs struct {
