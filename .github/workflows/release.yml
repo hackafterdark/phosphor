@@ -127,5 +127,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release upload-asset "${RELEASE_TAG}" --clobber "dist/${BIN}" "dist/${BIN}.sha256"
+          cd dist
+          for asset in "${BIN}" "${BIN}.sha256"; do
+            # Best-effort pre-delete so re-running a tag is idempotent (this gh
+            # has no --clobber). Ignored when the asset does not exist yet.
+            gh release delete-asset "${RELEASE_TAG}" "${asset}" 2>&1 || true
+            gh release upload "${RELEASE_TAG}" "${asset}"
+          done
         shell: bash
