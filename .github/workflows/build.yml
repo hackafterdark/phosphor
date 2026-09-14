@@ -38,37 +38,43 @@ jobs:
           # (CGO_ENABLED=0): cross-compiling tree-sitter's C for arm64 from the
           # amd64 runner is unreliable, so that one target loses structural_search
           # (falls back to grep) to stay buildable on stock hosted runners. Flip
-          # its cgo to "1" once you enable native ARM64 hosted runners.
+          # its cgo to "1" once you enable native ARM64 hosted runners. The linux/arm64
+          # artifact carries a "-lite" suffix so users can tell it lacks the cgo
+          # (tree-sitter / structural-search) features.
           - runner: ubuntu-latest
             goos: linux
             goarch: amd64
             cc: gcc
             cgo: "1"
             ext: ""
+            suffix: ""
           - runner: ubuntu-latest
             goos: linux
             goarch: arm64
             cc: ""
             cgo: "0"
             ext: ""
+            suffix: "-lite"
           - runner: macos-latest
             goos: darwin
             goarch: arm64
             cc: cc
             cgo: "1"
             ext: ""
+            suffix: ""
           - runner: windows-latest
             goos: windows
             goarch: amd64
             cc: C:/Tools/mingw64/bin/gcc.exe
             cgo: "1"
             ext: ".exe"
+            suffix: ""
     env:
       GOOS: ${{ matrix.goos }}
       GOARCH: ${{ matrix.goarch }}
       CGO_ENABLED: ${{ matrix.cgo }}
       CGO_CC: ${{ matrix.cc }}
-      BIN: phosphor-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}
+      BIN: phosphor-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.suffix }}${{ matrix.ext }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -96,7 +102,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: phosphor-${{ matrix.goos }}-${{ matrix.goarch }}
+          name: phosphor-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.suffix }}
           path: dist
           if-no-match-files: warn
           retention-days: 7
