@@ -7,6 +7,7 @@ import (
 	_ "embed"
 	"fmt"
 	"html/template"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -242,65 +243,245 @@ func blockFuncs(ctx context.Context, cfg config.ToolBash) []shell.BlockFunc {
 	return funcs
 }
 
-// I/O command keywords that may attempt to read/write files outside workspace.
-// These are checked as whole words (not substrings) to avoid false positives
-// from paths like ./cmd/petstore or arguments containing these names.
-var ioCommands = []string{
-	"cat", "type", "Get-Content", "read", "write",
-	"grep", "tail", "head", "sed", "awk",
-	"powershell", "dir",
+// driveRegexp matches a token that begins with a Windows drive specifier
+// (e.g. "C:/", "D:\"). Used to decide whether a token should be treated as an
+// absolute path for both correction and validation.
+var driveRegexp = regexp.MustCompile(`^[A-Za-z]:`)
+
+// dotDotSegmentRegexp matches a standalone ".." path segment, which is the
+// only form of relative traversal that can escape the workspace. A literal
+// ".." must be bounded by a separator or a string edge so that names such as
+// "foo..bar" or "..cache" are not mistaken for traversal.
+var dotDotSegmentRegexp = regexp.MustCompile(`(^|[/\\])\.\.($|[/\\])`)
+
+// remoteURLRegexp matches tokens that are unambiguously remote URLs (a scheme
+// followed by "://"). Such tokens are never local filesystem paths and are
+// therefore skipped by both path correction and validation. The scheme list is
+// an explicit allowlist: notably "file:" is excluded because a file URL can
+// still carry ".." traversal that must be validated.
+var remoteURLRegexp = regexp.MustCompile(`(?i)^(https?|ws|wss|ftp|ftps|git|gopher|ssh|sftp|svn|ipfs|ipns|blob|data|mailto|magnet|oci|docker|registry|npm|yarn|cargo|gem|pip|pypi|atom|feed)://`)
+
+// isRemoteURL reports whether a token is a safe remote URL. It deliberately
+// returns false for any token that contains a ".." path segment so that a
+// scheme-prefixed value such as "file://../../etc/passwd" or
+// "http://x/../../etc/passwd" is still treated as a path and validated.
+func isRemoteURL(token string) bool {
+	if dotDotSegmentRegexp.MatchString(token) {
+		return false
+	}
+	return remoteURLRegexp.MatchString(token)
 }
 
-// ioCommandRegex matches I/O commands as whole words at the start of a
-// command or after a chain operator (&&, ||, ;). This prevents substring
-// false positives like "cmd" matching "./cmd/petstore" in Go build commands.
-var ioCommandRegex = regexp.MustCompile(
-	`(?i)(?:^|[\s;&|])(` + strings.Join(ioCommands, "|") + `)(?:\s|$)`,
-)
+// isAbsoluteLike reports whether a token is written as an absolute path: a
+// leading slash, a Windows-style drive specifier, or a backslash prefix. Such
+// tokens are the ones CorrectCommandPaths attempts to relocate inside the
+// workspace (they are frequently workspace-relative paths the model wrote with
+// an erroneous leading separator).
+func isAbsoluteLike(token string) bool {
+	return filepathext.SmartIsAbs(token) || driveRegexp.MatchString(token)
+}
 
-// pathRegex extracts file paths from commands
-var pathRegex = regexp.MustCompile(`['"]?([A-Za-z]:)?[/\\][^\s'"]+['"]?`)
+// isEscapablePathToken reports whether a token is capable of referring to a
+// location outside the workspace. Only such tokens are worth resolving against
+// the workspace bounds; ordinary words, flags, package names, Go import paths
+// (github.com/x/y) and remote URLs are ignored so they neither produce false
+// positives nor get rewritten. A token is escapable when it uses a leading
+// "~" home expansion or, carrying a real named path segment, is absolute-like,
+// UNC-prefixed, or contains a ".." traversal segment. Degenerate values such
+// as "\", "/", ".", ".." or a line-continuation backslash are not escapable.
+func isEscapablePathToken(token string) bool {
+	if token == "" {
+		return false
+	}
+	s := filepath.ToSlash(token)
+	// Home expansion always targets the user profile, which is outside the
+	// workspace regardless of the sub-path that follows.
+	if s == "~" || strings.HasPrefix(s, "~/") {
+		return true
+	}
+	// Must contain a separator to be able to address anything else.
+	if !strings.ContainsAny(token, "/\\") {
+		return false
+	}
+	// Strip separators, dots and the home shortcut; if nothing meaningful
+	// remains the token is just punctuation and cannot name an outside path.
+	if strings.Trim(token, "./\\~") == "" {
+		return false
+	}
+	if dotDotSegmentRegexp.MatchString(token) {
+		return true
+	}
+	if isAbsoluteLike(token) {
+		return true
+	}
+	// UNC shares ("\\host\share" or "//host/share") can reach network or
+	// device paths and never live inside a normal workspace tree.
+	return strings.HasPrefix(s, "//")
+}
 
-// CorrectCommandPaths extracts path-like arguments matching pathRegex and resolves them
-// relative to the workspace using HeuristicClean. It replaces them in the command
-// with corrected, slash-normalized absolute paths.
+// commandToken is a whitespace/shell-operator-delimited token together with
+// its byte span in the original command and the quote character (if any) that
+// wrapped it.
+type commandToken struct {
+	text  string
+	start int
+	end   int
+	quote byte
+}
+
+// isShellDelimiter reports whether c separates tokens when unquoted.
+func isShellDelimiter(c byte) bool {
+	switch c {
+	case ' ', '\t', '\n', '\r', ';', '&', '|', '<', '>':
+		return true
+	}
+	return false
+}
+
+// scanCommandTokens performs a best-effort shell tokenization of a command.
+// It is intentionally conservative and only used for path inspection, never
+// for execution (the real parser lives in pkg/shell). It splits on unquoted
+// whitespace and shell metacharacters and strips surrounding single/double
+// quotes, recording each token's span so callers can rewrite tokens in place
+// while leaving everything else byte-for-byte intact.
+func scanCommandTokens(command string) []commandToken {
+	var tokens []commandToken
+	i := 0
+	for i < len(command) {
+		if isShellDelimiter(command[i]) {
+			i++
+			continue
+		}
+		start := i
+		var text []byte
+		var quote byte
+		var openQuote byte
+		for i < len(command) {
+			c := command[i]
+			if quote != 0 {
+				if c == quote {
+					quote = 0
+					i++
+					continue
+				}
+				text = append(text, c)
+				i++
+				continue
+			}
+			if c == '\'' || c == '"' {
+				if openQuote == 0 {
+					openQuote = c
+				}
+				quote = c
+				i++
+				continue
+			}
+			if isShellDelimiter(c) {
+				break
+			}
+			text = append(text, c)
+			i++
+		}
+		tokens = append(tokens, commandToken{text: string(text), start: start, end: i, quote: openQuote})
+	}
+	return tokens
+}
+
+// CorrectCommandPaths relocates absolute-looking arguments that were meant to
+// be workspace-relative. It rewrites, in place, only tokens that are written
+// as an absolute path (a leading separator or a drive specifier) so that they
+// resolve inside the workspace using HeuristicClean. Remote URLs (https://…),
+// remote hosts, Go import paths (github.com/x/y), relative operands (./…) and
+// ordinary words are deliberately left untouched, which prevents the previous
+// regex-based pass from corrupting such arguments. Quoting is preserved.
 func CorrectCommandPaths(command string, absWorkingDir string) string {
-	matches := pathRegex.FindAllStringIndex(command, -1)
-	if len(matches) == 0 {
+	tokens := scanCommandTokens(command)
+	if len(tokens) == 0 {
 		return command
 	}
 
 	var sb strings.Builder
 	lastIdx := 0
+	for _, tok := range tokens {
+		// Copy the gap between the previous token and this one verbatim.
+		sb.WriteString(command[lastIdx:tok.start])
 
-	for _, match := range matches {
-		start, end := match[0], match[1]
-		sb.WriteString(command[lastIdx:start])
-
-		rawPathWithQuotes := command[start:end]
-		hasSingleQuote := strings.HasPrefix(rawPathWithQuotes, "'") && strings.HasSuffix(rawPathWithQuotes, "'")
-		hasDoubleQuote := strings.HasPrefix(rawPathWithQuotes, "\"") && strings.HasSuffix(rawPathWithQuotes, "\"")
-
-		rawPath := strings.Trim(rawPathWithQuotes, "'\"")
-
-		corrected := filepathext.HeuristicClean(absWorkingDir, rawPath)
-		corrected = filepath.ToSlash(corrected)
-
-		if hasSingleQuote {
-			corrected = "'" + corrected + "'"
-		} else if hasDoubleQuote {
-			corrected = "\"" + corrected + "\""
+		switch {
+		case isRemoteURL(tok.text):
+			sb.WriteString(command[tok.start:tok.end])
+		case isAbsoluteLike(tok.text):
+			corrected := filepathext.HeuristicClean(absWorkingDir, tok.text)
+			corrected = filepath.ToSlash(corrected)
+			if tok.quote != 0 {
+				sb.WriteByte(tok.quote)
+				sb.WriteString(corrected)
+				sb.WriteByte(tok.quote)
+			} else {
+				sb.WriteString(corrected)
+			}
+		default:
+			sb.WriteString(command[tok.start:tok.end])
 		}
-
-		sb.WriteString(corrected)
-		lastIdx = end
+		lastIdx = tok.end
 	}
-
 	sb.WriteString(command[lastIdx:])
 	return sb.String()
 }
 
-// validateCommandPaths checks if any file paths in the command are outside the workspace
+// outsideEnvVars are environment-variable names whose expansion points at a
+// location outside the workspace (the user profile, temp, or system roots).
+var outsideEnvVars = map[string]struct{}{
+	"home": {}, "homedrive": {}, "homedir": {}, "userprofile": {},
+	"tmp": {}, "temp": {}, "tmpdir": {}, "tempdir": {},
+	"appdata": {}, "localappdata": {}, "public": {}, "desktopdirectory": {},
+	"programfiles": {}, "allusersprofile": {}, "systemdrive": {}, "windir": {},
+}
+
+// envVarRegexp captures the ${NAME}, $NAME and %NAME% shell expansion forms.
+var envVarRegexp = regexp.MustCompile(`\$(\{?)([A-Za-z_][0-9A-Za-z_]*)\}?|%([A-Za-z_][0-9A-Za-z_]*)%`)
+
+// referencesOutsideEnvVar reports whether a path-like token embeds an
+// environment variable whose value lives outside the workspace. Such a token
+// cannot be resolved statically because the shell expands it only at
+// execution time, so it must be rejected rather than trusted.
+func referencesOutsideEnvVar(token string) bool {
+	if !strings.ContainsAny(token, "/\\") {
+		return false
+	}
+	for _, m := range envVarRegexp.FindAllStringSubmatch(token, -1) {
+		name := m[2] // $NAME or ${NAME}
+		if name == "" {
+			name = m[3] // %NAME%
+		}
+		if _, ok := outsideEnvVars[strings.ToLower(name)]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+// resolveTokenBase maps a path token to an absolute path for the bounds check:
+// a leading "~" is expanded to the user home when known, otherwise the token
+// is treated as absolute (SmartIsAbs) or workspace-relative.
+func resolveTokenBase(token, absWorkingDir, home string) string {
+	s := filepath.ToSlash(token)
+	if home != "" && (s == "~" || strings.HasPrefix(s, "~/")) {
+		return filepath.Clean(filepath.Join(home, strings.TrimLeft(s[1:], "/")))
+	}
+	if filepathext.SmartIsAbs(token) {
+		return filepath.Clean(token)
+	}
+	return filepath.Clean(filepath.Join(absWorkingDir, s))
+}
+
+// validateCommandPaths checks whether any path in the command escapes the
+// workspace. Unlike the previous implementation it is no longer gated on the
+// presence of a known I/O command name: every token that could refer to a
+// location outside the workspace is resolved and bounds-checked. This closes
+// the bypass where write/read vectors that are not in the I/O keyword list
+// (cp, mv, tee, dd, shell redirection targets, …) skipped validation entirely.
+// Tokens that cannot escape — remote URLs, import paths, package names and
+// in-tree relative operands — are ignored.
 func validateCommandPaths(command string, absWorkingDir string) error {
 	// Skip cd commands entirely — they change directory, not access files.
 	// The shell's workspace boundary enforcement (updateShellFromRunner)
@@ -309,37 +490,29 @@ func validateCommandPaths(command string, absWorkingDir string) error {
 		return nil
 	}
 
-	// Check for I/O commands using whole-word matching to avoid false
-	// positives from paths like ./cmd/petstore or arguments containing
-	// I/O command names.
-	if !ioCommandRegex.MatchString(command) {
-		return nil // No I/O commands detected, skip path validation
+	home := ""
+	if h, err := os.UserHomeDir(); err == nil {
+		home = h
 	}
 
-	// Extract paths from command
-	matches := pathRegex.FindAllString(command, -1)
-	for _, match := range matches {
-		// Clean up the path (remove quotes)
-		path := strings.Trim(match, "'\"")
-		if path == "" {
+	for _, tok := range scanCommandTokens(command) {
+		path := tok.text
+		if path == "" || isRemoteURL(path) {
 			continue
 		}
 
-		// Resolve to absolute path relative to the workspace, not the
-		// process CWD. SmartIsAbs handles both Windows drive letters and
-		// Unix-style prefixes cross-platform. filepath.ToSlash normalizes
-		// mixed slash directions before joining, preventing filepath.Join
-		// from treating backslashes as literal characters. filepath.Clean
-		// then collapses any ".." traversal before the bounds check,
-		// preventing evasion through path manipulation.
-		var absPath string
-		if filepathext.SmartIsAbs(path) {
-			absPath = filepath.Clean(path)
-		} else {
-			absPath = filepath.Clean(filepath.Join(absWorkingDir, filepath.ToSlash(path)))
+		// A path embedding a home/temp/system environment variable cannot be
+		// resolved statically (the shell expands it at execution time) and its
+		// targets live outside the workspace, so reject it outright.
+		if referencesOutsideEnvVar(path) {
+			return fmt.Errorf("Security violation: path %s is outside workspace", path)
 		}
 
-		// Check if path is inside workspace
+		if !isEscapablePathToken(path) {
+			continue
+		}
+
+		absPath := resolveTokenBase(path, absWorkingDir, home)
 		if !filepathext.IsInside(absPath, absWorkingDir) {
 			return fmt.Errorf("Security violation: path %s is outside workspace", absPath)
 		}

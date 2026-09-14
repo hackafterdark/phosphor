@@ -99,50 +99,56 @@ func TestValidateCommandPaths_AbsolutePathClean(t *testing.T) {
 	}
 }
 
-// TestValidateCommandPaths_NonIOCommands verifies that commands without
-// I/O keywords (using whole-word matching) skip path validation.
-// "go build ./cmd/petstore/..." should NOT trigger validation because:
-//   - "cmd" was removed from ioCommands (it's a Windows built-in AND a common
-//     Go package directory name)
-//   - Whole-word regex matching prevents substring false positives
+// TestValidateCommandPaths_NonIOCommands verifies that ordinary build/test
+// commands whose operands cannot escape the workspace pass validation without
+// error, and that cd is recognised as a directory-change (not a file access).
 func TestValidateCommandPaths_NonIOCommands(t *testing.T) {
 	t.Parallel()
 
-	cmd := "go build ./cmd/petstore/..."
-	require.False(t, ioCommandRegex.MatchString(cmd),
-		"'go build ./cmd/petstore/...' should not match I/O command regex")
+	workspace := t.TempDir()
 
-	// Verify cd commands are also skipped
+	for _, cmd := range []string{
+		`go build ./cmd/petstore/...`,
+		`go vet ./...`,
+		`go test ./internal/agent -run TestFoo`,
+		`git status`,
+	} {
+		require.NoError(t, validateCommandPaths(cmd, workspace), cmd)
+	}
+
 	require.True(t, isCDCommand("cd F:/some/path"),
 		"'cd' should be detected as a cd command")
-	require.True(t, isCDCommand("cd .."), true)
+	require.True(t, isCDCommand("cd .."))
 	require.False(t, isCDCommand("go build ./cmd/..."),
 		"'go build' should not be detected as cd")
 }
 
-// TestValidateCommandPaths_IOCommandWholeWord verifies that the I/O command
-// regex uses whole-word matching to avoid false positives.
-func TestValidateCommandPaths_IOCommandWholeWord(t *testing.T) {
+// TestIsEscapablePathToken pins the token classifier that decides which
+// tokens are worth resolving against the workspace bounds. Only tokens that
+// could actually address an outside location (traversal, absolute, UNC or a
+// leading "~") are escapable; ordinary words, in-tree relative operands and
+// import paths are not.
+func TestIsEscapablePathToken(t *testing.T) {
 	t.Parallel()
 
-	cases := []struct {
-		name      string
-		command   string
-		wantMatch bool
-	}{
-		{"cat file.txt", "cat file.txt", true},
-		{"grep pattern file", "grep pattern file", true},
-		{"go build ./cmd/petstore", "go build ./cmd/petstore", false},
-		{"make && cat file", "make && cat file", true},
-		{"echo | grep pattern", "echo | grep pattern", true},
+	cases := map[string]bool{
+		"file.txt":                     false,
+		"cmd/petstore":                 false,
+		"github.com/x/y":               false,
+		"./cmd/petstore/...":           false,
+		"s/a/b":                        false,
+		"../../etc/passwd":             true,
+		"/etc/passwd":                  true,
+		`~/secret/id`:                  true,
+		`\\host\share\x`:               true,
+		"//host/share/x":               true,
+		`.\\..\\..\\Windows\\System32`: true,
 	}
 
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
+	for tok, want := range cases {
+		t.Run(tok, func(t *testing.T) {
 			t.Parallel()
-			require.Equal(t, tc.wantMatch, ioCommandRegex.MatchString(tc.command),
-				"command %q match=%v, want=%v", tc.command,
-				ioCommandRegex.MatchString(tc.command), tc.wantMatch)
+			require.Equal(t, want, isEscapablePathToken(tok), "token %q", tok)
 		})
 	}
 }
@@ -247,6 +253,171 @@ func TestCorrectCommandPaths(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			got := CorrectCommandPaths(tc.command, workspace)
 			require.Equal(t, tc.want, got)
+		})
+	}
+}
+
+// TestCorrectCommandPaths_PreservesURLsDomainsAndRelative is a regression
+// suite for the old regex-based pass, which corrupted any token containing a
+// slash by stripping its leading segment and rewriting the remainder against
+// the workspace. That broke remote URLs (https://… turned into a bogus "s:…"
+// drive path), Go import paths (github.com/x/y), relative operands (./…) and
+// quoted JSON. These inputs must now pass through byte-for-byte unchanged.
+func TestCorrectCommandPaths_PreservesURLsDomainsAndRelative(t *testing.T) {
+	t.Parallel()
+
+	workspace := t.TempDir()
+
+	unchanged := []string{
+		`go build ./cmd/petstore/...`,
+		`go get github.com/x/y`,
+		`go test ./internal/agent -run TestFoo`,
+		`cd probe; go run .`,
+		`git clone github.com/o/r.git dest/`,
+		`echo "hello world" > out.txt`,
+		`cat cmd/petstore/main.go`,
+		`gh api "https://api.github.com/repos/hackafterdark/phosphor/code-scanning/alerts?state=open&per_page=100" --jq '.[]' 2>&1 | head -c 6000`,
+	}
+
+	for _, cmd := range unchanged {
+		t.Run(cmd, func(t *testing.T) {
+			t.Parallel()
+			got := CorrectCommandPaths(cmd, workspace)
+			require.Equal(t, cmd, got, "command must not be rewritten")
+		})
+	}
+}
+
+// TestValidateCommandPaths_BlocksEscapesRegardlessOfIOKeyword verifies that
+// workspace-escaping paths are caught even when the command does not contain a
+// recognised I/O keyword, closing the bypass where cp/tee/dd/redirections and
+// UNC/drive/file-URL smuggety skipped validation entirely.
+func TestValidateCommandPaths_BlocksEscapesRegardlessOfIOKeyword(t *testing.T) {
+	t.Parallel()
+
+	workspace := t.TempDir()
+
+	blocked := []string{
+		`cat ../../etc/passwd`,
+		`cat /etc/passwd`,
+		`echo x > ../../etc/cron`,
+		`cp secret.txt ../../etc/x`,
+		`echo pwned | tee ../../etc/y`,
+		`cp a.txt ../../root/.ssh/id_ed25519`,
+		`cat //169.254.255.205/c$/win.ini`,
+		`cat "\\server\share\secret.txt"`,
+		`cat junk:/../../../etc/passwd`,
+		`cat file://../../../etc/passwd`,
+		`sed -i s/a/b/ /etc/passwd`,
+		`tar -czf ../../etc/x.tar.gz .`,
+	}
+	for _, cmd := range blocked {
+		t.Run("block:"+cmd, func(t *testing.T) {
+			t.Parallel()
+			err := validateCommandPaths(cmd, workspace)
+			require.Error(t, err, "expected escape to be blocked")
+			require.Contains(t, err.Error(), "outside workspace")
+		})
+	}
+
+	allowed := []string{
+		`go build ./cmd/petstore/...`,
+		`go test ./internal/agent -run TestFoo`,
+		`go get github.com/x/y`,
+		`git clone github.com/o/r.git dest/`,
+		`cat cmd/petstore/main.go`,
+		`echo hi > notes/out.txt`,
+		`gh api repos/hackafterdark/phosphor/code-scanning/alerts --jq '.[]' 2>&1`,
+		`gh api "https://api.github.com/repos/x/y?per_page=100" 2>&1 | head -c 6000`,
+	}
+	for _, cmd := range allowed {
+		t.Run("allow:"+cmd, func(t *testing.T) {
+			t.Parallel()
+			require.NoError(t, validateCommandPaths(cmd, workspace))
+		})
+	}
+}
+
+// TestIsRemoteURL pins the classifier that separates genuine remote URLs from
+// lookalikes. A scheme is only trusted when it is in the allowlist and the
+// token carries no ".." traversal, so file:// and traversal-bearing URLs are
+// returned as false and remain subject to path validation.
+func TestIsRemoteURL(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]bool{
+		`https://api.github.com/repos/x/y`: true,
+		`http://example.com/a/b`:           true,
+		`git://host/repo.git`:              true,
+		`https://x/../../etc/passwd`:       false, // traversal disqualifies
+		`file:///etc/passwd`:               false, // file:// never trusted
+		`s3://bucket/key`:                  false, // not in allowlist
+		`github.com/x/y`:                   false, // import path, no scheme
+		`repos/x/y`:                        false, // API path without leading slash
+		`//host/share/x`:                   false, // UNC is not a URL
+	}
+	for tok, want := range cases {
+		t.Run(tok, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, want, isRemoteURL(tok))
+		})
+	}
+}
+
+// TestValidateCommandPaths_BlocksTilde verifies that home-expansion paths are
+// rejected: the shell expands "~" at execution time to the user profile, which
+// lives outside the workspace, so the static checker must not trust it.
+func TestValidateCommandPaths_BlocksTilde(t *testing.T) {
+	t.Parallel()
+
+	workspace := t.TempDir()
+
+	for _, cmd := range []string{
+		`cat ~/secret.txt`,
+		`cat ~/.ssh/id_ed25519`,
+		`echo hi > ~/.bashrc`,
+	} {
+		t.Run(cmd, func(t *testing.T) {
+			t.Parallel()
+			require.Error(t, validateCommandPaths(cmd, workspace), cmd)
+		})
+	}
+
+	require.NoError(t, validateCommandPaths(`cat ./notes.txt`, workspace))
+}
+
+// TestValidateCommandPaths_BlocksEnvVarPaths verifies that a path embedding a
+// home/temp/system environment variable is rejected (its value is unknown
+// until execution and points outside the workspace), while unrelated variables
+// and non-path uses are allowed.
+func TestValidateCommandPaths_BlocksEnvVarPaths(t *testing.T) {
+	t.Parallel()
+
+	workspace := t.TempDir()
+
+	blocked := []string{
+		`cat $HOME/.ssh/id_ed25519`,
+		`cat ${HOME}/secrets`,
+		`echo x > %USERPROFILE%\out.txt`,
+		`tee $TMPDIR/leak`,
+		`cp a.txt $APPDATA\..\x`,
+	}
+	for _, cmd := range blocked {
+		t.Run(cmd, func(t *testing.T) {
+			t.Parallel()
+			require.Error(t, validateCommandPaths(cmd, workspace), cmd)
+		})
+	}
+
+	allowed := []string{
+		`echo $BUILD_TAG`,          // no path separator, not a path
+		`cat $CUSTOM_DIR/file.txt`, // unknown variable, not an outside target
+		`go build -ldflags -X main.v=$VER`,
+	}
+	for _, cmd := range allowed {
+		t.Run(cmd, func(t *testing.T) {
+			t.Parallel()
+			require.NoError(t, validateCommandPaths(cmd, workspace), cmd)
 		})
 	}
 }
