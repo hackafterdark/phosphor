@@ -241,7 +241,7 @@ func (dl *directoryLister) shouldIgnore(path string, ignorePatterns []string, is
 	}
 
 	// Don't apply gitignore rules to the root directory itself.
-	if path == dl.rootPath {
+	if samePath(path, dl.rootPath) {
 		return false
 	}
 
@@ -294,7 +294,7 @@ func ListDirectory(initialPath string, ignorePatterns []string, depth, limit int
 			return nil
 		}
 
-		if path != initialPath {
+		if !samePath(path, initialPath) {
 			if isDir {
 				path = path + string(filepath.Separator)
 			}
@@ -313,4 +313,8 @@ func ListDirectory(initialPath string, ignorePatterns []string, depth, limit int
 
 	matches, truncated := truncate(slices.Collect(found.Seq()), limit)
 	return matches, truncated || errors.Is(err, filepath.SkipAll), nil
+}
+
+func samePath(a, b string) bool {
+	return filepath.ToSlash(filepath.Clean(a)) == filepath.ToSlash(filepath.Clean(b))
 }
