@@ -1,0 +1,88 @@
+name: "test"
+
+# CI test suite: runs the full Go test suite on every push to main and every
+# pull request (plus manual dispatch). Mirrors the build.yml platform matrix so
+# the suite — notably the workspace pathguard / confinement tests — is exercised
+# on Linux, macOS and Windows, not just one host. Publishes nothing.
+#
+# CGO is enabled per platform (matching build.yml) so the tree-sitter
+# structural_search backend compiles; linux/arm64 builds pure-Go (CGO_ENABLED=0)
+# and its structural-search-dependent tests fall back to the grep path.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref_name }}
+  cancel-in-progress: true
+
+env:
+  # Match the local toolchain expectations from the Taskfile (see AGENTS.md).
+  # CGO_ENABLED is set per matrix entry below.
+  GOEXPERIMENT: greenteagc
+  GOTOOLCHAIN: auto
+
+jobs:
+  test:
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            goos: linux
+            goarch: amd64
+            cc: gcc
+            cgo: "1"
+          - runner: ubuntu-latest
+            goos: linux
+            goarch: arm64
+            cc: ""
+            cgo: "0"
+          - runner: macos-latest
+            goos: darwin
+            goarch: arm64
+            cc: cc
+            cgo: "1"
+          - runner: windows-latest
+            goos: windows
+            goarch: amd64
+            cc: C:/Tools/mingw64/bin/gcc.exe
+            cgo: "1"
+    env:
+      GOOS: ${{ matrix.goos }}
+      GOARCH: ${{ matrix.goarch }}
+      CGO_ENABLED: ${{ matrix.cgo }}
+      CGO_CC: ${{ matrix.cc }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: stable
+          cache: true
+
+      # Windows runners ship no C compiler; cgo (tree-sitter) needs one. The
+      # Chocolatey mingw package installs to C:/Tools/mingw64, which the CGO_CC
+      # matrix value above points at.
+      - name: Install MinGW (Windows cgo toolchain)
+        if: matrix.goos == 'windows'
+        run: choco install mingw --no-progress -y
+
+      # CGO_CC is only meaningful when cgo is on; clear it otherwise so the pure
+      # Go linux/arm64 build does not try to invoke a nonexistent compiler.
+      - name: Run tests
+        run: |
+          if [ "${CGO_ENABLED}" != "1" ]; then
+            unset CGO_CC
+          fi
+          go test -count=1 -timeout=30m ./...
+        shell: bash
