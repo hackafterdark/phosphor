@@ -49,8 +49,15 @@ func TestPathObfuscation_ComplexTraversal(t *testing.T) {
 			// Some of these may resolve to in-workspace paths (like ./etc/passwd)
 			// which is acceptable. We only assert that obviously malicious ones
 			// are blocked.
-			if tt.path == "./../etc/passwd" || tt.path == "../../../etc/passwd" ||
-				tt.path == "..\\..\\etc\\passwd" {
+			mustBlock := tt.path == "./../etc/passwd" || tt.path == "../../../etc/passwd"
+			// The backslash-traversal form only escapes on platforms where the
+			// backslash is a path separator; on POSIX it is a literal file name
+			// that correctly resolves inside the workspace, so only assert a
+			// block where it is genuinely a traversal.
+			if tt.path == "..\\..\\etc\\passwd" && runtime.GOOS == "windows" {
+				mustBlock = true
+			}
+			if mustBlock {
 				require.True(t, resp.IsError, "write with complex traversal %q should be blocked", tt.name)
 				require.Contains(t, resp.Content, "Security violation",
 					"write with complex traversal %q should return security error, got: %s", tt.name, resp.Content)
@@ -165,9 +172,20 @@ func TestPathObfuscation_AbsolutePathVariants(t *testing.T) {
 				Input: string(input),
 			})
 			require.NoError(t, err)
-			require.True(t, resp.IsError, "write with absolute path %q should be blocked", tt.name)
-			require.Contains(t, resp.Content, "Security violation",
-				"write with absolute path %q should return security error, got: %s", tt.name, resp.Content)
+			// A drive-lettered Windows path is only an escape on Windows; on
+			// POSIX it is a literal file name that correctly resolves inside
+			// the workspace, so only expect a block on the platform where it is
+			// genuinely absolute-outside. The POSIX-absolute cases are always
+			// outside and must always be blocked.
+			mustBlock := true
+			if tt.name == "Windows absolute" {
+				mustBlock = runtime.GOOS == "windows"
+			}
+			require.Equal(t, mustBlock, resp.IsError, "write with absolute path %q blocked mismatch, got: %s", tt.name, resp.Content)
+			if mustBlock {
+				require.Contains(t, resp.Content, "Security violation",
+					"write with absolute path %q should return security error, got: %s", tt.name, resp.Content)
+			}
 		})
 	}
 }

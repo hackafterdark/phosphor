@@ -1,7 +1,6 @@
 package shell
 
 import (
-	"runtime"
 	"strings"
 	"testing"
 
@@ -130,10 +129,6 @@ func TestEnvironmentHardening_SelfExecBlocker(t *testing.T) {
 func TestEnvironmentHardening_SandboxMarkersPresent(t *testing.T) {
 	t.Parallel()
 
-	if runtime.GOOS == "windows" {
-		t.Skip("bash not available on Windows; skip sandbox marker test")
-	}
-
 	tmpDir := t.TempDir()
 
 	shell := NewShell(&Options{
@@ -145,7 +140,7 @@ func TestEnvironmentHardening_SandboxMarkersPresent(t *testing.T) {
 		t.Run(marker, func(t *testing.T) {
 			t.Parallel()
 			varName, _, _ := strings.Cut(marker, "=")
-			_, out, err := shell.Exec(t.Context(), "bash -c 'echo $"+varName+"'")
+			out, _, err := shell.Exec(t.Context(), "echo \"$"+varName+"\"")
 			require.NoError(t, err, "command to read %s should succeed", marker)
 			require.Equal(t, strings.TrimPrefix(marker, varName+"="), strings.TrimSpace(out),
 				"sandbox marker %s should be present in shell environment", marker)
@@ -159,10 +154,6 @@ func TestEnvironmentHardening_SandboxMarkersPresent(t *testing.T) {
 func TestEnvironmentHardening_SandboxMarkersWithExplicitEnv(t *testing.T) {
 	t.Parallel()
 
-	if runtime.GOOS == "windows" {
-		t.Skip("bash not available on Windows; skip sandbox marker test")
-	}
-
 	tmpDir := t.TempDir()
 
 	shell := NewShell(&Options{
@@ -175,7 +166,7 @@ func TestEnvironmentHardening_SandboxMarkersWithExplicitEnv(t *testing.T) {
 		t.Run(marker, func(t *testing.T) {
 			t.Parallel()
 			varName, _, _ := strings.Cut(marker, "=")
-			_, out, err := shell.Exec(t.Context(), "bash -c 'echo $"+varName+"'")
+			out, _, err := shell.Exec(t.Context(), "echo \"$"+varName+"\"")
 			require.NoError(t, err, "command to read %s should succeed", marker)
 			require.Equal(t, strings.TrimPrefix(marker, varName+"="), strings.TrimSpace(out),
 				"sandbox marker %s should be present even with explicit Env", marker)
@@ -188,10 +179,6 @@ func TestEnvironmentHardening_SandboxMarkersWithExplicitEnv(t *testing.T) {
 func TestEnvironmentHardening_FilterEnvWithAllowedEnv(t *testing.T) {
 	t.Parallel()
 
-	if runtime.GOOS == "windows" {
-		t.Skip("env filtering behavior varies on Windows; skip for CI stability")
-	}
-
 	tmpDir := t.TempDir()
 
 	shell := NewShell(&Options{
@@ -200,37 +187,41 @@ func TestEnvironmentHardening_FilterEnvWithAllowedEnv(t *testing.T) {
 	})
 
 	// Secret vars should be invisible.
-	_, out, err := shell.Exec(t.Context(), "bash -c 'echo ${AWS_SECRET_ACCESS_KEY:-empty}'")
+	out, _, err := shell.Exec(t.Context(), `echo "${AWS_SECRET_ACCESS_KEY:-empty}"`)
 	require.NoError(t, err)
 	require.Equal(t, "empty", strings.TrimSpace(out),
 		"AWS_SECRET_ACCESS_KEY should not be visible with filtered env")
 
 	// Allowed vars should be visible.
-	_, out, err = shell.Exec(t.Context(), "bash -c 'echo ${PATH:-empty}'")
+	out, _, err = shell.Exec(t.Context(), `echo "${PATH:-empty}"`)
 	require.NoError(t, err)
 	require.NotEqual(t, "empty", strings.TrimSpace(out),
 		"PATH should be visible with AllowedEnv=[PATH,HOME]")
 }
 
-// TestEnvironmentHardening_EmptyAllowedEnv_FiltersEverything verifies that
-// an empty allowed_env configuration filters ALL environment variables.
-func TestEnvironmentHardening_EmptyAllowedEnv_FiltersEverything(t *testing.T) {
+// TestEnvironmentHardening_EmptyAllowedEnv_UsesSafeDefaults verifies that an
+// empty allowed_env list falls back to the documented safe-default allowlist:
+// core variables such as PATH stay visible while arbitrary secrets remain
+// filtered out.
+func TestEnvironmentHardening_EmptyAllowedEnv_UsesSafeDefaults(t *testing.T) {
 	t.Parallel()
-
-	if runtime.GOOS == "windows" {
-		t.Skip("env filtering behavior varies on Windows; skip for CI stability")
-	}
 
 	tmpDir := t.TempDir()
 
 	shell := NewShell(&Options{
 		WorkingDir: tmpDir,
-		AllowedEnv: []string{}, // explicitly empty
+		AllowedEnv: []string{}, // empty allowlist → the safe-default allowlist applies
 	})
 
-	// Even PATH should be invisible with an empty allowlist.
-	_, out, err := shell.Exec(t.Context(), "bash -c 'echo ${PATH:-empty}'")
+	// An empty allowlist is documented to fall back to the safe defaults, so
+	// PATH stays visible while variables outside that set remain hidden.
+	out, _, err := shell.Exec(t.Context(), `echo "${PATH:-empty}"`)
+	require.NoError(t, err)
+	require.NotEqual(t, "empty", strings.TrimSpace(out),
+		"PATH should stay visible because an empty allowlist uses the safe defaults")
+
+	out, _, err = shell.Exec(t.Context(), `echo "${AWS_SECRET_ACCESS_KEY:-empty}"`)
 	require.NoError(t, err)
 	require.Equal(t, "empty", strings.TrimSpace(out),
-		"PATH should not be visible with empty allowed_env")
+		"non-allowlisted secret should stay invisible with the default filter")
 }

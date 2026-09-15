@@ -10,8 +10,10 @@ import (
 )
 
 func TestListStatelessSessions(t *testing.T) {
-	t.Parallel()
-
+	// Intentionally sequential: these tests share the process-global db pool and
+	// each cleanup calls db.ResetPool(), which closes every pooled handle. Running
+	// in parallel would let one test's ResetPool close another's live *sql.DB,
+	// surfacing as "sql: database is closed".
 	dataDir := t.TempDir()
 	t.Cleanup(func() {
 		require.NoError(t, db.Release(dataDir))
@@ -56,8 +58,10 @@ func TestListStatelessSessions(t *testing.T) {
 }
 
 func TestCountPrunableMessages(t *testing.T) {
-	t.Parallel()
-
+	// Intentionally sequential: these tests share the process-global db pool and
+	// each cleanup calls db.ResetPool(), which closes every pooled handle. Running
+	// in parallel would let one test's ResetPool close another's live *sql.DB,
+	// surfacing as "sql: database is closed".
 	dataDir := t.TempDir()
 	t.Cleanup(func() {
 		require.NoError(t, db.Release(dataDir))
@@ -124,8 +128,10 @@ func TestCountPrunableMessages(t *testing.T) {
 }
 
 func TestPruneMessages(t *testing.T) {
-	t.Parallel()
-
+	// Intentionally sequential: these tests share the process-global db pool and
+	// each cleanup calls db.ResetPool(), which closes every pooled handle. Running
+	// in parallel would let one test's ResetPool close another's live *sql.DB,
+	// surfacing as "sql: database is closed".
 	dataDir := t.TempDir()
 	t.Cleanup(func() {
 		require.NoError(t, db.Release(dataDir))
@@ -189,8 +195,10 @@ func TestPruneMessages(t *testing.T) {
 }
 
 func TestPruneMessagesNoOpWhenNonePrunable(t *testing.T) {
-	t.Parallel()
-
+	// Intentionally sequential: these tests share the process-global db pool and
+	// each cleanup calls db.ResetPool(), which closes every pooled handle. Running
+	// in parallel would let one test's ResetPool close another's live *sql.DB,
+	// surfacing as "sql: database is closed".
 	dataDir := t.TempDir()
 	t.Cleanup(func() {
 		require.NoError(t, db.Release(dataDir))
@@ -224,8 +232,10 @@ func TestPruneMessagesNoOpWhenNonePrunable(t *testing.T) {
 	require.Equal(t, 0, deleted)
 }
 func TestPinUnpin(t *testing.T) {
-	t.Parallel()
-
+	// Intentionally sequential: these tests share the process-global db pool and
+	// each cleanup calls db.ResetPool(), which closes every pooled handle. Running
+	// in parallel would let one test's ResetPool close another's live *sql.DB,
+	// surfacing as "sql: database is closed".
 	dataDir := t.TempDir()
 	t.Cleanup(func() {
 		require.NoError(t, db.Release(dataDir))
@@ -257,8 +267,10 @@ func TestPinUnpin(t *testing.T) {
 }
 
 func TestBulkDeleteSessions(t *testing.T) {
-	t.Parallel()
-
+	// Intentionally sequential: these tests share the process-global db pool and
+	// each cleanup calls db.ResetPool(), which closes every pooled handle. Running
+	// in parallel would let one test's ResetPool close another's live *sql.DB,
+	// surfacing as "sql: database is closed".
 	dataDir := t.TempDir()
 	t.Cleanup(func() {
 		require.NoError(t, db.Release(dataDir))
@@ -302,8 +314,10 @@ func TestBulkDeleteSessions(t *testing.T) {
 }
 
 func TestBulkDeleteSessions_NoPinned(t *testing.T) {
-	t.Parallel()
-
+	// Intentionally sequential: these tests share the process-global db pool and
+	// each cleanup calls db.ResetPool(), which closes every pooled handle. Running
+	// in parallel would let one test's ResetPool close another's live *sql.DB,
+	// surfacing as "sql: database is closed".
 	dataDir := t.TempDir()
 	t.Cleanup(func() {
 		require.NoError(t, db.Release(dataDir))
@@ -333,8 +347,10 @@ func TestBulkDeleteSessions_NoPinned(t *testing.T) {
 }
 
 func TestPruneDryRun_NoOpWhenNonePrunable(t *testing.T) {
-	t.Parallel()
-
+	// Intentionally sequential: these tests share the process-global db pool and
+	// each cleanup calls db.ResetPool(), which closes every pooled handle. Running
+	// in parallel would let one test's ResetPool close another's live *sql.DB,
+	// surfacing as "sql: database is closed".
 	dataDir := t.TempDir()
 	t.Cleanup(func() {
 		require.NoError(t, db.Release(dataDir))

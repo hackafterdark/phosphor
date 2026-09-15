@@ -246,7 +246,7 @@ func TestWorkspaceHardening_LsToolBlocksOutsidePaths(t *testing.T) {
 		path string
 	}{
 		{"parent directory escape", "../etc"},
-		{"absolute path outside workspace", os.TempDir()},
+		{"absolute path outside workspace", filepath.Join(os.TempDir(), "evil.txt")},
 	}
 
 	for _, tt := range tests {

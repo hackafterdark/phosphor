@@ -23,12 +23,12 @@ func TestJQBuiltinConfinesFileOperands(t *testing.T) {
 	t.Parallel()
 
 	workspace := t.TempDir()
-	outside := filepath.Join(filepath.Dir(filepath.Clean(os.TempDir())), "phosphor-jq-vector.json")
+	outside := filepath.Join(os.TempDir(), "phosphor-jq-vector.json")
 	require.NoError(t, os.WriteFile(outside, []byte(`{"a":1}`), 0o644))
 	inside := filepath.Join(workspace, "data.json")
 	require.NoError(t, os.WriteFile(inside, []byte(`{"a":1}`), 0o644))
 
-	conf := newConfinement(workspace, nil, false)
+	conf := newConfinement(workspace, nil, true)
 
 	err := handleJQ(t.Context(), conf, workspace, []string{"jq", "-r", "-R", ".", outside}, nil, io.Discard, io.Discard)
 	require.Error(t, err)
@@ -55,14 +55,15 @@ func TestPathPrefixedDispatchConfinesScriptPath(t *testing.T) {
 	t.Parallel()
 
 	workspace := t.TempDir()
-	outside := filepath.Join(filepath.Dir(filepath.Clean(os.TempDir())), "phosphor-dispatch-vector.sh")
+	outside := filepath.Join(os.TempDir(), "phosphor-dispatch-vector.sh")
 	require.NoError(t, os.WriteFile(outside, []byte("#!/bin/sh\necho leak\n"), 0o755))
 
 	// "$p" where p was assigned the out-of-workspace path in the same line.
 	err := Run(t.Context(), RunOptions{
-		Command:   "p=" + shellQuote(filepath.ToSlash(outside)) + `; "$p"`,
-		Cwd:       workspace,
-		Workspace: workspace,
+		Command:         "p=" + shellQuote(filepath.ToSlash(outside)) + `; "$p"`,
+		Cwd:             workspace,
+		Workspace:       workspace,
+		DisableTempRoot: true,
 	})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "outside workspace")
@@ -92,10 +93,10 @@ func TestCheckProgramBoundsRedirectOperands(t *testing.T) {
 	t.Parallel()
 
 	workspace := t.TempDir()
-	outside := filepath.Join(filepath.Dir(filepath.Clean(os.TempDir())), "phosphor-ast-vector.txt")
+	outside := filepath.Join(os.TempDir(), "phosphor-ast-vector.txt")
 	require.NoError(t, os.WriteFile(outside, []byte("secret\n"), 0o644))
 
-	conf := newConfinement(workspace, nil, false)
+	conf := newConfinement(workspace, nil, true)
 	env := []string{"OUT=" + filepath.ToSlash(outside), "REL=relative.txt"}
 
 	parse := func(command string) *syntax.File {
@@ -163,14 +164,15 @@ func TestRunConfinesExpandedRedirectOperands(t *testing.T) {
 	t.Parallel()
 
 	workspace := t.TempDir()
-	outside := filepath.Join(filepath.Dir(filepath.Clean(os.TempDir())), "phosphor-run-vector.txt")
+	outside := filepath.Join(os.TempDir(), "phosphor-run-vector.txt")
 	require.NoError(t, os.WriteFile(outside, []byte("secret\n"), 0o644))
 
 	err := Run(t.Context(), RunOptions{
-		Command:   `cat < "$LEAK"`,
-		Cwd:       workspace,
-		Workspace: workspace,
-		Env:       []string{"LEAK=" + filepath.ToSlash(outside)},
+		Command:         `cat < "$LEAK"`,
+		Cwd:             workspace,
+		Workspace:       workspace,
+		Env:             []string{"LEAK=" + filepath.ToSlash(outside)},
+		DisableTempRoot: true,
 	})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "outside workspace")
@@ -179,10 +181,11 @@ func TestRunConfinesExpandedRedirectOperands(t *testing.T) {
 	// env-expanded (argv is just "echo") is refused by the confinement-aware
 	// interp.OpenHandler installed on the runner.
 	err = Run(t.Context(), RunOptions{
-		Command:   "echo hi > \"$LEAK\"",
-		Cwd:       workspace,
-		Workspace: workspace,
-		Env:       []string{"LEAK=" + filepath.ToSlash(outside)},
+		Command:         "echo hi > \"$LEAK\"",
+		Cwd:             workspace,
+		Workspace:       workspace,
+		Env:             []string{"LEAK=" + filepath.ToSlash(outside)},
+		DisableTempRoot: true,
 	})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "outside workspace")
@@ -211,7 +214,7 @@ func TestRunConfinesSourcedScriptBody(t *testing.T) {
 	t.Parallel()
 
 	workspace := t.TempDir()
-	outside := filepath.Join(filepath.Dir(filepath.Clean(os.TempDir())), "phosphor-source-body.txt")
+	outside := filepath.Join(os.TempDir(), "phosphor-source-body.txt")
 	require.NoError(t, os.WriteFile(outside, []byte("secret\n"), 0o644))
 
 	// A sourced script whose body reads outside via an exported env var.
@@ -225,6 +228,7 @@ func TestRunConfinesSourcedScriptBody(t *testing.T) {
 			"SCRIPT=" + filepath.ToSlash(envScript),
 			"LEAK=" + filepath.ToSlash(outside),
 		},
+		DisableTempRoot: true,
 	})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "outside workspace")
@@ -235,10 +239,11 @@ func TestRunConfinesSourcedScriptBody(t *testing.T) {
 	litScript := filepath.Join(workspace, "leak-lit.sh")
 	require.NoError(t, os.WriteFile(litScript, []byte("echo hi; cat < \""+filepath.ToSlash(outside)+"\"\n"), 0o644))
 	err = Run(t.Context(), RunOptions{
-		Command:   `. "$SCRIPT"`,
-		Cwd:       workspace,
-		Workspace: workspace,
-		Env:       []string{"SCRIPT=" + filepath.ToSlash(litScript)},
+		Command:         `. "$SCRIPT"`,
+		Cwd:             workspace,
+		Workspace:       workspace,
+		Env:             []string{"SCRIPT=" + filepath.ToSlash(litScript)},
+		DisableTempRoot: true,
 	})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "outside workspace")
@@ -265,7 +270,7 @@ func TestExecConfinesExpandedRedirectOperands(t *testing.T) {
 	t.Parallel()
 
 	workspace := t.TempDir()
-	outside := filepath.Join(filepath.Dir(filepath.Clean(os.TempDir())), "phosphor-exec-vector.txt")
+	outside := filepath.Join(os.TempDir(), "phosphor-exec-vector.txt")
 	require.NoError(t, os.WriteFile(outside, []byte("secret\n"), 0o644))
 
 	env := []string{
@@ -276,10 +281,11 @@ func TestExecConfinesExpandedRedirectOperands(t *testing.T) {
 
 	newConfined := func(leak string) *Shell {
 		return NewShell(&Options{
-			WorkingDir: workspace,
-			Workspace:  workspace,
-			Logger:     noopLogger{},
-			Env:        append([]string{"LEAK=" + filepath.ToSlash(leak)}, env...),
+			WorkingDir:      workspace,
+			Workspace:       workspace,
+			Logger:          noopLogger{},
+			Env:             append([]string{"LEAK=" + filepath.ToSlash(leak)}, env...),
+			DisableTempRoot: true,
 		})
 	}
 

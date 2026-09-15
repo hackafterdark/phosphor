@@ -172,11 +172,40 @@ func TestSessionWithCustomDB(t *testing.T) {
 	wsDir := filepath.Join(tmpDir, "workspace")
 	require.NoError(t, os.MkdirAll(wsDir, 0o755))
 
-	// Setup a basic phosphor.json configuration file in the workspace
+	// Setup a basic phosphor.json configuration file in the workspace. A custom
+	// (dummy) provider is declared so the configuration validates identically on
+	// a clean CI runner and a developer host: with disable_default_providers the
+	// loader errors when no provider survives, and the mock-provider test flag
+	// does not satisfy that particular check.
 	phosphorJson := `{
 		"options": {
 			"data_directory": ".phosphor",
 			"disable_default_providers": true
+		},
+		"providers": {
+			"mock": {
+				"type": "openai",
+				"base_url": "http://127.0.0.1:1",
+				"api_key": "mock-key",
+				"models": [
+					{
+						"id": "mock-model",
+						"name": "Mock Model",
+						"context_window": 8192,
+						"default_max_tokens": 1024
+					}
+				]
+			}
+		},
+		"models": {
+			"large": {
+				"provider": "mock",
+				"model": "mock-model"
+			},
+			"small": {
+				"provider": "mock",
+				"model": "mock-model"
+			}
 		}
 	}`
 	require.NoError(t, os.WriteFile(filepath.Join(wsDir, "phosphor.json"), []byte(phosphorJson), 0o644))
@@ -265,11 +294,40 @@ func TestSessionWithCustomDBName(t *testing.T) {
 	wsDir := filepath.Join(tmpDir, "workspace")
 	require.NoError(t, os.MkdirAll(wsDir, 0o755))
 
-	// Setup a basic phosphor.json configuration file in the workspace
+	// Setup a basic phosphor.json configuration file in the workspace. A custom
+	// (dummy) provider is declared so the configuration validates identically on
+	// a clean CI runner and a developer host: with disable_default_providers the
+	// loader errors when no provider survives, and the mock-provider test flag
+	// does not satisfy that particular check.
 	phosphorJson := `{
 		"options": {
 			"data_directory": ".phosphor",
 			"disable_default_providers": true
+		},
+		"providers": {
+			"mock": {
+				"type": "openai",
+				"base_url": "http://127.0.0.1:1",
+				"api_key": "mock-key",
+				"models": [
+					{
+						"id": "mock-model",
+						"name": "Mock Model",
+						"context_window": 8192,
+						"default_max_tokens": 1024
+					}
+				]
+			}
+		},
+		"models": {
+			"large": {
+				"provider": "mock",
+				"model": "mock-model"
+			},
+			"small": {
+				"provider": "mock",
+				"model": "mock-model"
+			}
 		}
 	}`
 	require.NoError(t, os.WriteFile(filepath.Join(wsDir, "phosphor.json"), []byte(phosphorJson), 0o644))
