@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -1250,6 +1252,19 @@ func TestHandlePermissionRequest_WithParams(t *testing.T) {
 func TestBuildToolCallTitle(t *testing.T) {
 	t.Parallel()
 
+	// Derive an OS-appropriate absolute workspace root so the absolute-path
+	// fixtures are genuinely absolute on the host. On Windows filepath.IsAbs
+	// only recognises drive-rooted paths; a hardcoded "f:/..." reads as a
+	// relative token on Linux and short-circuits the relative-path logic.
+	root := "/wsroot"
+	if runtime.GOOS == "windows" {
+		root = `C:\wsroot`
+	}
+	wsPath := filepath.Join(root, "workspace", "project")
+	insideAbs := filepath.ToSlash(filepath.Join(wsPath, "docs", "ACP.md"))
+	outsideAbs := filepath.ToSlash(filepath.Join(root, "Windows", "System32", "cmd.exe"))
+	mainAbs := filepath.ToSlash(filepath.Join(wsPath, "main.go"))
+
 	tests := []struct {
 		name          string
 		toolName      string
@@ -1272,22 +1287,22 @@ func TestBuildToolCallTitle(t *testing.T) {
 		{
 			name:          "absolute path under workspace",
 			toolName:      "view",
-			inputJson:     `{"AbsolutePath": "f:/hackafterdark/phosphor/docs/ACP.md"}`,
-			workspacePath: "f:/hackafterdark/phosphor",
+			inputJson:     `{"AbsolutePath": "` + insideAbs + `"}`,
+			workspacePath: wsPath,
 			expected:      "View file docs/ACP.md",
 		},
 		{
 			name:          "absolute path outside workspace",
 			toolName:      "view",
-			inputJson:     `{"AbsolutePath": "c:/windows/system32/cmd.exe"}`,
-			workspacePath: "f:/hackafterdark/phosphor",
+			inputJson:     `{"AbsolutePath": "` + outsideAbs + `"}`,
+			workspacePath: wsPath,
 			expected:      "View file cmd.exe",
 		},
 		{
 			name:          "target file parameter",
 			toolName:      "write",
-			inputJson:     `{"TargetFile": "f:/hackafterdark/phosphor/main.go"}`,
-			workspacePath: "f:/hackafterdark/phosphor",
+			inputJson:     `{"TargetFile": "` + mainAbs + `"}`,
+			workspacePath: wsPath,
 			expected:      "Write file main.go",
 		},
 		{
@@ -1306,7 +1321,7 @@ func TestBuildToolCallTitle(t *testing.T) {
 			name:          "file_path parameter relative",
 			toolName:      "view",
 			inputJson:     `{"file_path": "internal/platform/acp/service.go"}`,
-			workspacePath: "f:/hackafterdark/phosphor",
+			workspacePath: wsPath,
 			expected:      "View file internal/platform/acp/service.go",
 		},
 		{

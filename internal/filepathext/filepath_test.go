@@ -92,9 +92,10 @@ func TestHeuristicClean(t *testing.T) {
 	}
 
 	tests := []struct {
-		name   string
-		target string
-		want   string
+		name        string
+		target      string
+		want        string
+		windowsOnly bool
 	}{
 		{
 			name:   "pure relative path",
@@ -107,19 +108,22 @@ func TestHeuristicClean(t *testing.T) {
 			want:   filepath.Join(base, "internal/app/app.go"),
 		},
 		{
-			name:   "unix-style Windows drive path",
-			target: "/c/internal/app/app.go",
-			want:   filepath.Join(base, "internal/app/app.go"),
+			name:        "unix-style Windows drive path",
+			target:      "/c/internal/app/app.go",
+			want:        filepath.Join(base, "internal/app/app.go"),
+			windowsOnly: true,
 		},
 		{
-			name:   "absolute drive path on Windows",
-			target: "C:/workspace/project/internal/app/app.go",
-			want:   filepath.Join(base, "internal/app/app.go"),
+			name:        "absolute drive path on Windows",
+			target:      "C:/workspace/project/internal/app/app.go",
+			want:        filepath.Join(base, "internal/app/app.go"),
+			windowsOnly: true,
 		},
 		{
-			name:   "absolute drive path with backslashes on Windows",
-			target: "C:\\workspace\\project\\internal\\app\\app.go",
-			want:   filepath.Join(base, "internal/app/app.go"),
+			name:        "absolute drive path with backslashes on Windows",
+			target:      "C:\\workspace\\project\\internal\\app\\app.go",
+			want:        filepath.Join(base, "internal/app/app.go"),
+			windowsOnly: true,
 		},
 		{
 			name:   "absolute drive path not in workspace gets corrected",
@@ -136,6 +140,9 @@ func TestHeuristicClean(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
+			if tc.windowsOnly && runtime.GOOS != "windows" {
+				t.Skip("drive-letter normalization is Windows-only")
+			}
 			got := HeuristicClean(base, tc.target)
 			wantCleaned := filepath.Clean(tc.want)
 			gotCleaned := filepath.Clean(got)

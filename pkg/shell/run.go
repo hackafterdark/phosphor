@@ -330,7 +330,7 @@ func withNonInteractiveEnv(env []string) []string {
 //  5. optional Go coreutils (only when useGoCoreUtils is on).
 func standardHandlers(blockFuncs []BlockFunc, conf *pathguard.Confinement) []func(next interp.ExecHandlerFunc) interp.ExecHandlerFunc {
 	handlers := []func(next interp.ExecHandlerFunc) interp.ExecHandlerFunc{
-		pathConfinementHandler(conf),
+		pathConfinementHandler(conf, blockFuncs),
 		builtinHandler(conf),
 		scriptDispatchHandler(blockFuncs, conf),
 		blockHandler(blockFuncs),

@@ -311,6 +311,23 @@ description: >
   filtering in trace dashboards.
 ```
 
+### `tools.bash.trusted_extra_roots`
+
+```yaml
+type: []string
+default: null (workspace only, plus the OS temporary directory)
+description: >
+  Additional absolute directories that the bash tool's post-expansion path
+  confinement may access alongside the workspace. The OS temporary directory is
+  trusted by default because many ordinary development tools stage files there.
+  Home-directory and filesystem-root arguments remain rejected.
+
+  On shared or multi-tenant hosts, temporary directories may contain files
+  written by other users or processes. Trusted temp roots permit reads and
+  writes inside the OS temp directory; treat that as an explicit trust
+  boundary on such hosts and add only the extra roots your workflow requires.
+```
+
 ### Observability: Inline Execution Tracing
 
 When `allow_inline_execution` is enabled, the bash tool-call otel span records:

@@ -22,10 +22,19 @@ import (
 //
 // A nil confinement or one without a workspace root disables the check, which
 // is how the trusted hook runner keeps running user-authored commands.
-func pathConfinementHandler(conf *pathguard.Confinement) func(next interp.ExecHandlerFunc) interp.ExecHandlerFunc {
+//
+// A command whose argv matches any of the provided blockFuncs is passed
+// through unchecked so that the downstream blockHandler rejects it with the
+// authoritative "not allowed for security reasons" verdict. The deny list is
+// the stronger policy (the program may not run at all regardless of its
+// operands), so it must win over the path-bounds verdict when both apply —
+// otherwise a deny-listed command that merely happens to carry an
+// out-of-workspace operand (e.g. `sudo rm -rf /`) would surface a misleading
+// path error instead of the ban.
+func pathConfinementHandler(conf *pathguard.Confinement, blockFuncs []BlockFunc) func(next interp.ExecHandlerFunc) interp.ExecHandlerFunc {
 	return func(next interp.ExecHandlerFunc) interp.ExecHandlerFunc {
 		return func(ctx context.Context, args []string) error {
-			if conf != nil && conf.WorkspaceRoot != "" && len(args) > 1 {
+			if conf != nil && conf.WorkspaceRoot != "" && len(args) > 1 && !isBlocked(args, blockFuncs) {
 				dir := interp.HandlerCtx(ctx).Dir
 				if err := conf.Blocked(args, dir); err != nil {
 					slog.InfoContext(ctx, "Command blocked by workspace path confinement",
@@ -40,4 +49,16 @@ func pathConfinementHandler(conf *pathguard.Confinement) func(next interp.ExecHa
 			return next(ctx, args)
 		}
 	}
+}
+
+// isBlocked reports whether any blockFunc rejects the given argv. It mirrors
+// the decision blockHandler makes so pathConfinementHandler can defer to the
+// deny list rather than pre-empting it with a path-bounds verdict.
+func isBlocked(args []string, blockFuncs []BlockFunc) bool {
+	for _, blockFunc := range blockFuncs {
+		if blockFunc(args) {
+			return true
+		}
+	}
+	return false
 }

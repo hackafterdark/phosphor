@@ -88,8 +88,16 @@ func TestEnvironmentHardening_ArgumentsBlocker(t *testing.T) {
 		WorkingDir: tmpDir,
 		BlockFuncs: funcs,
 	})
+	// The allowed variant must simply not be refused by the security policy.
+	// Asserting absence of the block verdict (rather than a clean exit) keeps
+	// this host-independent: where `npm` is installed the real installer may
+	// exit non-zero for its own reasons, which is orthogonal to whether the
+	// ArgumentsBlocker over-matched a `npm install` invocation lacking `-g`.
 	_, _, err := shell2.Exec(t.Context(), "npm install foo")
-	require.NoError(t, err, "npm install without -g should not be blocked")
+	if err != nil {
+		require.NotContains(t, err.Error(), "not allowed for security reasons",
+			"npm install without -g should not be blocked by the security policy")
+	}
 }
 
 // TestEnvironmentHardening_SelfExecBlocker verifies that the self-execution

@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/hackafterdark/phosphor/internal/filepathext"
@@ -60,6 +61,9 @@ func TestCommandEscapesWorkspace_RelativePathResolution(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
+			if runtime.GOOS != "windows" && strings.Contains(tc.path, "\\") {
+				t.Skip("backslash path semantics are Windows-only")
+			}
 			// Normalize to forward slashes before joining (the fix)
 			normalized := filepath.ToSlash(tc.path)
 			joined := filepath.Clean(filepath.Join(workspace, normalized))
@@ -148,6 +152,9 @@ func TestIsEscapablePathToken(t *testing.T) {
 	for tok, want := range cases {
 		t.Run(tok, func(t *testing.T) {
 			t.Parallel()
+			if runtime.GOOS != "windows" && strings.Contains(tok, "\\") {
+				t.Skip("backslash path semantics are Windows-only")
+			}
 			require.Equal(t, want, isEscapablePathToken(tok), "token %q", tok)
 		})
 	}
@@ -197,6 +204,10 @@ func TestCommandEscapesWorkspace_PathTraversalBlocked(t *testing.T) {
 	}
 
 	for _, path := range traversalAttempts {
+		if runtime.GOOS != "windows" && strings.Contains(path, "\\") {
+			continue
+		}
+
 		normalized := filepath.ToSlash(path)
 		joined := filepath.Clean(filepath.Join(workspace, normalized))
 		require.False(t, filepathext.IsInside(joined, workspace),
@@ -251,6 +262,9 @@ func TestCorrectCommandPaths(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			if runtime.GOOS != "windows" && strings.Contains(tc.command, "/c/") {
+				t.Skip("unix-style Windows drive paths are Windows-only")
+			}
 			got := CorrectCommandPaths(tc.command, workspace)
 			require.Equal(t, tc.want, got)
 		})
@@ -314,6 +328,9 @@ func TestCommandEscapesWorkspace_BlocksEscapesRegardlessOfIOKeyword(t *testing.T
 	for _, cmd := range blocked {
 		t.Run("block:"+cmd, func(t *testing.T) {
 			t.Parallel()
+			if runtime.GOOS != "windows" && strings.Contains(cmd, "\\") {
+				t.Skip("backslash path semantics are Windows-only")
+			}
 			err := ValidateCommandPaths(cmd, workspace)
 			require.Error(t, err, "expected escape to be blocked")
 			require.Contains(t, err.Error(), "outside workspace")

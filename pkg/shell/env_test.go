@@ -346,7 +346,11 @@ func TestNewShell_FiltersEnvByDefault(t *testing.T) {
 }
 
 func TestNewShell_UsesAllowedEnvWhenProvided(t *testing.T) {
-	t.Parallel()
+	// filterEnv surfaces an allowlisted variable only when it is present in
+	// the process environment, so seed it here rather than depend on the host
+	// happening to export OLLAMA_MODELS. t.Setenv must run before any parallel
+	// split, which is why this single test does not call t.Parallel.
+	t.Setenv("OLLAMA_MODELS", "glm-5.1,mistral")
 
 	s := NewShell(&Options{
 		WorkingDir: t.TempDir(),
