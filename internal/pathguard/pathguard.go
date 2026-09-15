@@ -22,6 +22,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 
 	"github.com/hackafterdark/phosphor/internal/filepathext"
@@ -290,6 +291,21 @@ func isCDCommand(command string) bool {
 // keyword list (cp, mv, tee, dd, shell redirection targets, …) skipped
 // validation entirely. Tokens that cannot escape — remote URLs, import paths,
 // package names and in-tree relative operands — are ignored.
+//
+// The pass is expansion-aware. A token such as "$dir/etc/passwd" or the result
+// of an inline assignment like "dir=/etc; cat $dir/passwd" only becomes an
+// absolute, out-of-workspace path once $dir is substituted, which the
+// pre-expansion classifier alone cannot see and which the dynamic, argv-only
+// Confinement.Blocked cannot reach for shell redirection operands (the
+// interpreter opens "<"/">" files without ever routing the path through the exec
+// handler) or for library-native builtins such as "source"/".". We therefore
+// substitute inline assignments and, for tokens that already look like paths,
+// the process environment, before deciding. This is intentionally narrow: unset
+// names are left literal so we never fabricate a leading separator, and
+// temporary-directory names are left literal so trusted staging stays usable.
+// Command substitutions $(…) and backticks are deliberately NOT expanded here
+// (running them would duplicate side effects); they remain the documented
+// residual and are handled by the post-expansion walk discussed in the design.
 func ValidateCommandPaths(command string, absWorkingDir string) error {
 	// Skip cd commands entirely — they change directory, not access files.
 	// The shell's workspace boundary enforcement already prevents cd from
@@ -303,30 +319,147 @@ func ValidateCommandPaths(command string, absWorkingDir string) error {
 		home = h
 	}
 
+	env, caseInsensitive := buildEnvLookup()
+	assign := collectAssignments(command, env, caseInsensitive)
+
+	// ValidateCommandPaths bounds ordinary path tokens to the workspace only,
+	// matching the historical policy. Temporary-directory access is granted via
+	// the trusted temp-variable handling in referencesOutsideEnvVar and the
+	// temp-var-literal rule in expandVarsForValidation, not by widening the
+	// filesystem root set (the OS temp directory is large and a workspace is
+	// commonly nested inside it, so trusting it as a root would weaken
+	// traversal detection).
+	trusted := []string{filepath.Clean(absWorkingDir)}
+
 	for _, tok := range scanCommandTokens(command) {
-		path := tok.text
-		if path == "" || isRemoteURL(path) {
+		raw := tok.text
+		if raw == "" || isRemoteURL(raw) {
 			continue
 		}
 
-		// Temporary-directory variables are trusted by default and are
-		// checked after expansion by Confinement.Blocked. Other home/system
-		// variables remain unresolvable and are rejected here.
-		if referencesOutsideEnvVar(path, true) {
-			return fmt.Errorf("Security violation: path %s is outside workspace", path)
+		// A token that references a known-outside variable (directly, or through
+		// an inline assignment that resolves to one) is refused regardless of the
+		// separator heuristics below, because its value is unknown until exec.
+		assignExpanded := expandVarsForValidation(raw, assign, nil, caseInsensitive)
+		if referencesOutsideEnvVar(raw, true) || referencesOutsideEnvVar(assignExpanded, true) {
+			return fmt.Errorf("Security violation: path %s is outside workspace", raw)
 		}
 
-		if !isEscapablePathToken(path) {
+		// Only consult the real environment for tokens that already read as a
+		// path reference (contain a separator). This keeps the blast radius small
+		// so unrelated arguments such as grep '$HOME' or unset "$FOO/bar" are not
+		// rewritten into fabricated absolute paths.
+		expanded := assignExpanded
+		if strings.ContainsAny(raw, "/\\") {
+			expanded = expandVarsForValidation(raw, assign, env, caseInsensitive)
+		}
+
+		if !isEscapablePathToken(raw) && !isEscapablePathToken(expanded) {
 			continue
 		}
 
-		absPath := resolveTokenBase(path, absWorkingDir, home)
-		if !filepathext.IsInside(absPath, absWorkingDir) {
+		absPath := resolveTokenBase(expanded, absWorkingDir, home)
+		if !insideAny(absPath, trusted) {
 			return fmt.Errorf("Security violation: path %s is outside workspace", absPath)
 		}
 	}
 
 	return nil
+}
+
+// isIdentName reports whether s is a valid shell variable name: a leading
+// letter or underscore followed by letters, digits, or underscores.
+func isIdentName(s string) bool {
+	if s == "" {
+		return false
+	}
+	const identStart = "ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz"
+	const identChars = identStart + "0123456789"
+	if strings.IndexByte(identStart, s[0]) < 0 {
+		return false
+	}
+	for i := 1; i < len(s); i++ {
+		if strings.IndexByte(identChars, s[i]) < 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// buildEnvLookup indexes the process environment for variable substitution used
+// only during validation. Keys are stored both verbatim and lower-cased; on
+// Windows the lookup is additionally case-insensitive to match the shell.
+func buildEnvLookup() (map[string]string, bool) {
+	caseInsensitive := runtime.GOOS == "windows"
+	env := map[string]string{}
+	for _, kv := range os.Environ() {
+		key, value, ok := strings.Cut(kv, "=")
+		if !ok {
+			continue
+		}
+		env[key] = value
+		env[strings.ToLower(key)] = value
+	}
+	return env, caseInsensitive
+}
+
+// collectAssignments harvests inline "name=value" words from the command so a
+// later "$name/…" reference can be resolved during validation. Assignment values
+// are themselves expanded against the environment and any earlier assignment, so
+// "root=$SystemRoot; jq . $root/System32/x" is caught.
+func collectAssignments(command string, env map[string]string, caseInsensitive bool) map[string]string {
+	assign := map[string]string{}
+	for _, tok := range scanCommandTokens(command) {
+		name, value, ok := strings.Cut(tok.text, "=")
+		if !ok || !isIdentName(name) {
+			continue
+		}
+		assign[strings.ToLower(name)] = expandVarsForValidation(value, assign, env, caseInsensitive)
+	}
+	return assign
+}
+
+// expandVarsForValidation substitutes $NAME, ${NAME} and %NAME% references in a
+// token using the inline-assignment map and, when env is non-nil, the process
+// environment. Unset names and temporary-directory names are returned verbatim
+// (preserving the existing "unknown variable is not an outside target" policy
+// and keeping trusted temp staging usable). Command substitutions and backticks
+// do not match the variable regexp and so pass through untouched.
+func expandVarsForValidation(s string, assign map[string]string, env map[string]string, caseInsensitive bool) string {
+	return envVarRegexp.ReplaceAllStringFunc(s, func(match string) string {
+		name := strings.TrimSuffix(strings.TrimPrefix(strings.TrimPrefix(match, "$"), "{"), "}")
+		lower := strings.ToLower(name)
+		if _, temp := tempEnvVars[lower]; temp {
+			return match
+		}
+		if v, ok := lookupExpanded(name, assign, env, caseInsensitive); ok {
+			return v
+		}
+		return match
+	})
+}
+
+// lookupExpanded resolves a variable name against the assignment map and, when
+// env is non-nil, the environment, honouring case-insensitivity where requested.
+func lookupExpanded(name string, assign map[string]string, env map[string]string, caseInsensitive bool) (string, bool) {
+	if v, ok := assign[name]; ok {
+		return v, true
+	}
+	if v, ok := assign[strings.ToLower(name)]; ok {
+		return v, true
+	}
+	if env == nil {
+		return "", false
+	}
+	if v, ok := env[name]; ok {
+		return v, true
+	}
+	if caseInsensitive {
+		if v, ok := env[strings.ToLower(name)]; ok {
+			return v, true
+		}
+	}
+	return "", false
 }
 
 // Confinement configures the dynamic, post-expansion argv policy. The zero

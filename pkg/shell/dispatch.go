@@ -56,7 +56,22 @@ func scriptDispatchHandler(blockFuncs []BlockFunc, conf *pathguard.Confinement) 
 			// Resolve relative paths against the interpreter's cwd, not
 			// the process cwd — hook commands are authored with the hook
 			// Runner's cwd in mind and sub-shells can cd before an exec.
-			scriptPath := filepathext.UnsafeSmartJoin(interp.HandlerCtx(ctx).Dir, args[0])
+			dir := interp.HandlerCtx(ctx).Dir
+			scriptPath := filepathext.UnsafeSmartJoin(dir, args[0])
+
+			// Bound-check the script path before any I/O: this branch opens
+			// argv[0] with os.Open/os.ReadFile for probing and shell-sourcing,
+			// which the argv-based exec-handler confinement never sees because
+			// the path lives in argv[0] (deliberately not inspected) and the
+			// file is read here rather than by the exec'd process. Without this
+			// a path-prefixed reference such as "$p" where the model set
+			// p=/etc/passwd reads an out-of-workspace file.
+			if conf != nil {
+				if err := conf.Blocked([]string{args[0], args[0]}, dir); err != nil {
+					return err
+				}
+			}
+
 			probe, err := probeFile(scriptPath)
 			if err != nil {
 				return err
@@ -394,6 +409,7 @@ func runShellSource(ctx context.Context, path string, args []string, blockFuncs 
 		interp.Interactive(false),
 		interp.Env(hc.Env),
 		interp.Dir(hc.Dir),
+		interp.OpenHandler(pathOpenHandler(conf)),
 		execHandlerOption(blockFuncs, conf),
 	}
 	if len(args) > 1 {

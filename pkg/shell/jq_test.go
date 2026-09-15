@@ -27,7 +27,7 @@ func TestJQ_CtxCancel(t *testing.T) {
 	// Cancel almost immediately so we catch the next iteration check.
 	cancel()
 
-	err := handleJQ(ctx, []string{"jq", filter}, stdin, io.Discard, io.Discard)
+	err := handleJQ(ctx, nil, "", []string{"jq", filter}, stdin, io.Discard, io.Discard)
 	if err == nil {
 		t.Fatal("expected ctx cancel error, got nil")
 	}
@@ -53,7 +53,7 @@ func TestJQ_CtxCancel_DuringFilter(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 
 	start := time.Now()
-	err := handleJQ(ctx, []string{"jq", "-c", "range(100000000)"}, stdin, &stdout, &stderr)
+	err := handleJQ(ctx, nil, "", []string{"jq", "-c", "range(100000000)"}, stdin, &stdout, &stderr)
 	elapsed := time.Since(start)
 
 	if err == nil {
@@ -131,7 +131,7 @@ func TestJQ_CtxCancel_MidReadAll(t *testing.T) {
 	}()
 
 	start := time.Now()
-	err := handleJQ(ctx, []string{"jq", "-R", "."}, reader, io.Discard, io.Discard)
+	err := handleJQ(ctx, nil, "", []string{"jq", "-R", "."}, reader, io.Discard, io.Discard)
 	elapsed := time.Since(start)
 
 	if !errors.Is(err, context.Canceled) {
@@ -182,7 +182,7 @@ func TestJQ_CtxCancel_PreCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
-	err := handleJQ(ctx, []string{"jq", "-R", "."},
+	err := handleJQ(ctx, nil, "", []string{"jq", "-R", "."},
 		failOnReadReader{t: t},
 		io.Discard, io.Discard)
 
@@ -199,6 +199,7 @@ func TestJQ_Success(t *testing.T) {
 	var stdout bytes.Buffer
 	err := handleJQ(
 		t.Context(),
+		nil, "",
 		[]string{"jq", "-c", ".a"},
 		strings.NewReader(`{"a":1}`),
 		&stdout, io.Discard,

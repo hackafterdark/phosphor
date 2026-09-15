@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -94,7 +95,12 @@ func Run(ctx context.Context, opts RunOptions) (err error) {
 		return fmt.Errorf("could not parse command: %w", err)
 	}
 
-	runner, err := newRunner(opts.Cwd, opts.Env, opts.Stdin, stdout, stderr, opts.BlockFuncs, newConfinement(opts.Workspace, opts.ExtraTrustedRoots, opts.DisableTempRoot))
+	conf := newConfinement(opts.Workspace, opts.ExtraTrustedRoots, opts.DisableTempRoot)
+	if err := checkProgram(conf, opts.Cwd, opts.Env, line); err != nil {
+		return err
+	}
+
+	runner, err := newRunner(opts.Cwd, opts.Env, opts.Stdin, stdout, stderr, opts.BlockFuncs, conf)
 	if err != nil {
 		return fmt.Errorf("could not run command: %w", err)
 	}
@@ -200,8 +206,39 @@ func newRunner(cwd string, env []string, stdin io.Reader, stdout, stderr io.Writ
 		interp.Interactive(false),
 		interp.Env(expand.ListEnviron(env...)),
 		interp.Dir(cwd),
+		interp.OpenHandler(pathOpenHandler(conf)),
 		execHandlerOption(blockFuncs, conf),
 	)
+}
+
+// pathOpenHandler returns an [interp.OpenHandlerFunc] that bounds-checks every
+// file the interpreter opens *itself* — redirection operands, sourced script
+// bodies, here-documents — against the confinement before handing the open to
+// mvdan's default handler.
+//
+// This is the authoritative runtime gate for interpreter-opened paths: unlike
+// the static validator (command text only) or [pathConfinementHandler] (exec
+// argv only), the OpenHandler sees the operand *after* the interpreter has fully
+// expanded it, so $VAR, inline assignments, and $(...) results that never reach
+// argv are all resolved to a concrete path here. Confinement is skipped when
+// disabled so trusted surfaces (hooks, ExpandValue's nil-conf sub-runner) keep
+// their unrestricted open behaviour.
+func pathOpenHandler(conf *pathguard.Confinement) interp.OpenHandlerFunc {
+	base := interp.DefaultOpenHandler()
+	if conf == nil || conf.WorkspaceRoot == "" {
+		return base
+	}
+	return func(ctx context.Context, path string, flag int, perm os.FileMode) (io.ReadWriteCloser, error) {
+		cwd := interp.HandlerCtx(ctx).Dir
+		absPath := path
+		if !filepath.IsAbs(path) {
+			absPath = filepath.Join(cwd, path)
+		}
+		if err := conf.Blocked([]string{"open", absPath}, cwd); err != nil {
+			return nil, err
+		}
+		return base(ctx, path, flag, perm)
+	}
 }
 
 // newConfinement builds the shared post-expansion policy. A missing workspace
@@ -279,20 +316,24 @@ func withNonInteractiveEnv(env []string) []string {
 
 // standardHandlers returns the exec-handler middleware chain used by both
 // [Run] and [Shell]. Order matters:
-//  1. builtins first (so Phosphor's in-process jq wins over any PATH binary);
-//  2. script dispatch (shebang / binary / shell-source for path-prefixed
+//  1. post-expansion path confinement — first, so it bounds-checks the fully
+//     expanded argv of *every* command, including the Phosphor builtins
+//     dispatched below (notably jq, whose positional file operands are opened
+//     in-process); placing it after the builtin dispatch would let a builtin
+//     short-circuit the chain and reach conf.Blocked never;
+//  2. builtins (so Phosphor's in-process jq still wins over any PATH binary);
+//  3. script dispatch (shebang / binary / shell-source for path-prefixed
 //     argv[0], no-op for bare commands) — runs before the block list so
 //     that deny rules see the already-resolved argv of anything the
 //     script exec's rather than the outer path-prefixed wrapper;
-//  3. block list;
-//  4. post-expansion path confinement;
+//  4. block list;
 //  5. optional Go coreutils (only when useGoCoreUtils is on).
 func standardHandlers(blockFuncs []BlockFunc, conf *pathguard.Confinement) []func(next interp.ExecHandlerFunc) interp.ExecHandlerFunc {
 	handlers := []func(next interp.ExecHandlerFunc) interp.ExecHandlerFunc{
-		builtinHandler(),
+		pathConfinementHandler(conf),
+		builtinHandler(conf),
 		scriptDispatchHandler(blockFuncs, conf),
 		blockHandler(blockFuncs),
-		pathConfinementHandler(conf),
 	}
 	if useGoCoreUtils {
 		handlers = append(handlers, coreutils.ExecHandler)
@@ -301,8 +342,10 @@ func standardHandlers(blockFuncs []BlockFunc, conf *pathguard.Confinement) []fun
 }
 
 // builtinHandler returns middleware that dispatches recognized Phosphor
-// builtins to their in-process Go implementations. Currently: jq.
-func builtinHandler() func(next interp.ExecHandlerFunc) interp.ExecHandlerFunc {
+// builtins to their in-process Go implementations. Currently: jq. The active
+// confinement is threaded through so the builtin can bound-check the files it
+// opens itself, independently of its position in the middleware chain.
+func builtinHandler(conf *pathguard.Confinement) func(next interp.ExecHandlerFunc) interp.ExecHandlerFunc {
 	return func(next interp.ExecHandlerFunc) interp.ExecHandlerFunc {
 		return func(ctx context.Context, args []string) error {
 			if len(args) == 0 {
@@ -311,7 +354,7 @@ func builtinHandler() func(next interp.ExecHandlerFunc) interp.ExecHandlerFunc {
 			switch args[0] {
 			case "jq":
 				hc := interp.HandlerCtx(ctx)
-				return handleJQ(ctx, args, hc.Stdin, hc.Stdout, hc.Stderr)
+				return handleJQ(ctx, conf, hc.Dir, args, hc.Stdin, hc.Stdout, hc.Stderr)
 			default:
 				return next(ctx, args)
 			}

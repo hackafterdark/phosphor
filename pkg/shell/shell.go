@@ -367,6 +367,10 @@ func (s *Shell) execCommon(ctx context.Context, command string, stdout, stderr i
 		return fmt.Errorf("could not parse command: %w", err)
 	}
 
+	if err := checkProgram(s.confinement, s.cwd, s.env, line); err != nil {
+		return err
+	}
+
 	runner, err = s.newInterp(nil, stdout, stderr)
 	if err != nil {
 		return fmt.Errorf("could not run command: %w", err)

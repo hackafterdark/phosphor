@@ -10,6 +10,8 @@ import (
 
 	"github.com/itchyny/gojq"
 	"mvdan.cc/sh/v3/interp"
+
+	"github.com/hackafterdark/phosphor/internal/pathguard"
 )
 
 const jqUsage = `jq - Go implementation of jq (gojq 0.12.19 builtin)
@@ -37,16 +39,13 @@ Options:
 // flags: -r (raw output), -c (compact output), -s (slurp), -n (null input),
 // -e (exit status), -R (raw input), and --arg name value.
 //
-// ctx is polled at each iteration of the output loop and at each reader in
-// [readInputs] so that hook timeouts or other cancellations can interrupt
-// long-running queries. A cancelled context surfaces as ctx.Err(), not an
-// [interp.ExitStatus], so callers (e.g. the hook runner) can distinguish
-// "filter exited non-zero" from "we ran out of time".
-//
-// Note that this is somewhat of a reimplmentation of the CLI of the glorious
-// github.com/itchyny/gojq, and we'd ideally get the CLI exposed upstream to
-// avoid this falling out of sync.
-func handleJQ(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
+// conf and dir are the active workspace confinement and the interpreter"s
+// working directory. Because jq opens its positional file operands in-process
+// (os.Open in readInputs), it bounds-checks each of them itself before opening:
+// jq is dispatched as a Phosphor builtin and must not rely solely on the
+// exec-handler confinement that would otherwise see these paths as ordinary
+// argv. A nil conf disables the check for trusted callers (the hook runner).
+func handleJQ(ctx context.Context, conf *pathguard.Confinement, dir string, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	var (
 		rawOutput  bool
 		compact    bool
@@ -124,6 +123,21 @@ func handleJQ(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 			}
 		}
 		i++
+	}
+
+	// Bound-check the files jq is about to open in-process. This mirrors what
+	// the exec-handler confinement does for external commands, but runs here so
+	// jq cannot reach a path outside the trusted roots via an operand that never
+	// reaches conf.Blocked once jq short-circuits the middleware chain. The
+	// violation is returned as a plain error (not folded into an exit status) so
+	// it propagates and is recorded as a security event, exactly as the
+	// exec-handler confinement surfaces it for ordinary commands.
+	if conf != nil {
+		for _, f := range fileArgs {
+			if err := conf.Blocked([]string{"jq", f}, dir); err != nil {
+				return err
+			}
+		}
 	}
 
 	if queryStr == "" {

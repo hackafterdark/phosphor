@@ -565,3 +565,87 @@ func TestConfinement_TempVarResolvesOutsideStillBlocked(t *testing.T) {
 	require.NoError(t, Confinement{WorkspaceRoot: workspace, TrustTempRoots: true}.Blocked([]string{"cat", "$TMPDIR/x"}, workspace))
 	require.Error(t, Confinement{WorkspaceRoot: workspace, TrustTempRoots: false}.Blocked([]string{"cat", "$TMPDIR/x"}, workspace))
 }
+
+// TestValidateCommandPaths_ExpansionAware is the regression suite for the
+// expansion bypass class: a path that only becomes absolute after $VAR /
+// inline-assignment substitution — including paths reached through shell
+// redirection operands and library-native builtins (source/.) that the argv-only
+// Confinement.Blocked never inspects. It is written to be meaningful on every
+// operating system: the out-of-workspace target is derived from the live temp
+// layout so it is correct on whatever platform runs the suite. The two cases
+// that hinge on a Windows drive variable are gated to GOOS=windows.
+func TestValidateCommandPaths_ExpansionAware(t *testing.T) {
+	// Not t.Parallel(): the ambient-environment cases use t.SetEnv.
+	workspace := t.TempDir()
+
+	// An absolute directory that provably sits outside the workspace on any OS.
+	outside := filepath.Join(filepath.Dir(filepath.Clean(os.TempDir())), "phosphor-pathguard-vector")
+	slash := filepath.ToSlash(outside)
+
+	// An ambient variable whose value is an out-of-workspace absolute path but
+	// which is deliberately absent from the known-outside allowlist (so the old,
+	// allowlist-only classifier let it through).
+	t.Setenv("PHOSPHOR_VECTOR_LEAK", slash)
+	// An unset variable that must keep resolving as "not an outside target".
+	const unsetVar = "PHOSPHOR_VECTOR_UNSET_DOES_NOT_EXIST_9F3A2C"
+
+	t.Run("inline assignment feeding jq file operand", func(t *testing.T) {
+		require.Error(t, ValidateCommandPaths("d="+slash+"; jq -r -R . $d/hosts", workspace))
+	})
+	t.Run("inline assignment feeding input redirection", func(t *testing.T) {
+		require.Error(t, ValidateCommandPaths("d="+slash+"; cat < $d/hosts", workspace))
+	})
+	t.Run("inline assignment feeding source/dot operand", func(t *testing.T) {
+		require.Error(t, ValidateCommandPaths("d="+slash+"; . $d/hosts", workspace))
+	})
+	t.Run("nested assignment feeding path-prefixed dispatch", func(t *testing.T) {
+		require.Error(t, ValidateCommandPaths("d="+slash+"; p=$d/hosts; \"$p\"", workspace))
+	})
+	t.Run("inline assignment feeding output redirection", func(t *testing.T) {
+		require.Error(t, ValidateCommandPaths("d="+slash+"; echo x > $d/out.txt", workspace))
+	})
+	t.Run("ambient non-allowlisted var as file operand", func(t *testing.T) {
+		require.Error(t, ValidateCommandPaths("cat $PHOSPHOR_VECTOR_LEAK/hosts", workspace))
+	})
+	t.Run("ambient non-allowlisted var as redirection operand", func(t *testing.T) {
+		require.Error(t, ValidateCommandPaths("cat < $PHOSPHOR_VECTOR_LEAK/hosts", workspace))
+	})
+	t.Run("ambient var via braces form", func(t *testing.T) {
+		require.Error(t, ValidateCommandPaths("cat ${PHOSPHOR_VECTOR_LEAK}/hosts", workspace))
+	})
+
+	t.Run("unset variable is not an outside target", func(t *testing.T) {
+		require.NoError(t, ValidateCommandPaths("cat $PHOSPHOR_VECTOR_UNSET_DOES_NOT_EXIST_9F3A2C/file.txt", workspace))
+	})
+	t.Run("in-workspace relative operands stay allowed", func(t *testing.T) {
+		require.NoError(t, ValidateCommandPaths("cat ./notes.txt", workspace))
+		require.NoError(t, ValidateCommandPaths("jq . ./data.json", workspace))
+		require.NoError(t, ValidateCommandPaths("echo hi > notes/out.txt", workspace))
+		require.NoError(t, ValidateCommandPaths("go build ./cmd/petstore/...", workspace))
+	})
+	t.Run("trusted temp variables stay allowed", func(t *testing.T) {
+		require.NoError(t, ValidateCommandPaths("cat $TMP/file", workspace))
+		require.NoError(t, ValidateCommandPaths("tee $TMPDIR/leak", workspace))
+	})
+	t.Run("bare home variable without a path is not rewritten", func(t *testing.T) {
+		// "$HOME" alone carries no separator, so it is never treated as a path
+		// operand; unrelated arguments must not be inflated into absolute paths.
+		require.NoError(t, ValidateCommandPaths(`grep $HOME $PHOSPHOR_VECTOR_UNSET_DOES_NOT_EXIST_9F3A2C`, workspace))
+	})
+
+	if runtime.GOOS == "windows" {
+		t.Run("windows system root var reached via redirection", func(t *testing.T) {
+			require.Error(t, ValidateCommandPaths(`cat < $SystemRoot\System32\drivers\etc\hosts`, workspace))
+		})
+		t.Run("windows drive via inline assignment and jq", func(t *testing.T) {
+			require.Error(t, ValidateCommandPaths(`d=C:\Windows\System32\drivers\etc; jq -r -R . $d/hosts`, workspace))
+		})
+	} else {
+		t.Run("posix etc/passwd literal stays blocked", func(t *testing.T) {
+			require.Error(t, ValidateCommandPaths("cat /etc/passwd", workspace))
+		})
+		t.Run("posix home var reached via redirection is blocked", func(t *testing.T) {
+			require.Error(t, ValidateCommandPaths("cat < $HOME/.ssh/id_ed25519", workspace))
+		})
+	}
+}
