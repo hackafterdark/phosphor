@@ -6,8 +6,9 @@ name: "test"
 # on Linux, macOS and Windows, not just one host. Publishes nothing.
 #
 # CGO is enabled per platform (matching build.yml) so the tree-sitter
-# structural_search backend compiles; linux/arm64 builds pure-Go (CGO_ENABLED=0)
-# and its structural-search-dependent tests fall back to the grep path.
+# structural_search backend compiles. Tests run natively on each runner: we do
+# NOT pin GOOS/GOARCH (unlike build.yml), because `go test` must *execute* the
+# binaries it builds and a host cannot exec a foreign-arch binary.
 
 on:
   push:
@@ -35,16 +36,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Native target per runner (no GOOS/GOARCH override below): ubuntu runs
+          # linux/amd64, macos-latest runs darwin/arm64, windows runs windows/amd64.
+          # The goos/goarch keys are kept only to label the matrix and drive the
+          # Windows-only MinGW step; they are NOT exported to the environment.
           - runner: ubuntu-latest
             goos: linux
             goarch: amd64
             cc: gcc
             cgo: "1"
-          - runner: ubuntu-latest
-            goos: linux
-            goarch: arm64
-            cc: ""
-            cgo: "0"
           - runner: macos-latest
             goos: darwin
             goarch: arm64
@@ -56,8 +56,9 @@ jobs:
             cc: C:/Tools/mingw64/bin/gcc.exe
             cgo: "1"
     env:
-      GOOS: ${{ matrix.goos }}
-      GOARCH: ${{ matrix.goarch }}
+      # Intentionally NOT setting GOOS/GOARCH: go test must run the binaries it
+      # builds, so they must match the runner's native arch. Forcing them would
+      # cross-compile and the runner would fail to exec them ("exec format error").
       CGO_ENABLED: ${{ matrix.cgo }}
       CGO_CC: ${{ matrix.cc }}
     steps:
@@ -77,8 +78,8 @@ jobs:
         if: matrix.goos == 'windows'
         run: choco install mingw --no-progress -y
 
-      # CGO_CC is only meaningful when cgo is on; clear it otherwise so the pure
-      # Go linux/arm64 build does not try to invoke a nonexistent compiler.
+      # Defensive: CGO_CC only matters when cgo is on. If a future matrix entry
+      # disables cgo, drop CGO_CC so the pure-Go build does not invoke a compiler.
       - name: Run tests
         run: |
           if [ "${CGO_ENABLED}" != "1" ]; then
