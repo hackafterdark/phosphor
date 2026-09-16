@@ -899,9 +899,14 @@ func (c *coordinator) buildAgent(ctx context.Context, prompt *prompt.Prompt, age
 	// mutable state during the session.
 	codeFileFP := c.cfg.Config().ShouldCodeFileFalsePositiveMode()
 	tokenize := c.cfg.Config().ShouldTokenizeSecrets()
+	jsonKeys := c.cfg.Config().ShouldRedactJSONKeys()
+	learnedMem := c.cfg.Config().ShouldLearnedSecretMemory()
 	tools.SetRedactionPolicy(tools.RedactionPolicyOptions{
-		CodeFileFPEnabled:   &codeFileFP,
-		TokenizationEnabled: &tokenize,
+		CodeFileFPEnabled:          &codeFileFP,
+		TokenizationEnabled:        &tokenize,
+		JSONKeyRedactionEnabled:    &jsonKeys,
+		ExtraJSONSecretKeys:        c.cfg.Config().EffectiveJSONSecretKeys(),
+		LearnedSecretMemoryEnabled: &learnedMem,
 	})
 	tools.SetSecretRulesPath(filepath.Join(c.cfg.WorkingDir(), ".phosphor", "secret-rules.toml"))
 
@@ -1410,6 +1415,10 @@ func (c *coordinator) buildProvider(providerCfg config.ProviderConfig, model con
 
 	apiKey, _ := c.cfg.Resolve(providerCfg.APIKey)
 	baseURL, _ := c.cfg.Resolve(providerCfg.BaseURL)
+	config.RegisterSecret(apiKey)
+	for hk, hv := range headers {
+		config.RegisterCredentialValue(hk, hv)
+	}
 
 	switch providerCfg.ID {
 	case string(catwalk.InferenceProviderOpenCodeGo), string(catwalk.InferenceProviderOpenCodeZen):

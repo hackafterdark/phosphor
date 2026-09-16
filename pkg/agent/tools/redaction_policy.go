@@ -38,17 +38,42 @@ type redactionPolicy struct {
 	// tokenTTL and tokenMaxEntries bound the in-process token store.
 	tokenTTL        time.Duration
 	tokenMaxEntries int
+	// jsonKeyRedactionEnabled turns the structured-JSON key-drop layer on. On by
+	// default: it is a cheap, low-false-positive complement to value scanning for
+	// JSON-producing tools (MCP/CLI results), because it drops a whole field by
+	// its key name rather than guessing at the value. See json_key_redact.go.
+	jsonKeyRedactionEnabled bool
+	// jsonSecretKeys are the exact (lower-cased) JSON object keys whose values are
+	// dropped when a JSON document is scanned. Operators can extend the set; the
+	// built-in set is always present and cannot be subtracted from.
+	jsonSecretKeys map[string]bool
+	// jsonKeySuffixes are the trailing patterns a JSON object key is matched
+	// against (also lower-cased), so *_token / *_secret style names are dropped
+	// without enumerating every vendor spelling.
+	jsonKeySuffixes []string
+	// learnedSecretMemoryEnabled turns the hashed learned-secret memory on. On by
+	// default. When on, every value the detector judges sensitive has its keyed
+	// hash (HMAC) remembered, and a later detection of that same value is treated
+	// as sensitive even where a per-context false-positive rule would otherwise
+	// drop it (e.g. a generic KEY=value hit on a source file). Only digests are
+	// kept, never the plaintext. See pkg/secrets/learned.go.
+	learnedSecretMemoryEnabled bool
 }
 
 // RedactionPolicyOptions is the operator-facing knob set for the read-path
 // redaction snapshot. A nil field means "use the secure default".
 type RedactionPolicyOptions struct {
-	SecretsEnabled      *bool
-	CodeFileFPEnabled   *bool
-	TokenizationEnabled *bool
-	ExtraGenericRules   []string
-	TokenTTL            time.Duration
-	TokenMaxEntries     int
+	SecretsEnabled          *bool
+	CodeFileFPEnabled       *bool
+	TokenizationEnabled     *bool
+	ExtraGenericRules       []string
+	TokenTTL                time.Duration
+	TokenMaxEntries         int
+	JSONKeyRedactionEnabled *bool
+	ExtraJSONSecretKeys     []string
+	// LearnedSecretMemoryEnabled gates the hashed learned-secret memory. A nil
+	// field means the secure default (on).
+	LearnedSecretMemoryEnabled *bool
 }
 
 var redactionPolicyPtr = func() *atomic.Pointer[redactionPolicy] {
@@ -61,13 +86,17 @@ var redactionPolicyMu sync.Mutex
 
 func defaultRedactionPolicy() *redactionPolicy {
 	return &redactionPolicy{
-		secretsEnabled:      true,
-		codeFileFPEnabled:   true,
-		tokenizationEnabled: false,
-		genericPrefixes:     []string{"generic-"},
-		genericRuleIDs:      defaultGenericRuleIDs(),
-		tokenTTL:            defaultTokenTTL,
-		tokenMaxEntries:     defaultTokenMaxEntries,
+		secretsEnabled:             true,
+		codeFileFPEnabled:          true,
+		tokenizationEnabled:        false,
+		genericPrefixes:            []string{"generic-"},
+		genericRuleIDs:             defaultGenericRuleIDs(),
+		tokenTTL:                   defaultTokenTTL,
+		tokenMaxEntries:            defaultTokenMaxEntries,
+		jsonKeyRedactionEnabled:    true,
+		jsonSecretKeys:             defaultJSONSecretKeys(),
+		jsonKeySuffixes:            defaultJSONKeySuffixes(),
+		learnedSecretMemoryEnabled: true,
 	}
 }
 
@@ -106,6 +135,13 @@ func SetRedactionPolicy(opts RedactionPolicyOptions) {
 		for k := range p.genericRuleIDs {
 			base.genericRuleIDs[k] = true
 		}
+		// Same for the JSON key set: the built-in names are always present, and any
+		// operator additions survive a later policy change.
+		base.jsonSecretKeys = make(map[string]bool, len(p.jsonSecretKeys))
+		for k := range p.jsonSecretKeys {
+			base.jsonSecretKeys[k] = true
+		}
+		base.jsonKeySuffixes = append([]string{}, p.jsonKeySuffixes...)
 	}
 	if opts.SecretsEnabled != nil {
 		base.secretsEnabled = *opts.SecretsEnabled
@@ -116,9 +152,20 @@ func SetRedactionPolicy(opts RedactionPolicyOptions) {
 	if opts.TokenizationEnabled != nil {
 		base.tokenizationEnabled = *opts.TokenizationEnabled
 	}
+	if opts.JSONKeyRedactionEnabled != nil {
+		base.jsonKeyRedactionEnabled = *opts.JSONKeyRedactionEnabled
+	}
+	if opts.LearnedSecretMemoryEnabled != nil {
+		base.learnedSecretMemoryEnabled = *opts.LearnedSecretMemoryEnabled
+	}
 	for _, id := range opts.ExtraGenericRules {
 		if id != "" {
 			base.genericRuleIDs[id] = true
+		}
+	}
+	for _, k := range opts.ExtraJSONSecretKeys {
+		if k != "" {
+			base.jsonSecretKeys[strings.ToLower(k)] = true
 		}
 	}
 	if opts.TokenTTL > 0 {
@@ -157,6 +204,40 @@ func TokenizationEnabled() bool { return currentRedactionPolicy().tokenizationEn
 func SecretsEnabled() bool { return currentRedactionPolicy().secretsEnabled }
 
 func codeFileFPEnabled() bool { return currentRedactionPolicy().codeFileFPEnabled }
+
+// JSONKeyRedactionEnabled reports whether the structured-JSON key-drop layer is
+// active. The secure default is on; it is cheap and low-noise because it only
+// fires on a whole-document JSON payload and only drops fields by key name.
+func JSONKeyRedactionEnabled() bool {
+	return currentRedactionPolicy().jsonKeyRedactionEnabled
+}
+
+// LearnedSecretMemoryEnabled reports whether the hashed learned-secret memory is
+// active. The secure default is on: it only ever upgrades a detection toward
+// scrubbing a value already judged sensitive, so it cannot introduce a false
+// block and stores no plaintext.
+func LearnedSecretMemoryEnabled() bool {
+	return currentRedactionPolicy().learnedSecretMemoryEnabled
+}
+
+// isSecretJSONKey reports whether a JSON object key names a field whose value
+// should be dropped: an exact match against the (lower-cased) secret-key set or a
+// match against one of the configured trailing suffixes. Empty keys are ignored.
+func (p *redactionPolicy) isSecretJSONKey(key string) bool {
+	if key == "" {
+		return false
+	}
+	k := strings.ToLower(key)
+	if p.jsonSecretKeys[k] {
+		return true
+	}
+	for _, suffix := range p.jsonKeySuffixes {
+		if suffix != "" && strings.HasSuffix(k, suffix) {
+			return true
+		}
+	}
+	return false
+}
 
 // isGenericRule reports whether a rule belongs to the low-precision family that
 // code-file mode suppresses: an explicitly listed id or a configured prefix.

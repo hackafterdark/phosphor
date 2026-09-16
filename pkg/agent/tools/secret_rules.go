@@ -14,6 +14,8 @@ import (
 	toml "github.com/pelletier/go-toml/v2"
 	gcfg "github.com/zricethezav/gitleaks/v8/config"
 	gl "github.com/zricethezav/gitleaks/v8/detect"
+
+	"github.com/hackafterdark/phosphor/pkg/saferegex"
 )
 
 type customSecretRulesFile struct {
@@ -252,6 +254,9 @@ func (c customSecretRule) toRule() (gcfg.Rule, error) {
 	}
 
 	if c.Regexp != "" {
+		if err := saferegex.Check(c.Regexp); err != nil {
+			return gcfg.Rule{}, fmt.Errorf("regex %q rejected: %w", c.Regexp, err)
+		}
 		re, err := regexp.Compile(c.Regexp)
 		if err != nil {
 			return gcfg.Rule{}, fmt.Errorf("invalid regex %q: %w", c.Regexp, err)
@@ -260,6 +265,9 @@ func (c customSecretRule) toRule() (gcfg.Rule, error) {
 	}
 
 	if c.Path != "" {
+		if err := saferegex.Check(c.Path); err != nil {
+			return gcfg.Rule{}, fmt.Errorf("path regex %q rejected: %w", c.Path, err)
+		}
 		re, err := regexp.Compile(c.Path)
 		if err != nil {
 			return gcfg.Rule{}, fmt.Errorf("invalid path regex %q: %w", c.Path, err)
@@ -308,6 +316,9 @@ func (c customAllowlist) toAllowlist() (*gcfg.Allowlist, error) {
 		if strings.TrimSpace(path) == "" {
 			continue
 		}
+		if err := saferegex.Check(path); err != nil {
+			return nil, fmt.Errorf("allowlist path regex %q rejected: %w", path, err)
+		}
 		re, err := regexp.Compile(path)
 		if err != nil {
 			return nil, fmt.Errorf("invalid allowlist path regex %q: %w", path, err)
@@ -318,6 +329,9 @@ func (c customAllowlist) toAllowlist() (*gcfg.Allowlist, error) {
 	for _, expr := range c.Regexp {
 		if strings.TrimSpace(expr) == "" {
 			continue
+		}
+		if err := saferegex.Check(expr); err != nil {
+			return nil, fmt.Errorf("allowlist regex %q rejected: %w", expr, err)
 		}
 		re, err := regexp.Compile(expr)
 		if err != nil {

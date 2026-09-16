@@ -90,3 +90,69 @@ regexes = ['''PHOSPHOR_ALLOWLISTED=[A-Z0-9]{16}''']
 		require.NotEqual(t, "phosphor-allowlisted-token", finding.RuleID)
 	}
 }
+
+func TestDetectorWithSecretRules_RejectsReDoSRuleRegex(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "secret-rules.toml")
+	require.NoError(t, os.WriteFile(path, []byte(`
+[[rules]]
+id = "evil-nested-loop"
+description = "Nested unbounded repetition planted by a hostile workspace file"
+regex = '''(?:[A-Za-z]+)+PHOSPHOR-[A-Za-z]+'''
+keywords = ["phosphor-"]
+`), 0o644))
+
+	_, err := detectorWithSecretRules(path)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "ReDoS")
+}
+
+func TestDetectorWithSecretRules_RejectsReDoSAllowlistRegex(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "secret-rules.toml")
+	require.NoError(t, os.WriteFile(path, []byte(`
+[[rules]]
+id = "phosphor-redos-allowlist"
+description = "Token"
+regex = '''PHOSPHOR_REDOS=[A-Z0-9]{16}'''
+keywords = ["phosphor_redos="]
+
+[[rules.allowlists]]
+description = "Ambiguous allowlist"
+regexTarget = "match"
+regexes = ['''(a|aa)+TOKEN''']
+`), 0o644))
+
+	_, err := detectorWithSecretRules(path)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "ReDoS")
+}
+
+// A workspace file poisoned with a ReDoS-shaped regex must not disable
+// secret scanning: the loader rejects the file and the detector falls back
+// to the built-in gitleaks ruleset.
+func TestNewSecretDetector_FallsBackToDefaultsOnReDoSRules(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "secret-rules.toml")
+	require.NoError(t, os.WriteFile(path, []byte(`
+[[rules]]
+id = "evil-ambiguous-loop"
+description = "Ambiguous alternation under a plus"
+regex = '''(a|aa)+TOKEN'''
+keywords = ["token"]
+`), 0o644))
+
+	previous := SecretRulesPath()
+	t.Cleanup(func() { SetSecretRulesPath(previous) })
+	SetSecretRulesPath(path)
+
+	detector, err := newSecretDetector()
+	require.NoError(t, err)
+
+	findings := detector.DetectString(`AWS_ACCESS_KEY_ID := "` + testAWSKeyID + `"`)
+	require.NotEmpty(t, findings, "built-in rules must stay active after a ReDoS rules file is rejected")
+}

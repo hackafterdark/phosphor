@@ -608,10 +608,13 @@ func formatOutput(stdout, stderr string, execErr error, command string) string {
 		stdout += "\n" + errorMessage
 	}
 
-	// Scrub any credentials from the combined output before it reaches the
-	// transcript; this covers foreground completion and the background fast-fail
-	// path (both route through formatOutput). Bash output is path-less, so it is
-	// scanned in full mode and honours the read-path secrets toggle.
+	// Drop self-labelled secret fields when the command emitted a bare JSON
+	// document (a JSON-emitting CLI such as an SDK/credential helper), then scrub
+	// any credential the value scanner can see. Output that is not a single JSON
+	// value is left byte-for-byte intact by the key-drop pass, so ordinary logs are
+	// untouched. Bash output is path-less, so it is scanned in full mode and
+	// honours the read-path secrets toggle.
+	stdout = RedactJSONForTool(stdout, "bash")
 	return redactSecretsForTool(stdout, "", "bash")
 }
 

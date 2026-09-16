@@ -24,6 +24,7 @@ This guide covers every security control that can be managed via the
 - [Tool Limits and Timeouts](#tool-limits-and-timeouts)
 - [Network Egress Hardening](#network-egress-hardening)
 - [Hooks as Security Gateways](#hooks-as-security-gateways)
+- [Secret Redaction](#secret-redaction)
 
 ---
 
@@ -489,7 +490,11 @@ can be used as security gateways to inspect, modify, or block tool calls:
 ```
 
 - **`matcher`**: Regex pattern tested against the tool name. Empty means match
-  all tools.
+  all tools. Matchers are validated at load time: a pattern with invalid
+  syntax or a regular-expression denial-of-service shape (e.g. an unbounded
+  quantifier wrapped in another one, `(a+)+`) is rejected with a config error,
+  and a matching invalid pattern seen at run time skips the hook with a
+  warning rather than disabling it.
 - **`timeout`**: Timeout in seconds for the hook command (default `30`).
 
 Hooks run before permission checks and can return decisions to allow, deny, or
@@ -643,7 +648,124 @@ Supported top-level fields are:
 
 If the file is missing, the default detector is used. If it is malformed or
 contains an invalid rule, Phosphor logs a warning and keeps the built-in gitleaks
-ruleset active rather than disabling secret scanning.
+ruleset active rather than disabling secret scanning. The same fallback applies
+when a pattern has a regular-expression denial-of-service shape (e.g.
+`(a+)+` or `(a|aa)+`): it is rejected at load time, so a poisoned rules file can
+neither disable scanning nor hang it while Phosphor scans attacker-influenced
+output.
+
+---
+
+## Secret Redaction
+
+Phosphor runs a layered redaction stack so secret material (API keys, tokens,
+private keys, credential JSON) and — opt-in — PII never reaches the provider
+request body or the session transcript. The layers are deliberately
+independent: each covers a different leak path (file reads, tool output,
+structured JSON results, child processes, the network boundary), and each is
+on by default so a missing `security` block fails safe.
+
+Every boolean knob below is **tri-state**: leaving it unset (omitting the key)
+selects the secure default shown in the table; set it explicitly to `false`
+only to opt out.
+
+```json
+{
+  "$schema": "https://github.com/hackafterdark/phosphor/blob/main/schema.json",
+  "security": {
+    "redact_outgoing_secrets": true,
+    "redact_outgoing_pii": false,
+    "redact_sensitive_files": true,
+    "sensitive_file_patterns": ["secrets-*.yaml"],
+    "tokenize_secrets": false,
+    "code_file_false_positive_mode": true,
+    "wire_secret_redaction_force": true,
+    "redact_json_keys": true,
+    "json_secret_keys": ["internal_token"],
+    "learned_secret_memory": true
+  }
+}
+```
+
+### Value Scanning of Tool Output
+
+Every tool result is scanned with gitleaks detectors before the agent sees it;
+detection replaces the secret value with a sentinel (the assignment key stays
+visible so surrounding text keeps its meaning). Source-code reads use a
+code-file scan mode: `code_file_false_positive_mode` (default `true`) drops
+the low-precision generic `KEY=value` / `"apiKey": "value"` detector family
+that false-positives on ordinary configuration maps, while the high-precision
+vendor-prefix, PEM, JWT, and connection-string detectors still run. Custom
+rules and allow-lists are configured via `.phosphor/secret-rules.toml` (see
+[Custom Secret Rules](#custom-secret-rules)).
+
+### Sensitive-File Whole-Value Redaction
+
+When the agent reads a file that matches the sensitive set — the `.env`
+family, rc files, credential JSON, private-key material — `redact_sensitive_files`
+(default `true`) replaces every assignment value with a non-reusable sentinel
+and, for opaque key files, the whole content. `sensitive_file_patterns`
+**extends** the built-in set; it can never remove from it. The built-in
+patterns are:
+
+```text
+.env  .env.*  *.env  .npmrc  .netrc  _netrc  .git-credentials  .envrc
+credentials*.json  *service-account*.json  secrets.*
+id_rsa  id_dsa  id_ecdsa  id_ed25519  *.pem  *.p12  *.pfx
+```
+
+### Known-Value Registry (always on)
+
+Secret values Phosphor resolves itself — provider API keys, resolved env-var
+and header values from provider configuration — are registered at resolution
+time and scrubbed everywhere by exact match. This layer has **no config knob**:
+an exact match against a credential you configured cannot be noisy, so it stays
+on even when value scanning is opted out. Values short than a minimum length
+and template placeholders (containing `$`) are not registered, so `${FOO}`
+style config survives untouched.
+
+### Learned Secret Memory
+
+Once the scanner judges a value to be a genuine secret, its keyed HMAC digest
+is remembered for the session (`learned_secret_memory`, default `true`). If
+that same value reappears somewhere a per-context false-positive rule would
+have spared it — e.g. a generic `KEY=value` hit inside a source file — the
+value is recognised and scrubbed anyway. Only digests are kept, never
+plaintext, and the memory is per-process: it is cleared on restart.
+
+### Structured-JSON Key-Drop
+
+For tool results that are a whole JSON document (MCP servers, JSON-emitting
+CLIs), any field whose *key* is secret-shaped (`api_key`, `*_secret`,
+`session_token`, …) has its value dropped by key name — cheaper and lower on
+false positives than value scanning, which still runs as a complement.
+`redact_json_keys` gates the layer (default `true`); `json_secret_keys`
+extends the built-in key set case-insensitively and can never narrow it.
+
+### Provider-Wire Last-Resort Mask
+
+The exact outbound request body is scrubbed at send time: the registry first,
+then the scanner. `redact_outgoing_secrets` (default `true`) gates the mask;
+`wire_secret_redaction_force` (default `true`) keeps it on even when
+`redact_outgoing_secrets` is set to `false` — the wire is treated as a hard
+boundary, so fully disabling wire masking requires setting both to `false`.
+PII masking (email, SSN, phone, IP, credit-card) on the same body is opt-in
+via `redact_outgoing_pii` (default `false`) because its heuristics
+false-positive on ordinary code and text.
+
+### Reversible Tokenization (opt-in)
+
+With `tokenize_secrets` (default `false`) the read path emits
+`<secret:kind:id>` tokens instead of static sentinels, and the original value
+is restored only when the agent writes back to a trusted sensitive file — an
+`.env` round-trip that keeps working while the transcript only ever holds
+tokens. Off by default because the static sentinels are already safe.
+
+### Subprocess Environment Control
+
+Shell commands spawned by the bash tool receive an environment filtered by an
+allow-list plus a secret-shaped deny predicate, so a buggy or compromised child
+process cannot trivially dump credential variables. This layer has no knob.
 
 ## Summary Reference
 
@@ -672,5 +794,15 @@ ruleset active rather than disabling secret scanning.
 | Hook security gates | `hooks.<event>` | Array | None |
 | ML PII hook recipe | `hooks.PreToolUse[].command` + `scripts/pii-classify.sh` | Hook | Disabled |
 | Custom secret rules | `.phosphor/secret-rules.toml` | File | Absent |
+| Wire secret mask | `security.redact_outgoing_secrets` | Tri-state Bool | On |
+| Wire PII mask | `security.redact_outgoing_pii` | Tri-state Bool | Off |
+| Sensitive-file redaction | `security.redact_sensitive_files` | Tri-state Bool | On |
+| Extra sensitive globs | `security.sensitive_file_patterns` | Array | Built-in set |
+| Secret tokenization | `security.tokenize_secrets` | Tri-state Bool | Off |
+| Code-file FP suppression | `security.code_file_false_positive_mode` | Tri-state Bool | On |
+| Wire force mask | `security.wire_secret_redaction_force` | Tri-state Bool | On |
+| JSON secret key-drop | `security.redact_json_keys` | Tri-state Bool | On |
+| Extra JSON secret keys | `security.json_secret_keys` | Array | Built-in set |
+| Learned secret memory | `security.learned_secret_memory` | Tri-state Bool | On |
 | OTel sampling rate | `observability.sampling_rate` | Float | 1.0 |
 | OTel endpoint | `observability.endpoint` | String | Empty (disabled) |

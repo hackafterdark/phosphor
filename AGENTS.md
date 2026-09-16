@@ -99,6 +99,15 @@ internal/
 - **Modernize**: `task modernize` (runs `modernize` which makes code
   simplifications)
 - **Dev**: `task dev` (runs with profiling enabled)
+- **Docs**: `task docs:embed` (alias of `go generate ./pkg/phosphordocs`)
+  regenerates the embedded help corpus.
+
+> **Docs source of truth:** `docs/**` at the repo root is canonical;
+> `pkg/phosphordocs/content/**` is a **generated build artifact** (the
+> generator does `RemoveAll` then copies from `docs/`, gated by
+> `phosphordocs.IsIncluded`). Never hand-edit `content/**` — edit the file under
+> `docs/`, then run `task docs:embed`. `TestDriftGuard` fails the suite if any
+> allow-listed doc in `content/` is not byte-identical to its `docs/` source.
 
 ## Path Handling
 

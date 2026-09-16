@@ -693,6 +693,7 @@ func (m MCPConfig) ResolvedHeaders(r VariableResolver) (map[string]string, error
 		if v == "" {
 			continue
 		}
+		registerCredentialValue(k, v)
 		out[k] = v
 	}
 	return out, nil
@@ -1045,6 +1046,25 @@ type SecurityConfig struct {
 	// to allow fully disabling wire secret masking (in which case
 	// redact_outgoing_secrets alone governs it).
 	WireSecretRedactionForce *bool `json:"wire_secret_redaction_force,omitempty" jsonschema:"description=Always mask secrets on the provider request body,defaults=true"`
+	// RedactJSONKeys enables the structured-JSON key-drop layer for JSON-producing
+	// tool results (MCP servers and JSON-emitting CLIs). When a tool result is a
+	// whole JSON document, any field whose key is itself secret-shaped
+	// (SecretString, SessionToken, *_api_key, *_secret, ...) has its value dropped
+	// by key name, which is cheaper and lower on false positives than value
+	// scanning. It is a complement to the value scanner, which still runs.
+	// Tri-state: nil means enabled (the secure, low-noise default).
+	RedactJSONKeys *bool `json:"redact_json_keys,omitempty" jsonschema:"description=Drop secret-named fields from JSON tool results by key,defaults=true"`
+	// JSONSecretKeys extends the built-in set of JSON object keys whose value is
+	// dropped by the key-drop layer. Entries are matched case-insensitively against
+	// the object key. It may only add to the built-in set, never remove from it.
+	JSONSecretKeys []string `json:"json_secret_keys,omitempty" jsonschema:"description=Extra JSON object keys whose value is dropped from JSON tool results"`
+	// LearnedSecretMemory enables the hashed learned-secret memory: when the
+	// detector flags a value as a genuine secret, its keyed hash (HMAC, never the
+	// plaintext) is remembered for the session so the same value is recognised and
+	// scrubbed on every later appearance, including where a per-context
+	// false-positive rule would otherwise spare it (e.g. a generic KEY=value hit on
+	// a source file). Tri-state: nil means enabled (the secure, low-noise default).
+	LearnedSecretMemory *bool `json:"learned_secret_memory,omitempty" jsonschema:"description=Remember detected secrets by keyed hash and scrub them on reappearance,defaults=true"`
 }
 
 // DefaultSensitiveFilePatterns is the built-in set the read path treats as
@@ -1099,6 +1119,36 @@ func (c Config) ShouldForceWireSecretRedaction() bool {
 		return true
 	}
 	return *c.Security.WireSecretRedactionForce
+}
+
+// ShouldRedactJSONKeys reports whether the structured-JSON key-drop layer for
+// JSON-producing tool results is on. The secure, low-noise default is on; a nil
+// field keeps it on.
+func (c Config) ShouldRedactJSONKeys() bool {
+	if c.Security == nil || c.Security.RedactJSONKeys == nil {
+		return true
+	}
+	return *c.Security.RedactJSONKeys
+}
+
+// ShouldLearnedSecretMemory reports whether the hashed learned-secret memory is
+// on. The secure, low-noise default is on: it stores only keyed hashes of values
+// already judged sensitive and never the plaintext, so it cannot introduce a
+// false block. A nil field keeps it on.
+func (c Config) ShouldLearnedSecretMemory() bool {
+	if c.Security == nil || c.Security.LearnedSecretMemory == nil {
+		return true
+	}
+	return *c.Security.LearnedSecretMemory
+}
+
+// EffectiveJSONSecretKeys is the operator-added set of JSON object keys to drop
+// from JSON tool results, on top of the built-in set the tools package owns.
+func (c Config) EffectiveJSONSecretKeys() []string {
+	if c.Security == nil {
+		return nil
+	}
+	return c.Security.JSONSecretKeys
 }
 
 // EffectiveSensitiveFilePatterns is the default sensitive set plus any operator
@@ -1455,6 +1505,7 @@ func resolveEnvs(envs map[string]string, r VariableResolver) ([]string, error) {
 		if err != nil {
 			return nil, fmt.Errorf("env %s: %w", k, err)
 		}
+		registerCredentialValue(k, v)
 		res = append(res, fmt.Sprintf("%s=%s", k, v))
 	}
 	return res, nil

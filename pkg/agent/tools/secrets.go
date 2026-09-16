@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/hackafterdark/phosphor/pkg/secrets"
 	"github.com/zricethezav/gitleaks/v8/report"
 )
 
@@ -146,6 +147,15 @@ func redactSecrets(text string) string {
 // at startup) so an operator can turn read-side scanning off; it then defers to
 // redactSecretsAt, which derives the scan mode from the read context.
 func redactSecretsForTool(text, filePath, source string) string {
+	if text == "" {
+		return text
+	}
+	// Exact known provider/OAuth/MCP credentials are erased regardless of the
+	// gitleaks read-path toggle: the registry only removes values we explicitly
+	// loaded this session, so it is high-precision and cheap enough to always run.
+	// It also fires on the test/doc paths the gitleaks pass allow-lists, since a
+	// real provider key should never reach context even inside a fixture.
+	text = secrets.Scrub(text)
 	if !SecretsEnabled() {
 		return text
 	}
@@ -173,6 +183,7 @@ func redactSecretsAt(text, filePath, source string) string {
 	}
 
 	tokenize := currentRedactionPolicy().tokenizationEnabled
+	learned := LearnedSecretMemoryEnabled()
 	pairs := make([]string, 0, len(findings)*2)
 	seen := make(map[string]struct{}, len(findings))
 	rules := make([]string, 0, len(findings))
@@ -188,6 +199,12 @@ func redactSecretsAt(text, filePath, source string) string {
 			continue
 		}
 		seen[needle] = struct{}{}
+		// Remember this value as judged-sensitive (keyed hash only, no plaintext)
+		// so a later detection of the same bytes is trusted even where a
+		// per-context false-positive rule would otherwise drop it.
+		if learned {
+			secrets.Learn(needle)
+		}
 		pairs = append(pairs, needle, tokenOrSentinel(f.RuleID, needle, tokenize))
 		rules = append(rules, f.RuleID)
 	}
@@ -217,14 +234,32 @@ func filterFindings(findings []report.Finding, mode ScanMode) []report.Finding {
 		return findings
 	}
 	pol := currentRedactionPolicy()
+	learned := LearnedSecretMemoryEnabled()
 	out := findings[:0]
 	for _, f := range findings {
 		if pol.isGenericRule(f.RuleID) {
-			continue
+			// The generic family is FP noise on source code and is normally
+			// dropped here. But if this exact value was already judged a real
+			// secret elsewhere this session (its keyed hash is in the learned
+			// set), it is not a false positive any more, so keep the finding and
+			// let the scrub pass erase it.
+			if !learned || !secrets.Known(findingValue(f)) {
+				continue
+			}
 		}
 		out = append(out, f)
 	}
 	return out
+}
+
+// findingValue returns the secret bytes a finding points at, preferring the
+// full match and falling back to the extracted secret, mirroring how the scrub
+// pass picks its needle.
+func findingValue(f report.Finding) string {
+	if f.Match != "" {
+		return f.Match
+	}
+	return f.Secret
 }
 
 // tokenOrSentinel returns the replacement text for a redacted span: a reversible
@@ -283,7 +318,11 @@ func uniqueStrings(in []string) []string {
 
 // RedactSecretsForWire is the exported entrypoint other packages (notably the
 // agent's outgoing-message last-resort pass) use to redact detected secrets
-// from arbitrary text destined for the provider.
+// from arbitrary text destined for the provider. It first erases any exact
+// known-value credential we loaded (the registry, which is a hard, high-precision
+// boundary independent of the gitleaks read-path toggle) and then runs the
+// gitleaks pattern pass over what remains.
 func RedactSecretsForWire(text string) string {
+	text = secrets.Scrub(text)
 	return redactSecrets(text)
 }

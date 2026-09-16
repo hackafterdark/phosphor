@@ -15,6 +15,8 @@ import (
 
 	"github.com/charmbracelet/x/term"
 	"gopkg.in/natefinch/lumberjack.v2"
+
+	"github.com/hackafterdark/phosphor/pkg/saferegex"
 )
 
 // LogConfig holds logging configuration passed to Setup.
@@ -176,6 +178,9 @@ func SetupWithConfig(logFile string, opts *LogConfig, debug bool, ws ...io.Write
 func compileFilters(filters []LogFilter) ([]compiledFilter, error) {
 	compiled := make([]compiledFilter, len(filters))
 	for i, f := range filters {
+		if err := saferegex.Check(f.Pattern); err != nil {
+			return nil, fmt.Errorf("filter pattern for field %q rejected: %w", f.Field, err)
+		}
 		re, err := regexp.Compile(f.Pattern)
 		if err != nil {
 			return nil, fmt.Errorf("invalid filter pattern for field %q: %w", f.Field, err)

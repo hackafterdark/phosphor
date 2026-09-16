@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hackafterdark/phosphor/pkg/secrets"
 	"github.com/stretchr/testify/require"
 	"github.com/zricethezav/gitleaks/v8/report"
 )
@@ -97,6 +98,14 @@ func TestIsGenericRule(t *testing.T) {
 // when it is known to be source code, while a vendor-prefixed key is still
 // redacted in the same file.
 func TestCodeFileMode_SuppressesGenericKeepsVendor(t *testing.T) {
+	// This test pins the pure code-file false-positive-suppression behaviour, so it
+	// must run against a clean learned-secret slate: the full-mode pass below
+	// records the generic value's keyed hash, and a non-empty learned set would
+	// otherwise resurrect it on the code-file assertion via the learned-secret
+	// memory rather than exercise the FP-suppression path this test targets.
+	secrets.ResetLearned()
+	t.Cleanup(secrets.ResetLearned)
+
 	code := "func main() {\n\tconst apiKey = \"Ab3d5Ef7G9H1J3K5L7N9P1Q3R5S7T9V1W3\"\n\tconst aws = \"AKIAIOSVPK253PIP5TGP\"\n}\n"
 
 	gotCode := redactSecretsAt(code, "src/config.go", "view")

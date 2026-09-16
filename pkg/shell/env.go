@@ -3,6 +3,8 @@ package shell
 import (
 	"runtime"
 	"strings"
+
+	"github.com/hackafterdark/phosphor/pkg/secrets"
 )
 
 // safeDefaultEnvVars is the minimum set of environment variables needed for
@@ -78,6 +80,13 @@ func SafeDefaultEnv() []string {
 // environment is case-insensitive, so that an allowlist of lowercase names
 // still lets through variables stored with different casing. Values for
 // proxy variables are scrubbed of embedded credentials (see scrubProxyCreds).
+//
+// It also applies a secret-name deny predicate on top of the allowlist: even if
+// an allowlist entry (default or operator-supplied) names a variable whose key
+// is itself secret-shaped (e.g. FOO_API_KEY, BAR_TOKEN, BAZ_SECRET), that entry
+// is dropped. The allowlist is the primary control; this is defense-in-depth so
+// a misconfigured or over-broad allowlist can never hand a provider token or a
+// password-shaped variable to a child process.
 func filterEnv(environ []string, allowlist map[string]struct{}) []string {
 	var filtered []string
 	for _, e := range environ {
@@ -88,9 +97,47 @@ func filterEnv(environ []string, allowlist map[string]struct{}) []string {
 		if _, allowed := allowlist[strings.ToLower(key)]; !allowed {
 			continue
 		}
+		// Defense-in-depth floor: a variable whose very name marks it as a
+		// credential is never passed through, regardless of the allowlist.
+		if isSecretEnvKey(key) {
+			continue
+		}
 		filtered = append(filtered, key+"="+scrubProxyCreds(val))
 	}
 	return filtered
+}
+
+// alwaysStripEnvKeys are variable names removed unconditionally, independent of
+// the allowlist, because their value is by convention a secret and no build tool
+// needs them to function. These complement the shared name-shape classifier below
+// with a few explicit provider-credential names. The lower-cased names are
+// matched exactly.
+var alwaysStripEnvKeys = map[string]struct{}{
+	"aws_secret_access_key":      {},
+	"aws_session_token":          {},
+	"aws_access_key_id":          {},
+	"azure_client_secret":        {},
+	"google_oauth_client_secret": {},
+	"docker_password":            {},
+	"gh_token":                   {},
+	"github_token":               {},
+	"gitlab_token":               {},
+}
+
+// isSecretEnvKey reports whether a variable name is itself a credential marker:
+// either an explicit always-strip name or a name the shared credential-key
+// classifier recognises as secret-shaped. The name-shape discipline lives in one
+// place (pkg/secrets) and is shared with the config/MCP registration gates, so
+// what counts as a credential key is consistent across the subprocess-env deny
+// floor and the known-value registry.
+func isSecretEnvKey(key string) bool {
+	if key == "" {
+		return false
+	}
+	if _, ok := alwaysStripEnvKeys[strings.ToLower(strings.TrimSpace(key))]; ok {
+		return true
+	}
+	return secrets.IsCredentialKey(key)
 }
 
 // buildAllowlist converts a slice of variable names into a map suitable for
