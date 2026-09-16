@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"html/template"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -146,8 +147,107 @@ var bannedCommands = []string{
 	"ufw",
 }
 
-func bashDescription(workspaceRoot string, attribution *config.Attribution, modelID string) string {
-	bannedCommandsStr := strings.Join(bannedCommands, ", ")
+var bannedNetworkCommands = []string{
+	"aria2c",
+	"axel",
+	"chrome",
+	"curl",
+	"curlie",
+	"firefox",
+	"http-prompt",
+	"httpie",
+	"links",
+	"lynx",
+	"nc",
+	"safari",
+	"scp",
+	"ssh",
+	"telnet",
+	"w3m",
+	"wget",
+	"xh",
+}
+
+var bannedNonNetworkCommands = filterBannedNetworkCommands(bannedCommands, bannedNetworkCommands)
+
+func filterBannedNetworkCommands(cmds []string, networkCmds []string) []string {
+	out := make([]string, 0, len(cmds))
+	for _, cmd := range cmds {
+		if !slices.Contains(networkCmds, cmd) {
+			out = append(out, cmd)
+		}
+	}
+	return out
+}
+
+func networkPolicyFromConfig(cfg config.ToolBash) shell.NetworkPolicy {
+	if cfg.Network == nil {
+		return shell.NetworkPolicy{}
+	}
+	return shell.NetworkPolicy{
+		Enabled:         cfg.Network.Enabled,
+		AllowedCommands: cfg.Network.AllowedCommands,
+		HostAllowlist:   cfg.Network.HostAllowlist,
+	}
+}
+
+func effectiveBannedCommands(cfg config.ToolBash) []string {
+	var cmds []string
+
+	for _, cmd := range bannedNonNetworkCommands {
+		cmds = appendBannedCommand(cmds, cmd)
+	}
+	for _, cmd := range cfg.BannedCommands {
+		cmds = appendBannedCommand(cmds, cmd)
+	}
+
+	if cfg.Network == nil || !cfg.Network.Enabled {
+		for _, cmd := range bannedNetworkCommands {
+			cmds = appendBannedCommand(cmds, cmd)
+		}
+		return cmds
+	}
+
+	if len(cfg.Network.AllowedCommands) == 0 {
+		return cmds
+	}
+
+	allowed := make(map[string]struct{}, len(cfg.Network.AllowedCommands))
+	for _, cmd := range cfg.Network.AllowedCommands {
+		if c := normalizeBashCommand(cmd); c != "" {
+			allowed[c] = struct{}{}
+		}
+	}
+	for _, cmd := range bannedNetworkCommands {
+		c := normalizeBashCommand(cmd)
+		if c == "" {
+			continue
+		}
+		if _, ok := allowed[c]; !ok {
+			cmds = appendBannedCommand(cmds, cmd)
+		}
+	}
+	return cmds
+}
+
+func appendBannedCommand(cmds []string, cmd string) []string {
+	if cmd == "" || slices.Contains(cmds, cmd) {
+		return cmds
+	}
+	return append(cmds, cmd)
+}
+
+func normalizeBashCommand(cmd string) string {
+	cmd = strings.ToLower(strings.TrimSpace(cmd))
+	cmd = strings.Replace(cmd, "\\", "/", -1)
+	if idx := strings.LastIndexByte(cmd, '/'); idx >= 0 {
+		cmd = cmd[idx+1:]
+	}
+	return strings.TrimSuffix(cmd, ".exe")
+}
+
+func bashDescription(workspaceRoot string, cfg config.ToolBash, attribution *config.Attribution, modelID string) string {
+	bannedCommandsStr := strings.Join(effectiveBannedCommands(cfg), ", ")
 	var attr config.Attribution
 	if attribution != nil {
 		attr = *attribution
@@ -169,9 +269,10 @@ func bashDescription(workspaceRoot string, attribution *config.Attribution, mode
 }
 
 func blockFuncs(ctx context.Context, cfg config.ToolBash) []shell.BlockFunc {
-	cmds := append(bannedCommands, cfg.BannedCommands...)
+	cmds := append(bannedNonNetworkCommands, cfg.BannedCommands...)
 	funcs := []shell.BlockFunc{
 		shell.CommandsBlocker(cmds),
+		shell.NetworkBlocker(bannedNetworkCommands, networkPolicyFromConfig(cfg)),
 
 		// System package managers
 		shell.ArgumentsBlocker("apk", []string{"add"}, nil),
@@ -245,7 +346,7 @@ func blockFuncs(ctx context.Context, cfg config.ToolBash) []shell.BlockFunc {
 func NewBashTool(permissions permission.Service, workingDir string, bashCfg config.ToolBash, attribution *config.Attribution, modelID string) fantasy.AgentTool {
 	return fantasy.NewAgentTool(
 		BashToolName,
-		string(bashDescription(workingDir, attribution, modelID)),
+		string(bashDescription(workingDir, bashCfg, attribution, modelID)),
 		func(ctx context.Context, params BashParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
 			ctx, span := otel.StartSpan(ctx, "execute_tool bash")
 			defer span.End()
@@ -349,7 +450,7 @@ func NewBashTool(permissions permission.Service, workingDir string, bashCfg conf
 						return fantasy.ToolResponse{}, fmt.Errorf("[Job %s] error executing command: %w", bgShell.ID, execErr)
 					}
 
-					stdout = formatOutput(stdout, stderr, execErr)
+					stdout = formatOutput(stdout, stderr, execErr, params.Command)
 
 					metadata := BashResponseMetadata{
 						StartTime:        startTime.UnixMilli(),
@@ -433,7 +534,7 @@ func NewBashTool(permissions permission.Service, workingDir string, bashCfg conf
 					return fantasy.ToolResponse{}, fmt.Errorf("[Job %s] error executing command: %w", bgShell.ID, execErr)
 				}
 
-				stdout = formatOutput(stdout, stderr, execErr)
+				stdout = formatOutput(stdout, stderr, execErr, params.Command)
 
 				metadata := BashResponseMetadata{
 					StartTime:        startTime.UnixMilli(),
@@ -466,12 +567,19 @@ func NewBashTool(permissions permission.Service, workingDir string, bashCfg conf
 }
 
 // formatOutput formats the output of a completed command with error handling
-func formatOutput(stdout, stderr string, execErr error) string {
+func formatOutput(stdout, stderr string, execErr error, command string) string {
 	interrupted := shell.IsInterrupt(execErr)
 	exitCode := shell.ExitCode(execErr)
 
 	stdout = truncateOutput(stdout)
 	stderr = truncateOutput(stderr)
+
+	// Whole-value redaction (A) when the command argv referenced a sensitive path
+	// (cat/source/less .env, credentials, keys): drop assignment values from the
+	// raw command data before it is combined. The detector pass (B) still runs on
+	// the whole result below, so an output the argv heuristic missed is caught there.
+	stdout = redactSensitiveOutputForCommand(stdout, command)
+	stderr = redactSensitiveOutputForCommand(stderr, command)
 
 	errorMessage := stderr
 	if errorMessage == "" && execErr != nil {
@@ -500,7 +608,11 @@ func formatOutput(stdout, stderr string, execErr error) string {
 		stdout += "\n" + errorMessage
 	}
 
-	return stdout
+	// Scrub any credentials from the combined output before it reaches the
+	// transcript; this covers foreground completion and the background fast-fail
+	// path (both route through formatOutput). Bash output is path-less, so it is
+	// scanned in full mode and honours the read-path secrets toggle.
+	return redactSecretsForTool(stdout, "", "bash")
 }
 
 func TruncateOutput(content string) string {

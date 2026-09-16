@@ -36,6 +36,7 @@ Search it with the `phosphor_docs` tool, or open a file below with the
 - [Phosphor Security Configuration](phosphor://docs/security/CONFIGURATION.md)
 - [Environment Variable Hardening](phosphor://docs/security/ENVIRONMENT_HARDENING.md)
 - [Network Egress Hardening](phosphor://docs/security/NETWORK_EGRESS_HARDENING.md)
+- [Secret Protection & Anti-Exfiltration Plan](phosphor://docs/security/SECRET_PROTECTION_PLAN.md)
 - [Workspace Filesystem Hardening](phosphor://docs/security/WORKSPACE_HARDENING.md)
 - [Structural Search Language Configuration](phosphor://docs/structural_search/CONFIGURATION.md)
 - [Structural Search Language Notes](phosphor://docs/structural_search/LANGUAGE_NOTES.md)

@@ -177,15 +177,18 @@ type sessionAgent struct {
 	systemPrompt       *csync.Value[string]
 	tools              *csync.Slice[fantasy.AgentTool]
 
-	isSubAgent           bool
-	sessions             session.Service
-	messages             message.Service
-	goalService          goal.Service
-	disableAutoSummarize bool
-	summarizeThreshold   float64
-	isYolo               bool
-	notify               pubsub.Publisher[notify.Notification]
-	runComplete          pubsub.Publisher[notify.RunComplete]
+	isSubAgent            bool
+	sessions              session.Service
+	messages              message.Service
+	goalService           goal.Service
+	disableAutoSummarize  bool
+	summarizeThreshold    float64
+	isYolo                bool
+	redactOutgoingSecrets bool
+	redactOutgoingPII     bool
+	wireSecretsForced     bool
+	notify                pubsub.Publisher[notify.Notification]
+	runComplete           pubsub.Publisher[notify.RunComplete]
 
 	// Reflection loop state.
 	reflectionEnabled  *csync.Value[bool]
@@ -233,49 +236,55 @@ type sessionAgent struct {
 }
 
 type SessionAgentOptions struct {
-	LargeModel           Model
-	SmallModel           Model
-	SystemPromptPrefix   string
-	SystemPrompt         string
-	IsSubAgent           bool
-	DisableAutoSummarize bool
-	SummarizeThreshold   float64
-	IsYolo               bool
-	Sessions             session.Service
-	Messages             message.Service
-	GoalService          goal.Service
-	Tools                []fantasy.AgentTool
-	Notify               pubsub.Publisher[notify.Notification]
-	RunComplete          pubsub.Publisher[notify.RunComplete]
-	ReflectionEnabled    bool
-	MaxReflectionTurns   int
+	LargeModel            Model
+	SmallModel            Model
+	SystemPromptPrefix    string
+	SystemPrompt          string
+	IsSubAgent            bool
+	DisableAutoSummarize  bool
+	SummarizeThreshold    float64
+	IsYolo                bool
+	RedactOutgoingSecrets bool
+	RedactOutgoingPII     bool
+	WireSecretsForced     bool
+	Sessions              session.Service
+	Messages              message.Service
+	GoalService           goal.Service
+	Tools                 []fantasy.AgentTool
+	Notify                pubsub.Publisher[notify.Notification]
+	RunComplete           pubsub.Publisher[notify.RunComplete]
+	ReflectionEnabled     bool
+	MaxReflectionTurns    int
 }
 
 func NewSessionAgent(
 	opts SessionAgentOptions,
 ) SessionAgent {
 	return &sessionAgent{
-		largeModel:           csync.NewValue(opts.LargeModel),
-		smallModel:           csync.NewValue(opts.SmallModel),
-		systemPromptPrefix:   csync.NewValue(opts.SystemPromptPrefix),
-		systemPrompt:         csync.NewValue(opts.SystemPrompt),
-		isSubAgent:           opts.IsSubAgent,
-		sessions:             opts.Sessions,
-		messages:             opts.Messages,
-		goalService:          opts.GoalService,
-		disableAutoSummarize: opts.DisableAutoSummarize,
-		summarizeThreshold:   opts.SummarizeThreshold,
-		tools:                csync.NewSliceFrom(opts.Tools),
-		isYolo:               opts.IsYolo,
-		notify:               opts.Notify,
-		runComplete:          opts.RunComplete,
-		reflectionEnabled:    csync.NewValue(opts.ReflectionEnabled),
-		maxReflectionTurns:   csync.NewValue(opts.MaxReflectionTurns),
-		messageQueue:         csync.NewMap[string, []SessionAgentCall](),
-		activeRequests:       csync.NewMap[string, context.CancelFunc](),
-		dispatchMu:           csync.NewMap[string, *sync.Mutex](),
-		acceptedRuns:         csync.NewMap[string, int](),
-		cancelMark:           csync.NewMap[string, uint64](),
+		largeModel:            csync.NewValue(opts.LargeModel),
+		smallModel:            csync.NewValue(opts.SmallModel),
+		systemPromptPrefix:    csync.NewValue(opts.SystemPromptPrefix),
+		systemPrompt:          csync.NewValue(opts.SystemPrompt),
+		isSubAgent:            opts.IsSubAgent,
+		sessions:              opts.Sessions,
+		messages:              opts.Messages,
+		goalService:           opts.GoalService,
+		disableAutoSummarize:  opts.DisableAutoSummarize,
+		summarizeThreshold:    opts.SummarizeThreshold,
+		tools:                 csync.NewSliceFrom(opts.Tools),
+		isYolo:                opts.IsYolo,
+		redactOutgoingSecrets: opts.RedactOutgoingSecrets,
+		redactOutgoingPII:     opts.RedactOutgoingPII,
+		wireSecretsForced:     opts.WireSecretsForced,
+		notify:                opts.Notify,
+		runComplete:           opts.RunComplete,
+		reflectionEnabled:     csync.NewValue(opts.ReflectionEnabled),
+		maxReflectionTurns:    csync.NewValue(opts.MaxReflectionTurns),
+		messageQueue:          csync.NewMap[string, []SessionAgentCall](),
+		activeRequests:        csync.NewMap[string, context.CancelFunc](),
+		dispatchMu:            csync.NewMap[string, *sync.Mutex](),
+		acceptedRuns:          csync.NewMap[string, int](),
+		cancelMark:            csync.NewMap[string, uint64](),
 	}
 }
 
@@ -1087,6 +1096,16 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 				combined += "\n\n" + a.renderActiveGoalBlock(activeGoal)
 			}
 			prepared.System = &combined
+
+			// Last-resort secret/PII mask over the exact payload about to go over
+			// the wire, catching anything that reached history by some path the
+			// per-tool redactors missed (user paste, compaction reintroduction).
+			// Runs on a cloned copy; the stored transcript is left intact. The gate
+			// honours the forced provider-wire boundary, so disabling the opt-in
+			// redact_outgoing_secrets cannot drop the last-resort mask.
+			if a.outgoingRedactionEnabled() {
+				prepared.Messages = a.redactOutgoingMessages(prepared.Messages)
+			}
 
 			// Propagate goal ID if present in the caller context.
 			if goalID, ok := ctx.Value(goal.GoalIDContextKey).(string); ok {

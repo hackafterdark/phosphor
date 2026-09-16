@@ -245,6 +245,14 @@ func (m *Tool) Run(ctx context.Context, params fantasy.ToolCall) (fantasy.ToolRe
 		response = fantasy.NewTextResponse(result.Content)
 	}
 
+	// Scrub credentials from the MCP result before it reaches the transcript or
+	// the trace span; gitleaks catches formats sanitizeResult's key-based path
+	// cannot see. MCP results are path-less, so they are scanned in full mode and
+	// honour the read-path secrets toggle.
+	if response.Content != "" {
+		response.Content = redactSecretsForTool(response.Content, "", "mcp")
+	}
+
 	// Record the tool result on the span (opt-in per MCP semconv).
 	// Sanitize to prevent leaking sensitive data into OTel.
 	if response.Content != "" {

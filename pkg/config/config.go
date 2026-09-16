@@ -837,6 +837,14 @@ type ToolBash struct {
 	// tool's post-expansion path confinement may access alongside the
 	// workspace. The OS temporary directory is trusted by default.
 	TrustedExtraRoots []string `json:"trusted_extra_roots,omitempty" jsonschema:"description=Additional absolute directories that bash may access alongside the workspace. The OS temporary directory is trusted by default."`
+
+	Network *ToolBashNetwork `json:"network,omitempty" jsonschema:"description=Optional opt-in network egress policy for bash commands."`
+}
+
+type ToolBashNetwork struct {
+	Enabled         bool     `json:"enabled,omitempty" jsonschema:"description=Activate network egress policy for the bash tool. Default false."`
+	AllowedCommands []string `json:"allowed_commands,omitempty" jsonschema:"description=Built-in network commands permitted when Enabled is true. Empty permits all built-in network commands."`
+	HostAllowlist   []string `json:"host_allowlist,omitempty" jsonschema:"description=Hostnames FQDN suffixes or CIDR ranges permitted for outbound network commands. Empty permits any host not hard denied."`
 }
 
 type ToolLs struct {
@@ -1001,6 +1009,118 @@ type SecurityConfig struct {
 	AllowedEgress AllowedEgressConfig `json:"allowed_egress,omitempty" jsonschema:"description=Permitted outbound platforms"`
 	ToolBlacklist []string            `json:"tool_blacklist,omitempty" jsonschema:"description=List of tools to block"`
 	ReadOnly      bool                `json:"read_only,omitempty" jsonschema:"description=Force read-only mode"`
+	// RedactOutgoingSecrets is the last-resort secret mask applied to the exact
+	// message payload sent to the provider. Tri-state: nil means enabled (the
+	// secure default); set it to false only to opt out.
+	RedactOutgoingSecrets *bool `json:"redact_outgoing_secrets,omitempty" jsonschema:"description=Last-resort secret mask on the provider request body,defaults=true"`
+	// RedactOutgoingPII masks PII (email/ssn/phone/ip/credit-card) on the
+	// provider request body. Tri-state: nil means disabled because the heuristics
+	// false-positive on ordinary code; set it to true to opt in.
+	RedactOutgoingPII *bool `json:"redact_outgoing_pii,omitempty" jsonschema:"description=Mask PII on the provider request body,defaults=false"`
+	// RedactSensitiveFiles is the path-based whole-value redaction applied when the
+	// agent reads a sensitive file (.env and friends, credentials/keys): the
+	// assignment keys are kept but the values become a non-reusable sentinel.
+	// Tri-state: nil means enabled (the secure default); set it to false only to
+	// opt out. The core .env family is always sensitive; SensitiveFilePatterns can
+	// only extend the set, never remove it.
+	RedactSensitiveFiles *bool `json:"redact_sensitive_files,omitempty" jsonschema:"description=Whole-value redaction when reading .env/credentials/keys,defaults=true"`
+	// SensitiveFilePatterns extends the default sensitive-file glob set for the
+	// read-path whole-value redaction. Entries are matched case-insensitively,
+	// either against the file base name (no slash) or the whole slash path.
+	SensitiveFilePatterns []string `json:"sensitive_file_patterns,omitempty" jsonschema:"description=Extra globs treated as sensitive files (extends the default set)"`
+	// TokenizeSecrets turns reversible-by-id tokenization on. When on, the read
+	// path emits <secret:kind:id> tokens instead of static sentinels and the
+	// original value is restored only when the agent writes to a trusted
+	// sensitive file (an .env round-trip). Tri-state: nil means disabled (the
+	// default keeps the shipped non-reusable sentinels, which are already safe).
+	TokenizeSecrets *bool `json:"tokenize_secrets,omitempty" jsonschema:"description=Reversible-by-id tokenization of redacted secrets for trusted .env round-trips,defaults=false"`
+	// CodeFileFalsePositiveMode suppresses the low-precision generic KEY=value /
+	// "apiKey":"value" detector family when a scan is known to be reading source
+	// code, keeping the high-precision vendor-prefix, PEM, JWT and connection-
+	// string checks. Tri-state: nil means enabled (the secure, low-noise default).
+	CodeFileFalsePositiveMode *bool `json:"code_file_false_positive_mode,omitempty" jsonschema:"description=Skip generic KEY=value detectors when reading source code,defaults=true"`
+	// WireSecretRedactionForce keeps the last-resort secret mask on the provider
+	// request body even if redact_outgoing_secrets is turned off: the provider
+	// wire is a hard boundary. Tri-state: nil means enabled; set it to false only
+	// to allow fully disabling wire secret masking (in which case
+	// redact_outgoing_secrets alone governs it).
+	WireSecretRedactionForce *bool `json:"wire_secret_redaction_force,omitempty" jsonschema:"description=Always mask secrets on the provider request body,defaults=true"`
+}
+
+// DefaultSensitiveFilePatterns is the built-in set the read path treats as
+// sensitive for whole-value redaction: the .env family, dotenv-style rc files,
+// GCP/ADC-style credential JSON, and opaque private-key material. It is always
+// active; SensitiveFilePatterns may only add to it. Globs with no slash match
+// the file base name, globs with a slash match the whole slash-normalized path.
+var DefaultSensitiveFilePatterns = []string{
+	// dotenv family (mechanism A whole-value redaction by KEY=value shape).
+	".env", ".env.*", "*.env",
+	".npmrc", ".netrc", "_netrc", ".git-credentials",
+	// direnv setup file is MIXED tier (see the classifier): sensitive, but known
+	// harmless keys stay visible.
+	".envrc",
+	// credential JSON (GCP service accounts, ADC-style files).
+	"credentials*.json", "*service-account*.json", "secrets.*",
+	// opaque private-key material (whole content is the secret).
+	"id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", "*.pem", "*.p12", "*.pfx",
+}
+
+// ShouldRedactSensitiveFiles reports whether the path-based whole-value
+// read redaction is on. The secure default is on: a nil Security block or a nil
+// field both mean enabled.
+func (c Config) ShouldRedactSensitiveFiles() bool {
+	if c.Security == nil || c.Security.RedactSensitiveFiles == nil {
+		return true
+	}
+	return *c.Security.RedactSensitiveFiles
+}
+
+// ShouldTokenizeSecrets reports whether reversible-by-id tokenization is on. The
+// default is off: the shipped non-reusable sentinels are already safe, so this is
+// an explicit opt-in for the trusted .env round-trip flow.
+func (c Config) ShouldTokenizeSecrets() bool {
+	return c.Security != nil && c.Security.TokenizeSecrets != nil && *c.Security.TokenizeSecrets
+}
+
+// ShouldCodeFileFalsePositiveMode reports whether the code-file false-positive
+// suppression is on. The secure, low-noise default is on; a nil field keeps it on.
+func (c Config) ShouldCodeFileFalsePositiveMode() bool {
+	if c.Security == nil || c.Security.CodeFileFalsePositiveMode == nil {
+		return true
+	}
+	return *c.Security.CodeFileFalsePositiveMode
+}
+
+// ShouldForceWireSecretRedaction reports whether the provider-boundary secret mask
+// is forced on regardless of redact_outgoing_secrets. The secure default is on; a
+// nil field keeps it on.
+func (c Config) ShouldForceWireSecretRedaction() bool {
+	if c.Security == nil || c.Security.WireSecretRedactionForce == nil {
+		return true
+	}
+	return *c.Security.WireSecretRedactionForce
+}
+
+// EffectiveSensitiveFilePatterns is the default sensitive set plus any operator
+// additions, de-duplicated while preserving order.
+func (c Config) EffectiveSensitiveFilePatterns() []string {
+	var extra []string
+	if c.Security != nil {
+		extra = c.Security.SensitiveFilePatterns
+	}
+	if len(extra) == 0 {
+		return DefaultSensitiveFilePatterns
+	}
+	out := make([]string, 0, len(DefaultSensitiveFilePatterns)+len(extra))
+	seen := make(map[string]bool, len(DefaultSensitiveFilePatterns)+len(extra))
+	for _, p := range append(append([]string{}, DefaultSensitiveFilePatterns...), extra...) {
+		if seen[p] {
+			continue
+		}
+		seen[p] = true
+		out = append(out, p)
+	}
+	return out
 }
 
 // WorkspaceSearch holds settings for the unified workspace search system

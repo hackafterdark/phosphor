@@ -414,6 +414,58 @@ matching via `strings.EqualFold`.
 - `internal/agent/coordinator.go` — `tuiAllowPrompt` field and wiring.
 - `internal/agent/agentic_fetch_tool.go` — call site updated to pass `c.tuiAllowPrompt`.
 
+### Bash Network Egress Policy
+
+The bash tool blocks network utilities by default. An optional opt-in policy
+can allow selected command argv targets without disabling the rest of the shell
+deny list.
+
+```json
+{
+  "$schema": "https://github.com/hackafterdark/phosphor/blob/main/schema.json",
+  "tools": {
+    "bash": {
+      "network": {
+        "enabled": true,
+        "allowed_commands": ["curl", "wget", "nc"],
+        "host_allowlist": [".github.com", "registry.npmjs.org", "10.0.0.0/8"]
+      }
+    }
+  }
+}
+```
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `enabled` | `bool` | `false` | Enables the network egress policy for bash commands. |
+| `allowed_commands` | `[]string` | `[]` | Built-in network commands permitted when `enabled` is `true`. Empty allows all built-in network commands. |
+| `host_allowlist` | `[]string` | `[]` | Hostnames, FQDN suffixes, IPs, or CIDR ranges permitted as outbound destinations. Empty permits any host that is not hard denied. |
+
+Supported host patterns:
+
+- Exact host or IP: `github.com`, `127.0.0.1`
+- FQDN suffix: `.github.com`, `*.github.com`
+- CIDR range: `10.0.0.0/8`, `fd00::/8`
+
+Hard-denied targets cannot be overridden by `host_allowlist`:
+
+- RFC 1918 private ranges and IPv6 private equivalents
+- Loopback and unspecified addresses
+- Link-local and metadata ranges including `169.254.0.0/16`
+- `localhost`, `.localhost`, `metadata`, and `metadata.google.internal`
+
+When `tools.bash.network` is absent or disabled, known network commands remain
+blocked. User `tools.bash.banned_commands` always win over the network policy.
+Commands outside the network command list are unaffected unless they are added
+to `allowed_commands`; when they are added, destination arguments are checked
+with the same host policy.
+
+The policy is argv-based. It inspects expanded command arguments, not OS-level
+socket syscalls. Commands that construct destinations dynamically after process
+start, read URLs from files, or invoke other network-capable child processes
+may bypass argv inspection. This is not a replacement for OS network isolation,
+a brokered egress proxy, or provider-side network controls.
+
 ---
 
 ## Hooks as Security Gateways
@@ -441,9 +493,157 @@ can be used as security gateways to inspect, modify, or block tool calls:
 - **`timeout`**: Timeout in seconds for the hook command (default `30`).
 
 Hooks run before permission checks and can return decisions to allow, deny, or
-rewrite tool inputs. See [HOOKS.md](./HOOKS.md) for the full hook protocol.
+rewrite tool inputs. See the [hooks README](../hooks/README.md) for the full
+hook protocol.
 
----
+### Stage-3 ML PII Classifier Hook
+
+The default secret path is the in-process gitleaks detector: heuristic rules,
+RE2 regexes, entropy gates, and no model runtime. For users who want an
+opt-in ML layer, Phosphor ships an advanced hook recipe instead of embedding a
+model in the agent loop.
+
+The current hook event is **input-only**. `PreToolUse` receives:
+
+```json
+{
+  "event": "PreToolUse",
+  "session_id": "session-id",
+  "cwd": "/workspace",
+  "tool_name": "view",
+  "tool_input": {
+    "file_path": "README.md"
+  }
+}
+```
+
+There is no `tool_result` field today. That means this recipe can classify
+tool arguments, command text, file targets, and content being written, but it
+cannot inspect the eventual output of `view`, `grep`, `bash`, or MCP tools.
+Future result-based scanning needs a separate `PostToolUse` event.
+
+Enable the recipe in project-level `phosphor.json`:
+
+```json
+{
+  "$schema": "https://github.com/hackafterdark/phosphor/blob/main/schema.json",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "name": "pii-classify",
+        "matcher": "^(view|grep|glob|bash|edit|write|multiedit|append|job_output)$|^mcp_",
+        "command": "./scripts/pii-classify.sh",
+        "timeout": 10
+      }
+    ]
+  }
+}
+```
+
+The matcher intentionally uses real Phosphor tool names: `view`, not `read`.
+MCP tools are matched by their `mcp_` prefix because registered MCP tool names
+have the shape `mcp_<server>_<tool>`.
+
+Make the script executable:
+
+```bash
+chmod +x scripts/pii-classify.sh
+```
+
+Point it at any out-of-process classifier. The classifier reads candidate text
+from stdin and prints JSON to stdout:
+
+```json
+{
+  "decision": "pii",
+  "confidence": 0.91,
+  "reason": "email-like and national-id-like strings"
+}
+```
+
+Example environment setup:
+
+```bash
+export PII_CLASSIFY_CMD="python ./my_pii_classifier.py"
+export PII_CONFIDENCE_THRESHOLD="0.8"
+export PII_CLASSIFY_FILES="1"
+```
+
+Environment variables used by `scripts/pii-classify.sh`:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `PII_CLASSIFY_CMD` | empty | Shell command that reads text from stdin and prints classifier JSON. Empty means the hook fails open. |
+| `PII_CONFIDENCE_THRESHOLD` | `0.8` | Minimum score treated as PII unless the classifier returns `{"decision":"pii"}`. |
+| `PII_CLASSIFY_FILES` | `0` | When `1`, also read `file_path` inputs into the classifier. This gives `view` calls a content check before the tool runs, but it still cannot cover `grep` or `bash` stdout. |
+
+A minimal classifier adapter can be written around an ONNX model or an Ollama
+served model. The wrapper contract is small enough that any language works:
+
+```python
+#!/usr/bin/env python3
+import json
+import sys
+
+text = sys.stdin.read()
+
+# Replace this block with the ONNX/Ollama classifier call.
+# Example models: LFM2.5-Encoder-350M-PII-Detector or deeppass2-bert.
+score = 0.0
+decision = "safe"
+
+if score >= 0.8:
+    decision = "pii"
+
+print(json.dumps({"decision": decision, "confidence": score}))
+```
+
+The hook is opt-in, so the core binary stays zero-ML. A classifier crash,
+timeout, missing `jq`, or missing model is treated as "no opinion" rather than
+blocking the agent.
+
+### Custom Secret Rules
+
+Phosphor loads `.phosphor/secret-rules.toml` when present. It uses the gitleaks
+custom-rule style and is merged on top of the gitleaks default config while
+preserving the built-in allow-list behavior.
+
+Example `.phosphor/secret-rules.toml`:
+
+```toml
+[[rules]]
+id = "acme-service-token"
+description = "Acme internal service token"
+regex = '''\bacme-(?:prod|stg)-([a-f0-9]{32})\b'''
+secretGroup = 1
+entropy = 3.5
+keywords = ["acme-prod-", "acme-stg-"]
+tags = ["acme", "company"]
+
+  [[rules.allowlists]]
+  description = "Ignore documentation examples"
+  paths = ['''(^|/)docs/.*\.md$''']
+  regexTarget = "match"
+  regexes = ['''acme-(?:prod|stg)-[a-f0-9]{32}''']
+
+[[allowlists]]
+description = "Known fake test fixture"
+stopwords = ["acme-prod-0123456789abcdef0123456789"]
+```
+
+Supported top-level fields are:
+
+| Field | Behavior |
+|---|---|
+| `[[rules]]` | Adds or replaces a gitleaks rule by `id`. |
+| `[[rules.allowlists]]` | Rule-scoped allow-list. Supports `condition`, `commits`, `paths`, `regexes`, `regexTarget`, `stopwords`. |
+| `[[rules.required]]` | Composite rule dependency. Supports `id`, `withinLines`, `withinColumns`. |
+| `[[allowlists]]` | Global allow-list. Supports `targetRules` to attach the allow-list to specific rule IDs. |
+| `[allowlist]` | Deprecated gitleaks singular global allow-list form; accepted for compatibility. |
+
+If the file is missing, the default detector is used. If it is malformed or
+contains an invalid rule, Phosphor logs a warning and keeps the built-in gitleaks
+ruleset active rather than disabling secret scanning.
 
 ## Summary Reference
 
@@ -468,6 +668,9 @@ rewrite tool inputs. See [HOOKS.md](./HOOKS.md) for the full hook protocol.
 | LS item limit | `tools.ls.max_items` | Int | 1000 |
 | Grep timeout | `tools.grep.timeout` | Duration | 5s |
 | Network egress hardening | `tools.web_fetch.ip_allow_list` + `allow_raw_ips` | Array, Bool | False (FQDN required) |
+| Bash network egress policy | `tools.bash.network` | Object | Disabled |
 | Hook security gates | `hooks.<event>` | Array | None |
+| ML PII hook recipe | `hooks.PreToolUse[].command` + `scripts/pii-classify.sh` | Hook | Disabled |
+| Custom secret rules | `.phosphor/secret-rules.toml` | File | Absent |
 | OTel sampling rate | `observability.sampling_rate` | Float | 1.0 |
 | OTel endpoint | `observability.endpoint` | String | Empty (disabled) |

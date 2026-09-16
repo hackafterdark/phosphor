@@ -875,23 +875,56 @@ func (c *coordinator) buildAgent(ctx context.Context, prompt *prompt.Prompt, age
 		maxReflectionTurns = c.cfg.Config().Options.Agent.MaxTurns
 	}
 
+	sec := c.cfg.Config().Security
+	redactOutgoingSecrets := true
+	redactOutgoingPII := false
+	redactSensitiveFiles := true
+	wireSecretsForced := c.cfg.Config().ShouldForceWireSecretRedaction()
+	var sensitiveFilePatterns []string
+	if sec != nil {
+		if sec.RedactOutgoingSecrets != nil {
+			redactOutgoingSecrets = *sec.RedactOutgoingSecrets
+		}
+		if sec.RedactOutgoingPII != nil {
+			redactOutgoingPII = *sec.RedactOutgoingPII
+		}
+		if sec.RedactSensitiveFiles != nil {
+			redactSensitiveFiles = *sec.RedactSensitiveFiles
+		}
+		sensitiveFilePatterns = sec.SensitiveFilePatterns
+	}
+	tools.SetSensitiveFilePolicy(redactSensitiveFiles, sensitiveFilePatterns)
+	// Freeze the read-path redaction snapshot (secrets toggle, code-file FP mode,
+	// tokenization, token store bounds) once here so nothing re-derives it from
+	// mutable state during the session.
+	codeFileFP := c.cfg.Config().ShouldCodeFileFalsePositiveMode()
+	tokenize := c.cfg.Config().ShouldTokenizeSecrets()
+	tools.SetRedactionPolicy(tools.RedactionPolicyOptions{
+		CodeFileFPEnabled:   &codeFileFP,
+		TokenizationEnabled: &tokenize,
+	})
+	tools.SetSecretRulesPath(filepath.Join(c.cfg.WorkingDir(), ".phosphor", "secret-rules.toml"))
+
 	result := NewSessionAgent(SessionAgentOptions{
-		LargeModel:           large,
-		SmallModel:           small,
-		SystemPromptPrefix:   largeProviderCfg.SystemPromptPrefix,
-		SystemPrompt:         "",
-		IsSubAgent:           isSubAgent,
-		DisableAutoSummarize: c.cfg.Config().Options.DisableAutoSummarize,
-		SummarizeThreshold:   c.cfg.Config().Options.SummarizeThreshold,
-		IsYolo:               c.permissions.SkipRequests(),
-		Sessions:             c.sessions,
-		Messages:             c.messages,
-		GoalService:          c.goalService,
-		Tools:                nil,
-		Notify:               c.notify,
-		RunComplete:          c.runComplete,
-		ReflectionEnabled:    reflectionEnabled,
-		MaxReflectionTurns:   maxReflectionTurns,
+		LargeModel:            large,
+		SmallModel:            small,
+		SystemPromptPrefix:    largeProviderCfg.SystemPromptPrefix,
+		SystemPrompt:          "",
+		IsSubAgent:            isSubAgent,
+		DisableAutoSummarize:  c.cfg.Config().Options.DisableAutoSummarize,
+		SummarizeThreshold:    c.cfg.Config().Options.SummarizeThreshold,
+		IsYolo:                c.permissions.SkipRequests(),
+		Sessions:              c.sessions,
+		Messages:              c.messages,
+		GoalService:           c.goalService,
+		Tools:                 nil,
+		Notify:                c.notify,
+		RunComplete:           c.runComplete,
+		ReflectionEnabled:     reflectionEnabled,
+		MaxReflectionTurns:    maxReflectionTurns,
+		RedactOutgoingSecrets: redactOutgoingSecrets,
+		RedactOutgoingPII:     redactOutgoingPII,
+		WireSecretsForced:     wireSecretsForced,
 	})
 
 	c.readyWg.Go(func() error {

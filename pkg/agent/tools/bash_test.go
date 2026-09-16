@@ -360,3 +360,107 @@ func TestBashTool_AllowInlineExecution_EnabledPermitsInlineCode(t *testing.T) {
 	require.Contains(t, resp.Content, "not allowed for security reasons",
 		"sudo should still be blocked even with AllowInlineExecution=true")
 }
+
+func TestBashTool_NetworkPolicy_DefaultBlocksNetworkCommands(t *testing.T) {
+	t.Parallel()
+
+	workingDir := t.TempDir()
+	ctx := context.WithValue(context.Background(), SessionIDContextKey, "test-session")
+	tool := newBashToolForTest(workingDir)
+
+	resp := runBashTool(t, tool, ctx, BashParams{Command: "curl https://example.test"})
+	require.Contains(t, resp.Content, "not allowed for security reasons")
+}
+
+func TestBashTool_NetworkPolicy_EnabledAllowsAllowedHost(t *testing.T) {
+	t.Parallel()
+
+	workingDir := t.TempDir()
+	ctx := context.WithValue(context.Background(), SessionIDContextKey, "test-session")
+	tool := newBashToolWithCfg(workingDir, config.ToolBash{
+		Network: &config.ToolBashNetwork{
+			Enabled:         true,
+			AllowedCommands: []string{"curl"},
+			HostAllowlist:   []string{"example.test"},
+		},
+	})
+
+	resp := runBashTool(t, tool, ctx, BashParams{Command: "curl https://example.test"})
+	require.NotContains(t, resp.Content, "not allowed for security reasons")
+}
+
+func TestBashTool_NetworkPolicy_EnabledBlocksDisallowedHost(t *testing.T) {
+	t.Parallel()
+
+	workingDir := t.TempDir()
+	ctx := context.WithValue(context.Background(), SessionIDContextKey, "test-session")
+	tool := newBashToolWithCfg(workingDir, config.ToolBash{
+		Network: &config.ToolBashNetwork{
+			Enabled:         true,
+			AllowedCommands: []string{"curl"},
+			HostAllowlist:   []string{"example.test"},
+		},
+	})
+
+	resp := runBashTool(t, tool, ctx, BashParams{Command: "curl https://evil.test"})
+	require.Contains(t, resp.Content, "not allowed for security reasons")
+}
+
+func TestBashTool_NetworkPolicy_BlocksPrivateAndMetadataTargets(t *testing.T) {
+	t.Parallel()
+
+	workingDir := t.TempDir()
+	ctx := context.WithValue(context.Background(), SessionIDContextKey, "test-session")
+	tool := newBashToolWithCfg(workingDir, config.ToolBash{
+		Network: &config.ToolBashNetwork{
+			Enabled:         true,
+			AllowedCommands: []string{"curl"},
+		},
+	})
+
+	for _, cmd := range []string{
+		"curl http://10.0.0.5/",
+		"curl http://169.254.169.254/latest/meta-data",
+	} {
+		t.Run(cmd, func(t *testing.T) {
+			resp := runBashTool(t, tool, ctx, BashParams{Command: cmd})
+			require.Contains(t, resp.Content, "not allowed for security reasons")
+		})
+	}
+}
+
+func TestBashTool_NetworkPolicy_UserBannedCommandsStillBlock(t *testing.T) {
+	t.Parallel()
+
+	workingDir := t.TempDir()
+	ctx := context.WithValue(context.Background(), SessionIDContextKey, "test-session")
+	tool := newBashToolWithCfg(workingDir, config.ToolBash{
+		BannedCommands: []string{"curl"},
+		Network: &config.ToolBashNetwork{
+			Enabled:         true,
+			AllowedCommands: []string{"curl"},
+			HostAllowlist:   []string{"example.test"},
+		},
+	})
+
+	resp := runBashTool(t, tool, ctx, BashParams{Command: "curl https://example.test"})
+	require.Contains(t, resp.Content, "not allowed for security reasons")
+}
+
+func TestBashTool_NetworkPolicy_NonNetworkCommandsAreUnaffected(t *testing.T) {
+	t.Parallel()
+
+	workingDir := t.TempDir()
+	ctx := context.WithValue(context.Background(), SessionIDContextKey, "test-session")
+	tool := newBashToolWithCfg(workingDir, config.ToolBash{
+		Network: &config.ToolBashNetwork{
+			Enabled:         true,
+			AllowedCommands: []string{"curl"},
+			HostAllowlist:   []string{"example.test"},
+		},
+	})
+
+	resp := runBashTool(t, tool, ctx, BashParams{Command: "echo https://evil.test"})
+	require.False(t, resp.IsError)
+	require.Contains(t, resp.Content, "https://evil.test")
+}

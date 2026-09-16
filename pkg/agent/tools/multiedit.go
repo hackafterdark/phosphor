@@ -271,14 +271,16 @@ func processMultiEditWithCreation(edit editContext, params MultiEditParams, call
 	}
 
 	// Validate secrets and syntax
-	if err := checkSecrets(currentContent); err != nil {
+	if err := checkSecretsAt(currentContent, params.FilePath); err != nil {
 		return fantasy.NewTextErrorResponse(err.Error()), nil
 	}
 	if err := verifySyntax(currentContent, params.FilePath); err != nil {
 		return fantasy.NewTextErrorResponse(fmt.Sprintf("Syntax error validation failed: %v. Your edit was rejected to prevent committing broken code. Please correct the edit.", err)), nil
 	}
 
-	// Write the file
+	// Write the file. Resolve reversible tokens for a trusted sensitive target
+	// (an .env round-trip); inert for any other target, no-op when off.
+	currentContent = restoreSecretTokensForWrite(currentContent, params.FilePath)
 	err = os.WriteFile(params.FilePath, []byte(currentContent), 0o644)
 	if err != nil {
 		return fantasy.ToolResponse{}, fmt.Errorf("failed to write file: %w", err)
@@ -492,14 +494,16 @@ func processMultiEditExistingFile(edit editContext, params MultiEditParams, call
 	}
 
 	// Validate secrets and syntax
-	if err := checkSecrets(finalContentToWrite); err != nil {
+	if err := checkSecretsAt(finalContentToWrite, params.FilePath); err != nil {
 		return fantasy.NewTextErrorResponse(err.Error()), nil
 	}
 	if err := verifySyntax(finalContentToWrite, params.FilePath); err != nil {
 		return fantasy.NewTextErrorResponse(fmt.Sprintf("Syntax error validation failed: %v. Your edit was rejected to prevent committing broken code. Please correct the edit.", err)), nil
 	}
 
-	// Write the updated content
+	// Write the updated content. Resolve reversible tokens for a trusted sensitive
+	// target (an .env round-trip); inert for any other target, no-op when off.
+	finalContentToWrite = restoreSecretTokensForWrite(finalContentToWrite, params.FilePath)
 	err = os.WriteFile(params.FilePath, []byte(finalContentToWrite), 0o644)
 	if err != nil {
 		return fantasy.ToolResponse{}, fmt.Errorf("failed to write file: %w", err)

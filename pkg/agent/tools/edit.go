@@ -208,7 +208,7 @@ func NewEditTool(
 }
 
 func createNewFile(edit editContext, filePath, content string, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
-	if err := checkSecrets(content); err != nil {
+	if err := checkSecretsAt(content, filePath); err != nil {
 		return fantasy.NewTextErrorResponse(err.Error()), nil
 	}
 	if err := validateEditOutput(content); err != nil {
@@ -272,6 +272,12 @@ func createNewFile(edit editContext, filePath, content string, call fantasy.Tool
 		})
 		return resp, nil
 	}
+
+	// Resolve reversible tokens back to their plaintext only for a trusted
+	// sensitive target (an .env the agent is legitimately round-tripping); for any
+	// other destination the tokens are left as inert sentinels. No-op unless
+	// tokenization is on.
+	content = restoreSecretTokensForWrite(content, filePath)
 
 	err = os.WriteFile(filePath, []byte(content), 0o644)
 	if err != nil {
@@ -440,6 +446,11 @@ func deleteContent(edit editContext, filePath, oldString string, replaceAll bool
 		return fantasy.ToolResponse{}, fmt.Errorf("Edit failed after 5 retries due to persistent concurrent file modifications. Please retry.")
 	}
 
+	// Resolve reversible tokens for a trusted sensitive target before line-ending
+	// normalisation so a restored multi-line value is normalised too. No-op for
+	// non-trusted targets and when tokenization is off.
+	finalContentToWrite = restoreSecretTokensForWrite(finalContentToWrite, filePath)
+
 	if isCrlf {
 		finalContentToWrite, _ = fsext.ToWindowsLineEndings(finalContentToWrite)
 	}
@@ -505,7 +516,7 @@ func deleteContent(edit editContext, filePath, oldString string, replaceAll bool
 }
 
 func replaceContent(edit editContext, filePath, oldString, newString string, replaceAll bool, useHashline bool, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
-	if err := checkSecrets(newString); err != nil {
+	if err := checkSecretsAt(newString, filePath); err != nil {
 		return fantasy.NewTextErrorResponse(err.Error()), nil
 	}
 
@@ -664,6 +675,11 @@ func replaceContent(edit editContext, filePath, oldString, newString string, rep
 	if !success {
 		return fantasy.ToolResponse{}, fmt.Errorf("Edit failed after 5 retries due to persistent concurrent file modifications. Please retry.")
 	}
+
+	// Resolve reversible tokens for a trusted sensitive target before line-ending
+	// normalisation so a restored multi-line value is normalised too. No-op for
+	// non-trusted targets and when tokenization is off.
+	finalContentToWrite = restoreSecretTokensForWrite(finalContentToWrite, filePath)
 
 	if isCrlf {
 		finalContentToWrite, _ = fsext.ToWindowsLineEndings(finalContentToWrite)
@@ -1051,25 +1067,6 @@ func makeNotFoundError(fileContent, oldString string) fantasy.ToolResponse {
 	}
 
 	return fantasy.NewTextErrorResponse(sb.String())
-}
-
-var (
-	awsSecretRegex   = regexp.MustCompile(`(?i)aws_(?:secret_)?access_key\s*[:=]\s*['"][A-Za-z0-9/\+=]{40}['"]`)
-	privateKeyRegex  = regexp.MustCompile(`-----BEGIN [A-Z ]+ PRIVATE KEY-----`)
-	genericApiKeyReg = regexp.MustCompile(`(?i)api_key\s*[:=]\s*['"][A-Za-z0-9_\-]{20,}['"]`)
-)
-
-func checkSecrets(content string) error {
-	if awsSecretRegex.MatchString(content) {
-		return fmt.Errorf("Security violation: potential AWS secret access key leak detected")
-	}
-	if privateKeyRegex.MatchString(content) {
-		return fmt.Errorf("Security violation: potential private key leak detected")
-	}
-	if genericApiKeyReg.MatchString(content) {
-		return fmt.Errorf("Security violation: potential API key leak detected")
-	}
-	return nil
 }
 
 var (

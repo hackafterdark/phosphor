@@ -142,7 +142,11 @@ and relax the rule.
 The following commands are blocked by default and cannot be overridden:
 
 - **Network tools**: `curl`, `wget`, `nc`, `ssh`, `scp`, `telnet`, `chrome`,
-  `firefox`, `links`, `lynx`, `w3m`
+  `firefox`, `links`, `lynx`, `w3m`, `aria2c`, `axel`, `curlie`, `http-prompt`,
+  `httpie`, `safari`, and `xh` are blocked by default. An optional
+  `tools.bash.network` policy can explicitly allow selected commands and hosts.
+  Hard-denied private, loopback, link-local, unspecified, and metadata targets
+  remain blocked, and user `banned_commands` continue to win.
 - **Privilege escalation**: `sudo`, `su`, `doas`
 - **Package managers**: `apt`, `dnf`, `pacman`, `brew`, `cargo`, `gem`,
   `npm`, `pip`, etc. (with specific argument patterns like `install`, `-g`,

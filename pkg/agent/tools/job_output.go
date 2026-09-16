@@ -81,6 +81,10 @@ func NewJobOutputTool() fantasy.AgentTool {
 
 			output := strings.Join(outputParts, "\n")
 			output = TruncateOutput(output)
+			// Background jobs buffer raw output, so redact on read too (the
+			// formatOutput hook only covers foreground completion). Path-less, so
+			// scanned in full mode under the read-path secrets toggle.
+			output = redactSecretsForTool(output, "", "job_output")
 
 			metadata := JobOutputResponseMetadata{
 				ShellID:          params.ShellID,

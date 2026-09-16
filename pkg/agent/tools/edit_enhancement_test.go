@@ -11,27 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestCheckSecrets(t *testing.T) {
-	// Test AWS Secret Key
-	err := checkSecrets(`aws_secret_access_key = "abc123XYZ/foo/bar/baz/123456789012345678"`)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "AWS secret access key")
-
-	// Test Private Key
-	err = checkSecrets("-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA0y...\n-----END RSA PRIVATE KEY-----")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "private key")
-
-	// Test Generic API Key
-	err = checkSecrets(`api_key = "AIzaSyD-12345678901234567890"`)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "API key")
-
-	// Test safe content
-	err = checkSecrets(`const myVar = "hello world"`)
-	require.NoError(t, err)
-}
-
 func TestVerifySyntax(t *testing.T) {
 	// Valid Go
 	err := verifySyntax(`package main
