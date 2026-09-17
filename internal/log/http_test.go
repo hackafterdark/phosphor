@@ -71,13 +71,14 @@ func TestFormatHeaders(t *testing.T) {
 	require.Equal(t, "test-agent", formatted["User-Agent"][0])
 }
 
-// TestProviderHTTPClientIdleTimeoutOnStalledStream covers the reported hang: a
-// backend that opens the stream, emits one chunk, then falls silent. The read
-// watchdog must cancel the request so the caller gets an error instead of
-// blocking forever on a stream that will never advance.
-func TestProviderHTTPClientIdleTimeoutOnStalledStream(t *testing.T) {
+// TestProviderStreamStallIsCaught covers the reported hang: a backend that opens
+// the stream, emits one chunk, then falls silent. The inter-chunk idle watchdog
+// must cancel the request so the caller gets an error instead of blocking forever
+// on a stream that will never advance.
+func TestProviderStreamStallIsCaught(t *testing.T) {
+	t.Setenv("PHOSPHOR_PROVIDER_CONNECT_TIMEOUT", "5s")
+	t.Setenv("PHOSPHOR_PROVIDER_FIRST_BYTE_TIMEOUT", "10s")
 	t.Setenv("PHOSPHOR_PROVIDER_STREAM_IDLE_TIMEOUT", "150ms")
-	t.Setenv("PHOSPHOR_PROVIDER_HEADER_TIMEOUT", "10s")
 
 	release := make(chan struct{})
 	t.Cleanup(func() { close(release) })
@@ -101,8 +102,8 @@ func TestProviderHTTPClientIdleTimeoutOnStalledStream(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(buf[:n]), "partial")
 
-	// The follow-on read sees only silence, so the watchdog must fail it fast
-	// rather than hang the way the default transport would.
+	// The follow-on read sees only silence, so the idle watchdog must fail it
+	// fast rather than hang the way an unbounded transport would.
 	errCh := make(chan error, 1)
 	go func() {
 		_, err := resp.Body.Read(buf)
@@ -117,15 +118,53 @@ func TestProviderHTTPClientIdleTimeoutOnStalledStream(t *testing.T) {
 	}
 }
 
-// TestProviderHTTPClientDoesNotCutOffActiveStream guards the other side of the
-// same feature: a slow-but-alive stream (bytes keep trickling in faster than the
-// idle window) must run to completion untouched, so a long reasoning response is
-// never truncated just because it took a while overall.
-func TestProviderHTTPClientDoesNotCutOffActiveStream(t *testing.T) {
-	t.Setenv("PHOSPHOR_PROVIDER_STREAM_IDLE_TIMEOUT", "2s")
-	t.Setenv("PHOSPHOR_PROVIDER_HEADER_TIMEOUT", "10s")
+// TestProviderSlowFirstByteSurvivesTinyIdleWindow is the false-positive guard
+// the whole design turns on. A backend that spends a long time before its first
+// byte (prefill + queueing) is *alive*, not stalled - so that first gap must be
+// governed by the generous first-byte budget, never by the tight inter-chunk idle
+// window. We force the two budgets far apart (idle 300ms, first-byte 5s) and make
+// the server pause ~1.5s before its first byte: if the first gap wrongly used the
+// idle window the request would die at 300ms. It must instead complete.
+func TestProviderSlowFirstByteSurvivesTinyIdleWindow(t *testing.T) {
+	t.Setenv("PHOSPHOR_PROVIDER_CONNECT_TIMEOUT", "5s")
+	t.Setenv("PHOSPHOR_PROVIDER_FIRST_BYTE_TIMEOUT", "5s")
+	t.Setenv("PHOSPHOR_PROVIDER_STREAM_IDLE_TIMEOUT", "300ms")
 
-	chunks := 25
+	const preFirstByte = 1500 * time.Millisecond
+	chunks := 8
+	url := startTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(preFirstByte) // emulate prefill / time in the scheduler queue
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		fl := w.(http.Flusher)
+		for i := range chunks {
+			fmt.Fprintf(w, "data: chunk-%d\n\n", i)
+			fl.Flush()
+			time.Sleep(60 * time.Millisecond)
+		}
+	})
+
+	client := NewProviderHTTPClient(false)
+	resp, err := client.Get(url)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	got, err := io.ReadAll(resp.Body)
+	require.NoError(t, err, "a slow-but-alive first byte must not be cut off by the idle window")
+	require.Contains(t, string(got), "chunk-0")
+	require.Contains(t, string(got), fmt.Sprintf("chunk-%d", chunks-1))
+}
+
+// TestProviderLongStreamNotTruncated proves a stream that runs far past the
+// inter-chunk idle window still completes in full, as long as its bytes keep
+// coming. A long reasoning generation must never be truncated for taking a while.
+func TestProviderLongStreamNotTruncated(t *testing.T) {
+	t.Setenv("PHOSPHOR_PROVIDER_CONNECT_TIMEOUT", "5s")
+	t.Setenv("PHOSPHOR_PROVIDER_FIRST_BYTE_TIMEOUT", "5s")
+	t.Setenv("PHOSPHOR_PROVIDER_STREAM_IDLE_TIMEOUT", "1s")
+
+	// Total stream time (~3s) is far above the 1s idle budget; gaps stay under it.
+	chunks := 60
 	url := startTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
@@ -133,7 +172,7 @@ func TestProviderHTTPClientDoesNotCutOffActiveStream(t *testing.T) {
 		for i := range chunks {
 			fmt.Fprintf(w, "data: chunk-%d\n\n", i)
 			fl.Flush()
-			time.Sleep(40 * time.Millisecond)
+			time.Sleep(50 * time.Millisecond)
 		}
 	})
 
@@ -146,14 +185,17 @@ func TestProviderHTTPClientDoesNotCutOffActiveStream(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(got), "chunk-0")
 	require.Contains(t, string(got), fmt.Sprintf("chunk-%d", chunks-1))
+	require.NotContains(t, string(got), "chunk-99")
 }
 
-// TestProviderHTTPClientBoundsHeaderWait covers the "accepted the TCP
-// connection, never answered" stall: the response-header timeout must abort the
-// request quickly instead of waiting on headers that never come.
-func TestProviderHTTPClientBoundsHeaderWait(t *testing.T) {
+// TestProviderWedgedBeforeHeadersIsBounded covers a backend that accepts the TCP
+// connection but never produces response headers at all. The body watchdog cannot
+// see this (it only starts once headers arrive), so the response-header timeout
+// must bound it - proving the first-byte budget really does cap that sub-case.
+func TestProviderWedgedBeforeHeadersIsBounded(t *testing.T) {
+	t.Setenv("PHOSPHOR_PROVIDER_CONNECT_TIMEOUT", "5s")
+	t.Setenv("PHOSPHOR_PROVIDER_FIRST_BYTE_TIMEOUT", "400ms")
 	t.Setenv("PHOSPHOR_PROVIDER_STREAM_IDLE_TIMEOUT", "30s")
-	t.Setenv("PHOSPHOR_PROVIDER_HEADER_TIMEOUT", "150ms")
 
 	release := make(chan struct{})
 	t.Cleanup(func() { close(release) })
@@ -170,7 +212,25 @@ func TestProviderHTTPClientBoundsHeaderWait(t *testing.T) {
 		_ = resp.Body.Close()
 	}
 	require.Error(t, err, "a server that never sends headers must not be waited on forever")
-	require.Less(t, time.Since(start), 5*time.Second, "request must fail promptly once the header deadline passes")
+	require.Less(t, time.Since(start), 5*time.Second, "request must fail once the first-byte deadline passes")
+}
+
+// TestProviderDialTimeoutOnDeadHost proves the connect budget bounds a backend
+// that is simply unreachable, independent of the stream budgets.
+func TestProviderDialTimeoutOnDeadHost(t *testing.T) {
+	t.Setenv("PHOSPHOR_PROVIDER_CONNECT_TIMEOUT", "200ms")
+	t.Setenv("PHOSPHOR_PROVIDER_FIRST_BYTE_TIMEOUT", "30s")
+	t.Setenv("PHOSPHOR_PROVIDER_STREAM_IDLE_TIMEOUT", "30s")
+
+	client := NewProviderHTTPClient(false)
+	start := time.Now()
+	// 240.0.0.1 is TEST-NET-1, non-routable: dialing never completes.
+	resp, err := client.Get("http://240.0.0.1:9/completion")
+	if err == nil {
+		_ = resp.Body.Close()
+	}
+	require.Error(t, err, "an unreachable host must fail, not hang")
+	require.Less(t, time.Since(start), 10*time.Second)
 }
 
 // TestEnvDurationRejectsBadValues keeps a malformed override from disabling the

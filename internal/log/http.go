@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -137,43 +138,65 @@ func drainBody(b io.ReadCloser) (r1, r2 io.ReadCloser, err error) {
 //
 // Provider transport hardening.
 //
-// A provider request can be accepted at the TCP level and then go silent: a
-// local/queueing backend (e.g. vLLM) may hold the connection without ever
-// sending response headers, or open the SSE stream and then stop emitting
-// bytes. Go's default http.Transport has no response-header deadline and the
-// agent run context carries no deadline, so such a stall blocks the whole
-// agent loop forever - the run never finishes, no RunComplete is published,
-// and the TUI spinner counts up indefinitely. The transport below bounds both
-// failure modes without truncating a healthy stream:
+// A provider request has three distinct waiting phases, and each needs a
+// different kind of bound because "the server is quiet" means something
+// different in each one. Getting them wrong is worse than having none at all:
+// too tight a deadline aborts a healthy request and the agent re-runs the whole
+// turn, so every budget here is sized so it can only ever fire on a genuinely
+// stuck connection.
 //
-//   - ResponseHeaderTimeout: a hard ceiling on the wait for the first
-//     response headers (catches "accepted, never answered").
-//   - an idle-stream watchdog on the response body: the request is cancelled
-//     only if *no bytes at all* arrive for StreamIdleTimeout. Because the
-//     timer is rearmed on every Read, an actively streaming response is never
-//     cut off no matter how long it runs; only a genuinely stalled one is.
+//  1. Dial (TCP + TLS). On a listening backend this is milliseconds. A backend
+//     that is simply not listening is caught by the connect timeout; there is
+//     no scenario where dialing legitimately takes tens of seconds, so this
+//     bound can never cut off a working request.
+//  2. Time to first byte: from "request fully sent" to "server begins the
+//     response." Prefill and request-queueing both live here, and a huge prompt
+//     on a busy single GPU (or a request sitting behind other traffic in a
+//     continuous-batching scheduler) can legitimately sit in this phase for
+//     tens of seconds to minutes while perfectly alive. So the only honest
+//     budget for phase 2 is generous - big enough that reaching it means the
+//     backend is wedged, not merely slow. This is the one phase where "dead"
+//     and "slow" look identical from bytes alone, so we bias hard toward not
+//     cutting it off.
+//  3. Inter-chunk idle: the gap *between* bytes once bytes have begun. Once a
+//     stream is producing tokens they arrive continuously, so a gap of minutes
+//     here means the connection went half-open (server crashed after accept, a
+//     proxy idle-killed a pooled connection, network drop with no FIN/RST) and
+//     neither end notices. This is the trustworthy stall signal and the one the
+//     original hang actually needed a guard for: the old code had no deadline at
+//     all, so a half-open socket blocked the agent loop forever and no
+//     RunComplete was ever published.
 //
-// The timeouts are process-wide and conservative; override with
-// PHOSPHOR_PROVIDER_HEADER_TIMEOUT / PHOSPHOR_PROVIDER_STREAM_IDLE_TIMEOUT
-// (Go duration strings) if a backend legitimately needs longer.
+// Because the phase-3 timer is rearmed on every byte, an actively streaming
+// response - however long - is never truncated; only a stalled one is.
+//
+// All three budgets are process-wide and env-overridable (Go duration strings).
+// Raise the first-byte budget if your backend queues long:
+// PHOSPHOR_PROVIDER_CONNECT_TIMEOUT (default 30s)
+// PHOSPHOR_PROVIDER_FIRST_BYTE_TIMEOUT  (default 10m)
+// PHOSPHOR_PROVIDER_STREAM_IDLE_TIMEOUT (default 2m)
 
 const (
-	// DefaultProviderHeaderTimeout bounds the wait for response headers.
-	DefaultProviderHeaderTimeout = 60 * time.Second
-	// DefaultProviderStreamIdleTimeout bounds the gap between streamed bytes.
-	// Generous on purpose: a reasoning model can pause between chunks, so we
-	// only fire on a real stall, not on a slow-but-alive one.
-	DefaultProviderStreamIdleTimeout = 5 * time.Minute
+	// DefaultProviderConnectTimeout bounds establishing the connection.
+	DefaultProviderConnectTimeout = 30 * time.Second
+	// DefaultProviderFirstByteTimeout bounds the prefill + queue wait. Deliberately
+	// huge: cutting a request mid-prefill is worse than waiting on it, so this
+	// only trips on a backend that is truly wedged before ever responding.
+	DefaultProviderFirstByteTimeout = 10 * time.Minute
+	// DefaultProviderStreamIdleTimeout bounds the gap between streamed bytes - the
+	// real stall detector. Modest, but still far above any genuine inter-token gap
+	// on a live model.
+	DefaultProviderStreamIdleTimeout = 2 * time.Minute
 )
 
-// providerHeaderTimeout reads the response-header ceiling, honoring the env
-// override and falling back to the default for empty/invalid values.
-func providerHeaderTimeout() time.Duration {
-	return envDuration("PHOSPHOR_PROVIDER_HEADER_TIMEOUT", DefaultProviderHeaderTimeout)
+func providerConnectTimeout() time.Duration {
+	return envDuration("PHOSPHOR_PROVIDER_CONNECT_TIMEOUT", DefaultProviderConnectTimeout)
 }
 
-// providerStreamIdleTimeout reads the stream idle ceiling, honoring the env
-// override and falling back to the default for empty/invalid values.
+func providerFirstByteTimeout() time.Duration {
+	return envDuration("PHOSPHOR_PROVIDER_FIRST_BYTE_TIMEOUT", DefaultProviderFirstByteTimeout)
+}
+
 func providerStreamIdleTimeout() time.Duration {
 	return envDuration("PHOSPHOR_PROVIDER_STREAM_IDLE_TIMEOUT", DefaultProviderStreamIdleTimeout)
 }
@@ -195,19 +218,41 @@ func envDuration(key string, def time.Duration) time.Duration {
 }
 
 // NewProviderHTTPClient builds the http.Client handed to every LLM provider
-// transport. It is the single place provider network behavior is configured so
-// a stalled backend surfaces as a provider error (which the agent retries or
-// reports) instead of hanging the turn forever. When debug is set the requests
-// are additionally logged, nesting the logger over the hardened transport.
+// transport. It is the single place provider network behavior is configured so a
+// genuinely stuck request surfaces as a provider error (which the agent retries
+// or reports, letting the turn finish) instead of hanging forever. When debug is
+// set the requests are additionally logged, nesting the logger over the
+// hardened transport.
 func NewProviderHTTPClient(debug bool) *http.Client {
 	base, ok := http.DefaultTransport.(*http.Transport)
 	if !ok {
 		base = &http.Transport{}
 	}
-	t := base.Clone()
-	t.ResponseHeaderTimeout = providerHeaderTimeout()
+	connect := providerConnectTimeout()
+	firstByte := providerFirstByteTimeout()
+	idle := providerStreamIdleTimeout()
 
-	rt := http.RoundTripper(&idleStreamTransport{base: t, idle: providerStreamIdleTimeout()})
+	t := base.Clone()
+	// Phase 1: dialing is never legitimately slow, so a short budget is safe.
+	// Set DialContext (it takes precedence over Dial when present) so the
+	// connect timeout actually applies on a cloned default transport.
+	dialer := &net.Dialer{Timeout: connect}
+	t.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		return dialer.DialContext(ctx, network, addr)
+	}
+	// Phase 2 has two sub-cases and both must be governed by the same generous
+	// first-byte budget, never a tighter one:
+	//   - a backend that buffers until the first token sends its response
+	//     headers *with* that token, so the header wait IS the prefill/queue wait;
+	//   - a wedged backend that accepts the connection and never sends headers at
+	//     all. Our body watchdog can only start once RoundTrip returns (headers
+	//     in hand), so it cannot cover this case - the header timeout must, or the
+	//     old infinite hang comes right back.
+	// Using the first-byte value for both means a legitimately slow prefill is
+	// never cut, while a truly stuck connection is still bounded.
+	t.ResponseHeaderTimeout = firstByte
+
+	rt := http.RoundTripper(&idleStreamTransport{base: t, firstByte: firstByte, idle: idle})
 	if debug {
 		rt = &HTTPRoundTripLogger{Transport: rt}
 	}
@@ -215,15 +260,17 @@ func NewProviderHTTPClient(debug bool) *http.Client {
 	return &http.Client{Transport: rt}
 }
 
-// errStreamIdle is returned once the read watchdog has cancelled a stalled
-// response, so a blocked reader sees a clear cause rather than a bare context
-// cancellation it cannot attribute.
-var errStreamIdle = errors.New("phosphor: provider stream idle timeout (no bytes received within the read window)")
+// errStreamIdle reports that the read watchdog gave up on a stream that stopped
+// producing bytes, so a blocked reader sees a cause it can attribute rather than
+// a bare context cancellation.
+var errStreamIdle = errors.New("phosphor: provider stream stalled (no bytes within the idle window)")
 
-// idleStreamTransport arms a read-idle watchdog around each response body.
+// idleStreamTransport wraps a response body with the phase-2/3 read watchdog.
+// It does not touch the connect path (phase 1 is on the transport).
 type idleStreamTransport struct {
-	base http.RoundTripper
-	idle time.Duration
+	base      http.RoundTripper
+	firstByte time.Duration
+	idle      time.Duration
 }
 
 func (t *idleStreamTransport) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -235,33 +282,46 @@ func (t *idleStreamTransport) RoundTrip(req *http.Request) (*http.Response, erro
 		cancel()
 		return nil, err
 	}
-	resp.Body = &idleTimeoutBody{ReadCloser: resp.Body, cancel: cancel, idle: t.idle}
+	resp.Body = &idleTimeoutBody{
+		ReadCloser: resp.Body,
+		cancel:     cancel,
+		firstByte:  t.firstByte,
+		idle:       t.idle,
+	}
 	return resp, nil
 }
 
-// idleTimeoutBody cancels the request when no bytes are produced within the
-// idle window. The timer is (re)armed before every Read and disarmed once the
-// Read returns, so the watchdog measures the gap with no data rather than the
-// total stream duration.
+// idleTimeoutBody is the phase-2/3 watchdog. The timer is armed before every
+// Read and disarmed once that Read returns, so it measures the quiet gap with no
+// data rather than the total stream duration. The first Read (no byte seen yet)
+// gets the generous first-byte budget; once bytes start flowing the budget drops
+// to the tighter inter-chunk idle window. A live stream therefore never trips
+// either way no matter how long it runs; only a stalled one does.
 type idleTimeoutBody struct {
 	io.ReadCloser
-	cancel context.CancelFunc
-	idle   time.Duration
-	timer  *time.Timer
-	closed bool
-	mu     sync.Mutex
+	cancel    context.CancelFunc
+	firstByte time.Duration
+	idle      time.Duration
+	timer     *time.Timer
+	sawFirst  bool
+	closed    bool
+	mu        sync.Mutex
 }
 
 func (b *idleTimeoutBody) Read(p []byte) (int, error) {
+	window := b.idle
 	b.mu.Lock()
 	if b.closed {
 		b.mu.Unlock()
 		return 0, errStreamIdle
 	}
+	if !b.sawFirst {
+		window = b.firstByte
+	}
 	if b.timer == nil {
-		b.timer = time.AfterFunc(b.idle, b.cancel)
+		b.timer = time.AfterFunc(window, b.cancel)
 	} else {
-		b.timer.Reset(b.idle)
+		b.timer.Reset(window)
 	}
 	b.mu.Unlock()
 
@@ -270,6 +330,9 @@ func (b *idleTimeoutBody) Read(p []byte) (int, error) {
 	b.mu.Lock()
 	if b.timer != nil {
 		b.timer.Stop()
+	}
+	if n > 0 && !b.sawFirst {
+		b.sawFirst = true
 	}
 	b.mu.Unlock()
 	return n, err
