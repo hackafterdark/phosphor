@@ -12,13 +12,15 @@ import (
 	"strings"
 	"time"
 
-	"charm.land/fantasy"
 	_ "embed"
+	"html/template"
+
+	"charm.land/fantasy"
 	"github.com/hackafterdark/phosphor/pkg/config"
 	"github.com/hackafterdark/phosphor/pkg/otel"
+	"github.com/hackafterdark/phosphor/pkg/security/externalcontent"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
-	"html/template"
 )
 
 //go:embed web_fetch.md.tpl
@@ -340,6 +342,11 @@ func NewWebFetchTool(workingDir string, client *http.Client, allowFn func(ctx co
 			if err != nil {
 				return fantasy.NewTextErrorResponse(fmt.Sprintf("Failed to fetch URL: %s", err)), nil
 			}
+
+			// Frame the page as untrusted external content so an injected page cannot
+			// forge chat-template tokens or an early boundary marker to hijack the
+			// agent. Applies to both the inline result and the saved large-page file.
+			content = externalcontent.Wrap(content, "web-fetch")
 
 			hasLargeContent := len(content) > LargeContentThreshold
 			var result strings.Builder

@@ -14,6 +14,7 @@ import (
 	"charm.land/fantasy"
 	"github.com/hackafterdark/phosphor/pkg/otel"
 	"github.com/hackafterdark/phosphor/pkg/permission"
+	"github.com/hackafterdark/phosphor/pkg/security/externalcontent"
 	"go.opentelemetry.io/otel/attribute"
 
 	md "github.com/JohannesKaufmann/html-to-markdown"
@@ -194,7 +195,7 @@ func NewFetchTool(permissions permission.Service, workingDir string, client *htt
 				content += fmt.Sprintf("\n\n[Content truncated to %d bytes]", MaxFetchSize)
 			}
 
-			return fantasy.NewTextResponse(content), nil
+			return fantasy.NewTextResponse(externalcontent.Wrap(content, "web-fetch")), nil
 		},
 	)
 }
