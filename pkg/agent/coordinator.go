@@ -820,6 +820,19 @@ func getProviderOptions(model Model, providerCfg config.ProviderConfig) fantasy.
 			}
 		}
 
+		// Route stop sequences through extraBody so they reach the inference
+		// server. openaicompat.ProviderOptions has no Stop field, so any
+		// value in mergedOptions["stop"] is silently dropped by ParseOptions.
+		// mergedOptions["stop"] already holds the highest-priority value
+		// (set at line ~570 from model.ModelCfg.Stop, overriding any
+		// catwalk/provider-level defaults). Injecting here lets users
+		// configure stop: ["<|im_end|>"] under models.large in phosphor.json
+		// to override vLLM's default ChatML stop tokens (which include
+		// <|im_start|>, causing generation to cut off prematurely).
+		if stopVal, ok := mergedOptions["stop"]; ok {
+			extraBody["stop"] = stopVal
+		}
+
 		mergedOptions["extra_body"] = extraBody
 
 		parsed, err := openaicompat.ParseOptions(mergedOptions)

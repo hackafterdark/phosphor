@@ -60,5 +60,4 @@ completions/phosphor.*sh
 .envrc.windows.ps1
 
 # Local planning/scratch artifacts (temporary working docs, never committed)
-/_PLANS/
 /_scratch/

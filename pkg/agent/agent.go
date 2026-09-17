@@ -1103,6 +1103,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 			// Runs on a cloned copy; the stored transcript is left intact. The gate
 			// honours the forced provider-wire boundary, so disabling the opt-in
 			// redact_outgoing_secrets cannot drop the last-resort mask.
+			prepared.Messages = defangOutgoingMessages(prepared.Messages)
 			if a.outgoingRedactionEnabled() {
 				prepared.Messages = a.redactOutgoingMessages(prepared.Messages)
 			}
@@ -1189,7 +1190,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 			// idempotent, so for providers that do send OnReasoningEnd this is
 			// a no-op.
 			currentAssistant.FinishThinking()
-			currentAssistant.AppendContent(text)
+			currentAssistant.AppendContent(tools.DefangSpecialTokens(text))
 			return a.messages.Update(genCtx, *currentAssistant)
 		},
 		OnToolInputStart: func(id string, toolName string) error {
@@ -2616,11 +2617,11 @@ func (a *sessionAgent) convertToToolResult(result fantasy.ToolResultContent) mes
 	switch result.Result.GetType() {
 	case fantasy.ToolResultContentTypeText:
 		if r, ok := fantasy.AsToolResultOutputType[fantasy.ToolResultOutputContentText](result.Result); ok {
-			baseResult.Content = r.Text
+			baseResult.Content = tools.DefangSpecialTokens(r.Text)
 		}
 	case fantasy.ToolResultContentTypeError:
 		if r, ok := fantasy.AsToolResultOutputType[fantasy.ToolResultOutputContentError](result.Result); ok {
-			baseResult.Content = r.Error.Error()
+			baseResult.Content = tools.DefangSpecialTokens(r.Error.Error())
 			baseResult.IsError = true
 		}
 	case fantasy.ToolResultContentTypeMedia:

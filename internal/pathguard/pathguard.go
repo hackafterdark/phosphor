@@ -333,7 +333,7 @@ func ValidateCommandPaths(command string, absWorkingDir string) error {
 
 	for _, tok := range scanCommandTokens(command) {
 		raw := tok.text
-		if raw == "" || isRemoteURL(raw) {
+		if raw == "" || isRemoteURL(raw) || isDeviceFile(raw) {
 			continue
 		}
 
@@ -354,7 +354,7 @@ func ValidateCommandPaths(command string, absWorkingDir string) error {
 			expanded = expandVarsForValidation(raw, assign, env, caseInsensitive)
 		}
 
-		if !isEscapablePathToken(raw) && !isEscapablePathToken(expanded) {
+		if (!isEscapablePathToken(raw) && !isEscapablePathToken(expanded)) || isDeviceFile(expanded) {
 			continue
 		}
 
@@ -521,7 +521,7 @@ func (c Confinement) Blocked(argv []string, cwd string) error {
 		if arg == "" || isRemoteURL(arg) {
 			continue
 		}
-		if c.isDeviceFile(arg) {
+		if isDeviceFile(arg) {
 			continue
 		}
 		// Home expansions and filesystem roots are always refused regardless of
@@ -585,7 +585,11 @@ func (c Confinement) roots() []string {
 }
 
 // isDeviceFile reports whether an argument names a well-known device node.
-func (c Confinement) isDeviceFile(arg string) bool {
+// It is consulted by both the dynamic argv check (Blocked) and the raw
+// command-string check (ValidateCommandPaths) so redirection targets such as
+// "2>/dev/null" are not falsely rejected, on any platform: filepath.Clean
+// normalizes the Windows spelling (\dev\null) back to the allow-listed form.
+func isDeviceFile(arg string) bool {
 	s := strings.ToLower(filepath.ToSlash(filepath.Clean(arg)))
 	if s == "" {
 		return false

@@ -73,6 +73,41 @@ func couldHoldSecret(text string) bool {
 
 // redactOutgoingMessages returns a redacted deep copy of msgs. It never mutates
 // the input: fantasy owns those messages and may keep the pre-send version.
+// defangOutgoingMessages is an unconditional pass (no opt-in flag) that runs
+// before secret/PII redaction. It replaces inference-engine control tokens
+// ("<|…|>" sequences) in ALL outgoing text parts with their zero-width-space
+// defanged equivalents. This catches tokens stored in older session history
+// that pre-date the OnTextDelta defanging and acts as a second line of defence
+// against special tokens that reach the provider wire.
+func defangOutgoingMessages(msgs []fantasy.Message) []fantasy.Message {
+	out := make([]fantasy.Message, len(msgs))
+	for i, msg := range msgs {
+		out[i] = msg
+		if len(msg.Content) == 0 {
+			continue
+		}
+		parts := make([]fantasy.MessagePart, len(msg.Content))
+		changed := false
+		for j, part := range msg.Content {
+			switch p := part.(type) {
+			case fantasy.TextPart:
+				next := tools.DefangSpecialTokens(p.Text)
+				if next != p.Text {
+					p.Text = next
+					changed = true
+				}
+				parts[j] = p
+			default:
+				parts[j] = part
+			}
+		}
+		if changed {
+			out[i].Content = parts
+		}
+	}
+	return out
+}
+
 func (a *sessionAgent) redactOutgoingMessages(msgs []fantasy.Message) []fantasy.Message {
 	if !a.outgoingRedactionEnabled() {
 		return msgs
