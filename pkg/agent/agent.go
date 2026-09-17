@@ -1181,10 +1181,21 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 				text = strings.TrimPrefix(text, "\n")
 			}
 
+			// The arrival of visible text proves the reasoning phase is over.
+			// Providers that stream reasoning as a plain delta field (vLLM and
+			// other OpenAI-compatible backends) never emit OnReasoningEnd, so
+			// without this the thinking block keeps FinishedAt at zero and the
+			// "Thought for" footer counts up forever. FinishThinking is
+			// idempotent, so for providers that do send OnReasoningEnd this is
+			// a no-op.
+			currentAssistant.FinishThinking()
 			currentAssistant.AppendContent(text)
 			return a.messages.Update(genCtx, *currentAssistant)
 		},
 		OnToolInputStart: func(id string, toolName string) error {
+			// A tool call means the model stopped reasoning, so freeze the
+			// thinking duration here too (see the OnTextDelta note).
+			currentAssistant.FinishThinking()
 			toolCall := message.ToolCall{
 				ID:               id,
 				Name:             toolName,
@@ -1200,6 +1211,9 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 			slog.Warn("Provider request failed, retrying", providerRetryLogFields(err, delay)...)
 		},
 		OnToolCall: func(tc fantasy.ToolCallContent) error {
+			// A tool call means the model stopped reasoning, so freeze the
+			// thinking duration here too (see the OnTextDelta note).
+			currentAssistant.FinishThinking()
 			toolCall := message.ToolCall{
 				ID:               tc.ToolCallID,
 				Name:             tc.ToolName,
@@ -1292,6 +1306,11 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 					}
 				}
 			}
+			// Catch-all: by the time a step is finishing the model is no longer
+			// reasoning. Some providers never emit a reasoning-end event, so
+			// freeze the thinking duration here as a last resort to keep the
+			// "Thought for" footer from counting up unboundedly.
+			currentAssistant.FinishThinking()
 			currentAssistant.AddFinish(finishReason, "", "")
 			sessionLock.Lock()
 			defer sessionLock.Unlock()
