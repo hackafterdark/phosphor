@@ -97,6 +97,15 @@ func defangOutgoingMessages(msgs []fantasy.Message) []fantasy.Message {
 					changed = true
 				}
 				parts[j] = p
+			case fantasy.ToolResultPart:
+				if txt, ok := fantasy.AsToolResultOutputType[fantasy.ToolResultOutputContentText](p.Output); ok {
+					next := tools.DefangSpecialTokens(txt.Text)
+					if next != txt.Text {
+						p.Output = fantasy.ToolResultOutputContentText{Text: next}
+						changed = true
+					}
+				}
+				parts[j] = p
 			default:
 				parts[j] = part
 			}

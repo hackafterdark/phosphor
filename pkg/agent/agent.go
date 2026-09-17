@@ -1854,6 +1854,11 @@ func (a *sessionAgent) createUserMessage(ctx context.Context, call SessionAgentC
 	if prompt == "" {
 		prompt = call.Prompt
 	}
+	// Defang ChatML control tokens before storing. The model echoes back
+	// whatever it reads in the user turn; storing the defanged form makes it
+	// far more likely to reproduce the defanged form in its response, which
+	// prevents vLLM from stopping mid-response on tokens like <|im_end|>.
+	prompt = tools.DefangSpecialTokens(prompt)
 	parts := []message.ContentPart{message.TextContent{Text: prompt}}
 	var attachmentParts []message.ContentPart
 	for _, attachment := range call.Attachments {
@@ -1870,7 +1875,7 @@ func (a *sessionAgent) createUserMessage(ctx context.Context, call SessionAgentC
 		for _, m := range msgs {
 			if m.Role == message.User {
 				for _, p := range m.Parts {
-					if tc, ok := p.(message.TextContent); ok && tc.Text == call.Prompt {
+					if tc, ok := p.(message.TextContent); ok && tc.Text == prompt {
 						return m, nil
 					}
 				}

@@ -247,6 +247,7 @@ func NewViewTool(
 					return fantasy.ToolResponse{}, fmt.Errorf("failed to generate outline: %w", outlineErr)
 				}
 				outline = redactReadContent(outline, filePath, "view")
+				outline = DefangSpecialTokens(outline)
 				output := "<file_outline>\n" + outline + "\n</file_outline>\n"
 				return fantasy.WithResponseMetadata(
 					fantasy.NewTextResponse(output),
@@ -290,6 +291,7 @@ func NewViewTool(
 			// Scrub credentials from the file body before it is line-numbered into
 			// the response or copied into metadata, so it never enters the transcript.
 			content = redactReadContent(content, filePath, "view")
+			content = DefangSpecialTokens(content)
 
 			openInLSPs(ctx, lspManager, filePath)
 			waitForLSPDiagnostics(ctx, lspManager, filePath, 300*time.Millisecond)
