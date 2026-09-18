@@ -72,6 +72,12 @@ Phosphor provides a comprehensive suite of agent tools organized by function. Ea
 |------|-------------|
 | `structural_search` | Search source code using tree-sitter AST queries. Supports multiple languages (Go, TypeScript, Python, Rust, etc.) with pre-built templates for finding functions, structs, variables, interfaces, and more. |
 
+## Security
+
+| Tool | Description |
+|------|-------------|
+| `scan_secrets` | Audit a file or directory (or git commit history) for leaked credentials using the gitleaks detector. Findings are reported with the secret masked and the surrounding source line redacted, so the raw credential never appears in the output. |
+
 ## MCP (Model Context Protocol)
 
 | Tool | Description |
@@ -98,7 +104,7 @@ Phosphor provides a comprehensive suite of agent tools organized by function. Ea
 ## Quick Reference
 
 ```
-Total built-in tools: 32
+Total built-in tools: 33
 
 By category:
   File Operations:      9 tools (view, edit, write, append, multiedit, ls, glob, grep, view_node)
@@ -109,6 +115,7 @@ By category:
   Workspace Search:     1 tool  (workspace_search)
   Structural Search:    1 tool  (structural_search)
   Semantic Search:      1 tool  (semantic_search)
+  Security:             1 tool  (scan_secrets)
   MCP:                  3 tools (mcp_*, read_mcp_resource, list_mcp_resources)
   System:               3 tools (phosphor_info, phosphor_logs, reload_queries)
   Task Management:      2 tools (update_goal, todos)
@@ -120,6 +127,7 @@ By category:
 - [Workspace Search](./WORKSPACE_SEARCH.md) — Usage, parameters, and tips for `workspace_search` (FTS5).
 - [Semantic Search](./SEMANTIC_SEARCH.md) — Usage, parameters, and tips for `semantic_search`.
 - [Structural Search](../structural_search/) — Templates, languages, and usage patterns for `structural_search`.
+- [Scan Secrets](./SCAN_SECRETS.md) — Usage, parameters, masking behavior, and ignore files for `scan_secrets`.
 - [Codebase Indexing](../embeddings/CODEBASE_INDEXING.md) — Configuration, exclusion files, and how indexing works.
 - [MCP Tools](../hooks/) — Information about MCP server integration and dynamically loaded tools.
 

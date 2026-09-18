@@ -42,6 +42,7 @@ Search it with the `phosphor_docs` tool, or open a file below with the
 - [Structural Search Language Notes](phosphor://docs/structural_search/LANGUAGE_NOTES.md)
 - [Tree-Sitter Structural Search](phosphor://docs/structural_search/README.md)
 - [Agent Tools Overview](phosphor://docs/tools/OVERVIEW.md)
+- [Scan Secrets](phosphor://docs/tools/SCAN_SECRETS.md)
 - [Semantic Search](phosphor://docs/tools/SEMANTIC_SEARCH.md)
 - [Workspace Search (FTS5)](phosphor://docs/tools/WORKSPACE_SEARCH.md)
 - [Edit and Multi-Edit Tools](phosphor://docs/tools/edit_tools.md)

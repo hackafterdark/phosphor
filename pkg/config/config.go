@@ -1413,6 +1413,7 @@ func allToolNames() []string {
 		"agentic_fetch",
 		"glob",
 		"grep",
+		"scan_secrets",
 		"ls",
 		"structural_search",
 		"reload_queries",
