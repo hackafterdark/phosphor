@@ -13,6 +13,7 @@ import (
 
 	"github.com/hackafterdark/phosphor/pkg/agent/prompt"
 	"github.com/hackafterdark/phosphor/pkg/agent/tools"
+	"github.com/hackafterdark/phosphor/pkg/egress"
 	"github.com/hackafterdark/phosphor/pkg/permission"
 	"github.com/hackafterdark/phosphor/pkg/security/externalcontent"
 )
@@ -53,15 +54,12 @@ var agenticFetchPromptTmpl []byte
 
 func (c *coordinator) agenticFetchTool(_ context.Context, client *http.Client) (fantasy.AgentTool, error) {
 	if client == nil {
-		transport := http.DefaultTransport.(*http.Transport).Clone()
-		transport.MaxIdleConns = 100
-		transport.MaxIdleConnsPerHost = 10
-		transport.IdleConnTimeout = 90 * time.Second
-
 		client = &http.Client{
 			Timeout:   30 * time.Second,
-			Transport: transport,
+			Transport: egress.NewHTTPTransport(),
 		}
+	} else {
+		client = egress.WrapClient(client)
 	}
 
 	return fantasy.NewParallelAgentTool(

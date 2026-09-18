@@ -17,6 +17,7 @@ import (
 
 	"charm.land/fantasy"
 	"github.com/hackafterdark/phosphor/pkg/config"
+	"github.com/hackafterdark/phosphor/pkg/egress"
 	"github.com/hackafterdark/phosphor/pkg/otel"
 	"github.com/hackafterdark/phosphor/pkg/security/externalcontent"
 	"go.opentelemetry.io/otel/attribute"
@@ -309,12 +310,8 @@ func matchCIDR(cidr, host string) bool {
 // NewWebFetchTool constructs a web fetch tool that uses the security transport
 // and invokes the TUI permission prompt when a host is not yet approved.
 func NewWebFetchTool(workingDir string, client *http.Client, allowFn func(ctx context.Context, host string) (bool, error)) fantasy.AgentTool {
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.MaxIdleConns = 100
-	transport.MaxIdleConnsPerHost = 10
-	transport.IdleConnTimeout = 90 * time.Second
-
-	secure := newSecurityTransport(transport, allowFn, nil)
+	baseTransport := egress.NewHTTPTransport()
+	secure := newSecurityTransport(egress.Transport(baseTransport), allowFn, nil)
 	secureClient := &http.Client{
 		Timeout:   30 * time.Second,
 		Transport: secure,

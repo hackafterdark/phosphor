@@ -410,10 +410,10 @@ matching via `strings.EqualFold`.
 
 ### Files Modified
 
-- `internal/agent/tools/web_fetch.go` — security transport, allow lists, TUI prompt wiring.
-- `internal/agent/tools/web_search.go` — sanitization, OTel tagging, random delay, nil-client panic.
-- `internal/agent/coordinator.go` — `tuiAllowPrompt` field and wiring.
-- `internal/agent/agentic_fetch_tool.go` — call site updated to pass `c.tuiAllowPrompt`.
+- `pkg/agent/tools/web_fetch.go` — security transport, allow lists, TUI prompt wiring.
+- `pkg/agent/tools/web_search.go` — sanitization, OTel tagging, random delay, nil-client panic.
+- `pkg/agent/coordinator.go` — `tuiAllowPrompt` field and wiring.
+- `pkg/agent/agentic_fetch_tool.go` — call site updated to pass `c.tuiAllowPrompt`.
 
 ### Bash Network Egress Policy
 
@@ -767,6 +767,50 @@ Shell commands spawned by the bash tool receive an environment filtered by an
 allow-list plus a secret-shaped deny predicate, so a buggy or compromised child
 process cannot trivially dump credential variables. This layer has no knob.
 
+### Credential Egress Isolation (opt-in)
+
+Detection stops accidental exposure and unknown credential shapes; it cannot stop
+an already-prompt-injected agent from POSTing a value that it was allowed to see.
+`security.egress_isolation` addresses that malicious-exfiltration case by moving
+the plaintext out of the agent's reach. When enabled, detected credentials may be
+replaced by an AES-256-GCM sealed token such as `<secret@v1.github-pat.…>`. The
+transcript and model only carry that inert handle; only the loopback broker can
+open it, and only when the request is aimed at an operator-allowlisted HTTPS
+destination.
+
+```json
+{
+  "$schema": "https://github.com/hackafterdark/phosphor/blob/main/schema.json",
+  "security": {
+    "egress_isolation": {
+      "enabled": true,
+      "allowed_hosts": ["api.example.com", "auth.example.com"],
+      "https_only": true,
+      "seal_detected_secrets": true,
+      "deny_private_ips": true,
+      "route_subprocesses": true,
+      "max_body_bytes": 8388608
+    }
+  }
+}
+```
+
+The default host list is empty, so an enabled broker denies every destination until
+`allowed_hosts` names the permitted targets. `deny_private_ips` checks literal
+targets, repeats the check after hostname resolution, and also guards the socket
+dialer after the OS resolver selects an address. When the tier is requested but
+the loopback broker cannot start, agent construction fails closed rather than
+running without the advertised boundary.
+
+With `route_subprocesses` enabled, bash child processes receive
+`HTTP_PROXY`/`HTTPS_PROXY` and `NO_PROXY` for the authenticated loopback broker.
+This gates cooperating CLIs, but it is not a network namespace: proxy-unaware
+programs, raw sockets, and non-HTTP protocols can still bypass the broker. Keep
+banned binaries, command/network policy, path confinement, and environment filtering
+enabled. In-process fetch/web/search/download/sourcegraph/MCP HTTP clients use the
+policy-aware egress transport when the broker is active and force direct dialing so
+an environment proxy cannot bypass destination checks.
+
 ## Summary Reference
 
 | Control | Config Path | Type | Default |
@@ -804,5 +848,12 @@ process cannot trivially dump credential variables. This layer has no knob.
 | JSON secret key-drop | `security.redact_json_keys` | Tri-state Bool | On |
 | Extra JSON secret keys | `security.json_secret_keys` | Array | Built-in set |
 | Learned secret memory | `security.learned_secret_memory` | Tri-state Bool | On |
+| Egress isolation | `security.egress_isolation.enabled` | Bool | Off |
+| Egress sealed sentinels | `security.egress_isolation.seal_detected_secrets` | Tri-state Bool | On |
+| Egress host allowlist | `security.egress_isolation.allowed_hosts` | Array | Empty |
+| Egress HTTPS-only mode | `security.egress_isolation.https_only` | Tri-state Bool | On |
+| Egress private-IP denial | `security.egress_isolation.deny_private_ips` | Tri-state Bool | On |
+| Route bash egress | `security.egress_isolation.route_subprocesses` | Tri-state Bool | On |
+| Egress body ceiling | `security.egress_isolation.max_body_bytes` | Int | 8 MiB |
 | OTel sampling rate | `observability.sampling_rate` | Float | 1.0 |
 | OTel endpoint | `observability.endpoint` | String | Empty (disabled) |

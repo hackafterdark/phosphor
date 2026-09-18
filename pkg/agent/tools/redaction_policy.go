@@ -58,6 +58,14 @@ type redactionPolicy struct {
 	// drop it (e.g. a generic KEY=value hit on a source file). Only digests are
 	// kept, never the plaintext. See pkg/secrets/learned.go.
 	learnedSecretMemoryEnabled bool
+	// sealSentinels turns the opt-in architectural egress-isolation tier's read
+	// path on. When on, a gitleaks-detected credential is replaced by a sealed
+	// [egress] token (AES-256-GCM under a process key) rather than the plain
+	// non-reusable <redacted:...> sentinel, so the agent can still round-trip it
+	// through the broker while the transcript carries only an inert handle. Off
+	// by default: it is armed only when the operator enables egress isolation AND
+	// sealing, so shipped read output is byte-for-byte unchanged otherwise.
+	sealSentinels bool
 }
 
 // RedactionPolicyOptions is the operator-facing knob set for the read-path
@@ -74,6 +82,11 @@ type RedactionPolicyOptions struct {
 	// LearnedSecretMemoryEnabled gates the hashed learned-secret memory. A nil
 	// field means the secure default (on).
 	LearnedSecretMemoryEnabled *bool
+	// SealSentinelsEnabled arms the egress-isolation read path: a detected
+	// credential becomes a sealed, broker-resolvable token rather than the plain
+	// non-reusable sentinel. A nil field means the secure default (off), so the
+	// shipped read output is unchanged unless an operator turns the tier on.
+	SealSentinelsEnabled *bool
 }
 
 var redactionPolicyPtr = func() *atomic.Pointer[redactionPolicy] {
@@ -158,6 +171,9 @@ func SetRedactionPolicy(opts RedactionPolicyOptions) {
 	if opts.LearnedSecretMemoryEnabled != nil {
 		base.learnedSecretMemoryEnabled = *opts.LearnedSecretMemoryEnabled
 	}
+	if opts.SealSentinelsEnabled != nil {
+		base.sealSentinels = *opts.SealSentinelsEnabled
+	}
 	for _, id := range opts.ExtraGenericRules {
 		if id != "" {
 			base.genericRuleIDs[id] = true
@@ -218,6 +234,14 @@ func JSONKeyRedactionEnabled() bool {
 // block and stores no plaintext.
 func LearnedSecretMemoryEnabled() bool {
 	return currentRedactionPolicy().learnedSecretMemoryEnabled
+}
+
+// SealSentinelsEnabled reports whether the egress-isolation read path is armed:
+// when true a detected credential is sealed into a broker-resolvable token
+// rather than a plain sentinel. The default is off, so the shipped read output
+// is unchanged unless an operator turned the tier on at startup.
+func SealSentinelsEnabled() bool {
+	return currentRedactionPolicy().sealSentinels
 }
 
 // isSecretJSONKey reports whether a JSON object key names a field whose value

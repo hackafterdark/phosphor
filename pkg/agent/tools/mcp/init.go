@@ -20,6 +20,7 @@ import (
 	"github.com/hackafterdark/phosphor/internal/version"
 	"github.com/hackafterdark/phosphor/pkg/config"
 	"github.com/hackafterdark/phosphor/pkg/csync"
+	"github.com/hackafterdark/phosphor/pkg/egress"
 	"github.com/hackafterdark/phosphor/pkg/permission"
 	"github.com/hackafterdark/phosphor/pkg/pubsub"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -498,9 +499,7 @@ func createTransport(ctx context.Context, m config.MCPConfig, resolver config.Va
 			return nil, err
 		}
 		client := &http.Client{
-			Transport: &headerRoundTripper{
-				headers: headers,
-			},
+			Transport: newHeaderRoundTripper(headers),
 		}
 		return &mcp.StreamableClientTransport{
 			Endpoint:   url,
@@ -519,9 +518,7 @@ func createTransport(ctx context.Context, m config.MCPConfig, resolver config.Va
 			return nil, err
 		}
 		client := &http.Client{
-			Transport: &headerRoundTripper{
-				headers: headers,
-			},
+			Transport: newHeaderRoundTripper(headers),
 		}
 		return &mcp.SSEClientTransport{
 			Endpoint:   url,
@@ -534,13 +531,21 @@ func createTransport(ctx context.Context, m config.MCPConfig, resolver config.Va
 
 type headerRoundTripper struct {
 	headers map[string]string
+	base    http.RoundTripper
 }
 
-func (rt headerRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+func newHeaderRoundTripper(headers map[string]string) *headerRoundTripper {
+	return &headerRoundTripper{
+		headers: headers,
+		base:    egress.Transport(egress.NewHTTPTransport()),
+	}
+}
+
+func (rt *headerRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	for k, v := range rt.headers {
 		req.Header.Set(k, v)
 	}
-	return http.DefaultTransport.RoundTrip(req)
+	return rt.base.RoundTrip(req)
 }
 
 func mcpTimeout(m config.MCPConfig) time.Duration {

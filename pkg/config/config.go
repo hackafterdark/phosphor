@@ -1065,6 +1065,42 @@ type SecurityConfig struct {
 	// false-positive rule would otherwise spare it (e.g. a generic KEY=value hit on
 	// a source file). Tri-state: nil means enabled (the secure, low-noise default).
 	LearnedSecretMemory *bool `json:"learned_secret_memory,omitempty" jsonschema:"description=Remember detected secrets by keyed hash and scrub them on reappearance,defaults=true"`
+	// EgressIsolation is the opt-in architectural credential-isolation tier (Phase 11).
+	// When enabled, detected credentials are sealed into encrypted sentinels in the
+	// agent's context and resolved only by a loopback egress broker at an
+	// allowlisted HTTPS hop, so a prompt-injected agent cannot move a real secret even
+	// if it tried to. It is off by default; the detection/redaction tiers stay on.
+	EgressIsolation *EgressIsolationConfig `json:"egress_isolation,omitempty" jsonschema:"description=Opt-in encrypted secret sentinels plus a brokered host-scoped egress proxy"`
+}
+
+// EgressIsolationConfig configures the opt-in architectural egress-isolation tier.
+// Everything here is inert until Enabled is set; the shipped default is off so the
+// behavior of a normal Phosphor session is unchanged.
+type EgressIsolationConfig struct {
+	// Enabled turns the tier on. Off by default (an explicit opt-in).
+	Enabled bool `json:"enabled,omitempty" jsonschema:"description=Turn on encrypted sentinels plus the brokered egress path,defaults=false"`
+	// HTTPSOnly rejects any egress scheme other than https at the broker. Tri-state:
+	// nil means enabled.
+	HTTPSOnly *bool `json:"https_only,omitempty" jsonschema:"description=Allow only https through the egress broker,defaults=true"`
+	// SealDetectedSecrets makes the read path emit a sealed sentinel (rather than the
+	// plain non-reusable one) for a detected credential, so the agent can still
+	// round-trip it through the broker. Only effective when Enabled is on. Tri-state:
+	// nil means enabled.
+	SealDetectedSecrets *bool `json:"seal_detected_secrets,omitempty" jsonschema:"description=Emit encrypted sentinels for detected credentials so the broker can resolve them,defaults=true"`
+	// AllowedHosts is the egress destination allowlist the broker enforces. Deny-by-
+	// default: an empty list permits no destination.
+	AllowedHosts []string `json:"allowed_hosts,omitempty" jsonschema:"description=Hosts the egress broker may resolve sentinels toward (deny by default)"`
+	// DenyPrivateIPs refuses literal-IP destinations in the loopback/private/link-
+	// local/metadata ranges even if allowlisted. Tri-state: nil means enabled.
+	DenyPrivateIPs *bool `json:"deny_private_ips,omitempty" jsonschema:"description=Refuse private and reserved IP destinations at the broker,defaults=true"`
+	// MaxBodyBytes bounds the request body the broker buffers to resolve sentinels.
+	// Zero means the built-in default.
+	MaxBodyBytes int64 `json:"max_body_bytes,omitempty" jsonschema:"description=DoS bound on a buffered egress request body"`
+	// RouteSubprocesses makes the bash child process inherit the broker as
+	// HTTP_PROXY/HTTPS_PROXY so a network-allowed CLI's egress is gated by the
+	// destination allowlist. Only effective when Enabled is on. Tri-state: nil means
+	// enabled.
+	RouteSubprocesses *bool `json:"route_subprocesses,omitempty" jsonschema:"description=Route the bash child process through the egress broker,defaults=true"`
 }
 
 // DefaultSensitiveFilePatterns is the built-in set the read path treats as
@@ -1140,6 +1176,69 @@ func (c Config) ShouldLearnedSecretMemory() bool {
 		return true
 	}
 	return *c.Security.LearnedSecretMemory
+}
+
+// ShouldEnableEgressIsolation reports whether the opt-in architectural
+// credential-isolation tier is on. The default is off: it is an explicit operator
+// opt-in, and a nil Security block or nil field leaves it off.
+func (c Config) ShouldEnableEgressIsolation() bool {
+	return c.Security != nil && c.Security.EgressIsolation != nil && c.Security.EgressIsolation.Enabled
+}
+
+// ShouldEgressHTTPSONly reports whether the broker restricts egress to https. When
+// the tier is configured but the field is unset it is on (the secure default).
+func (c Config) ShouldEgressHTTPSONly() bool {
+	if c.Security == nil || c.Security.EgressIsolation == nil || c.Security.EgressIsolation.HTTPSOnly == nil {
+		return true
+	}
+	return *c.Security.EgressIsolation.HTTPSOnly
+}
+
+// ShouldSealDetectedSecrets reports whether the read path should emit a sealed
+// sentinel for a detected credential. It is on by default when the tier is
+// configured, but has no effect unless ShouldEnableEgressIsolation is also true.
+func (c Config) ShouldSealDetectedSecrets() bool {
+	if c.Security == nil || c.Security.EgressIsolation == nil || c.Security.EgressIsolation.SealDetectedSecrets == nil {
+		return true
+	}
+	return *c.Security.EgressIsolation.SealDetectedSecrets
+}
+
+// EffectiveEgressAllowedHosts is the broker's destination allowlist. An empty result
+// denies every destination (deny-by-default).
+func (c Config) EffectiveEgressAllowedHosts() []string {
+	if c.Security == nil || c.Security.EgressIsolation == nil {
+		return nil
+	}
+	return c.Security.EgressIsolation.AllowedHosts
+}
+
+// ShouldDenyEgressPrivateIPs reports whether the broker refuses private and reserved
+// IP destinations. On by default when the tier is configured.
+func (c Config) ShouldDenyEgressPrivateIPs() bool {
+	if c.Security == nil || c.Security.EgressIsolation == nil || c.Security.EgressIsolation.DenyPrivateIPs == nil {
+		return true
+	}
+	return *c.Security.EgressIsolation.DenyPrivateIPs
+}
+
+// EgressMaxBodyBytes is the broker's buffered-body DoS bound; zero means the built-in
+// default.
+func (c Config) EgressMaxBodyBytes() int64 {
+	if c.Security == nil || c.Security.EgressIsolation == nil {
+		return 0
+	}
+	return c.Security.EgressIsolation.MaxBodyBytes
+}
+
+// ShouldRouteEgressSubprocesses reports whether the bash child process should be
+// pointed at the broker via HTTP_PROXY/HTTPS_PROXY. On by default when the tier is
+// configured; no effect unless the tier is enabled.
+func (c Config) ShouldRouteEgressSubprocesses() bool {
+	if c.Security == nil || c.Security.EgressIsolation == nil || c.Security.EgressIsolation.RouteSubprocesses == nil {
+		return true
+	}
+	return *c.Security.EgressIsolation.RouteSubprocesses
 }
 
 // EffectiveJSONSecretKeys is the operator-added set of JSON object keys to drop

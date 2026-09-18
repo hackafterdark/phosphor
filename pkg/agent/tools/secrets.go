@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/hackafterdark/phosphor/pkg/egress"
 	"github.com/hackafterdark/phosphor/pkg/secrets"
 	"github.com/zricethezav/gitleaks/v8/report"
 )
@@ -82,8 +83,10 @@ func checkSecretsAt(content, filePath string) error {
 	// must never trip the write gate (that would make a legitimate round-trip of
 	// an .env value un-writable). Neutralise our own tokens before detecting; a
 	// genuine credential the model typed verbatim still has no token and is still
-	// caught.
-	scan := stripTokens(content)
+	// caught. egress.StripTokens does the same for the sealed egress handles, so a
+	// base64url token payload copied into a file is defanged before detection and
+	// is not mistaken for a high-entropy finding.
+	scan := egress.StripTokens(stripTokens(content))
 	findings := d.DetectString(scan)
 	if len(findings) == 0 {
 		return nil
@@ -262,11 +265,20 @@ func findingValue(f report.Finding) string {
 	return f.Secret
 }
 
-// tokenOrSentinel returns the replacement text for a redacted span: a reversible
-// token when tokenization is on (and the value was non-empty), otherwise the
-// static non-reusable sentinel. The static path keeps shipped output identical to
-// before tokenization existed.
+// tokenOrSentinel returns the replacement text for a redacted span. The three
+// outcomes, in priority order, are: a sealed [egress] token when the opt-in
+// egress-isolation tier is armed (an AES-256-GCM handle the broker alone can
+// resolve at an allowlisted HTTPS hop, so the transcript carries an inert token
+// yet the credential can still round-trip legitimately); otherwise a reversible
+// <secret:kind:id> token when tokenization is on; otherwise the static
+// non-reusable sentinel. The static path keeps shipped output identical to
+// before either opt-in existed, and both opt-ins default off.
 func tokenOrSentinel(ruleID, value string, tokenize bool) string {
+	if currentRedactionPolicy().sealSentinels {
+		if tok, ok := egress.Seal(value, ruleID); ok {
+			return tok
+		}
+	}
 	if tokenize {
 		if tok := secretTokens.Issue(ruleID, value); tok != "" {
 			return tok

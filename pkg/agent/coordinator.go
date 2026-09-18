@@ -26,6 +26,7 @@ import (
 	"github.com/hackafterdark/phosphor/pkg/agent/prompt"
 	"github.com/hackafterdark/phosphor/pkg/agent/tools"
 	"github.com/hackafterdark/phosphor/pkg/config"
+	"github.com/hackafterdark/phosphor/pkg/egress"
 	"github.com/hackafterdark/phosphor/pkg/filetracker"
 	"github.com/hackafterdark/phosphor/pkg/goal"
 	"github.com/hackafterdark/phosphor/pkg/history"
@@ -914,14 +915,42 @@ func (c *coordinator) buildAgent(ctx context.Context, prompt *prompt.Prompt, age
 	tokenize := c.cfg.Config().ShouldTokenizeSecrets()
 	jsonKeys := c.cfg.Config().ShouldRedactJSONKeys()
 	learnedMem := c.cfg.Config().ShouldLearnedSecretMemory()
+	// The sealed-sentinel read path is the opt-in egress-isolation tier. It arms
+	// only when the operator both enabled the tier and asked to seal detected
+	// secrets; otherwise the read path keeps emitting the plain non-reusable
+	// sentinel and shipped output is unchanged.
+	egressOn := c.cfg.Config().ShouldEnableEgressIsolation()
+	sealSentinels := egressOn && c.cfg.Config().ShouldSealDetectedSecrets()
 	tools.SetRedactionPolicy(tools.RedactionPolicyOptions{
 		CodeFileFPEnabled:          &codeFileFP,
 		TokenizationEnabled:        &tokenize,
 		JSONKeyRedactionEnabled:    &jsonKeys,
 		ExtraJSONSecretKeys:        c.cfg.Config().EffectiveJSONSecretKeys(),
 		LearnedSecretMemoryEnabled: &learnedMem,
+		SealSentinelsEnabled:       &sealSentinels,
 	})
 	tools.SetSecretRulesPath(filepath.Join(c.cfg.WorkingDir(), ".phosphor", "secret-rules.toml"))
+	// Arm the credential-isolation tier once, here at the same frozen snapshot
+	// boundary. Start binds the loopback broker under the operator's net-policy
+	// and latches whether subprocesses are routed through it. Only after the
+	// broker is accepting do we enable the store, so an explicit opt-in that
+	// cannot start fails closed instead of minting sentinels nobody can resolve.
+	// Both operations are idempotent and frozen-at-startup, so a repeated build
+	// or a model update that rebuilds the tools neither re-arms nor disarms the
+	// tier mid-session.
+	if egressOn {
+		policy := egress.Policy{
+			Enabled:        true,
+			HTTPSOnly:      c.cfg.Config().ShouldEgressHTTPSONly(),
+			AllowedHosts:   c.cfg.Config().EffectiveEgressAllowedHosts(),
+			DenyPrivateIPs: c.cfg.Config().ShouldDenyEgressPrivateIPs(),
+			MaxBodyBytes:   c.cfg.Config().EgressMaxBodyBytes(),
+		}
+		if err := egress.Start(policy, c.cfg.Config().ShouldRouteEgressSubprocesses()); err != nil {
+			return nil, fmt.Errorf("egress isolation is enabled but the broker failed to start: %w", err)
+		}
+		egress.SetEnabled(true)
+	}
 
 	result := NewSessionAgent(SessionAgentOptions{
 		LargeModel:            large,
