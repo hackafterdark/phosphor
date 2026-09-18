@@ -15,6 +15,7 @@ Search it with the `phosphor_docs` tool, or open a file below with the
 - [Mermaid Rendering Service](phosphor://docs/MERMAID.md)
 - [Models and Providers Configuration](phosphor://docs/MODELS_AND_PROVIDERS_CONFIG.md)
 - [Programmatic Client SDK](phosphor://docs/SDK.md)
+- [Secret Protection & Anti-Exfiltration](phosphor://docs/SECRETS_PROTECTION.md)
 - [Phosphor Skill System Architecture](phosphor://docs/SKILLS.md)
 - [System Prompt Engine](phosphor://docs/SYSTEM_PROMPT.md)
 - [TUI Theme System](phosphor://docs/THEMES.md)
