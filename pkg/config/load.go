@@ -29,6 +29,7 @@ import (
 	"github.com/hackafterdark/phosphor/internal/jsonmerge"
 	"github.com/hackafterdark/phosphor/pkg/agent/hyper"
 	"github.com/hackafterdark/phosphor/pkg/csync"
+	"github.com/hackafterdark/phosphor/pkg/saferegex"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
@@ -143,6 +144,11 @@ func Load(workingDir, dataDir string, debug bool) (*ConfigStore, error) {
 	if err := cfg.configureProviders(context.Background(), store, env, valueResolver, store.knownProviders); err != nil {
 		return nil, fmt.Errorf("failed to configure providers: %w", err)
 	}
+
+	// Seed the known-value redaction registry with every credential this process
+	// loaded from disk, so those exact strings are later scrubbed from tool output
+	// and the provider wire. Live rotations register at their own sites.
+	cfg.registerConfiguredSecrets()
 
 	if !cfg.IsConfigured() {
 		slog.Warn("No providers configured")
@@ -1400,6 +1406,9 @@ func (c *Config) ValidateHooks() error {
 			}
 			if _, err := regexp.Compile(h.Matcher); err != nil {
 				return fmt.Errorf("hook %s[%d]: invalid matcher regex %q: %w", event, i, h.Matcher, err)
+			}
+			if err := saferegex.Check(h.Matcher); err != nil {
+				return fmt.Errorf("hook %s[%d]: matcher regex %q rejected: %w", event, i, h.Matcher, err)
 			}
 		}
 	}

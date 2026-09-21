@@ -368,6 +368,7 @@ func (s *ConfigStore) SetProviderAPIKey(scope Scope, providerID string, apiKey a
 		if err := s.SetConfigField(scope, fmt.Sprintf("providers.%s.api_key", providerID), v); err != nil {
 			return fmt.Errorf("failed to save api key to config file: %w", err)
 		}
+		RegisterSecret(v)
 		setKeyOrToken = func() { providerConfig.APIKey = v }
 	case *oauth.Token:
 		if err := s.SetConfigFields(scope, map[string]any{
@@ -376,6 +377,7 @@ func (s *ConfigStore) SetProviderAPIKey(scope Scope, providerID string, apiKey a
 		}); err != nil {
 			return err
 		}
+		RegisterSecret(v.AccessToken)
 		setKeyOrToken = func() {
 			providerConfig.APIKey = v.AccessToken
 			providerConfig.OAuthToken = v
@@ -484,6 +486,7 @@ func (s *ConfigStore) RefreshOAuthToken(ctx context.Context, scope Scope, provid
 	}
 
 	slog.Info("Successfully refreshed OAuth token", "provider", providerID)
+	RegisterSecret(refreshedToken.AccessToken)
 	providerConfig.OAuthToken = refreshedToken
 	providerConfig.APIKey = refreshedToken.AccessToken
 
@@ -508,6 +511,7 @@ func (s *ConfigStore) RefreshOAuthToken(ctx context.Context, scope Scope, provid
 func (s *ConfigStore) applyToken(providerConfig ProviderConfig, token *oauth.Token, providerID string) error {
 	providerConfig.OAuthToken = token
 	providerConfig.APIKey = token.AccessToken
+	RegisterSecret(token.AccessToken)
 	if providerID == string(catwalk.InferenceProviderCopilot) {
 		providerConfig.SetupGitHubCopilot()
 	}

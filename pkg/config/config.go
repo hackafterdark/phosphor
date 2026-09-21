@@ -693,6 +693,7 @@ func (m MCPConfig) ResolvedHeaders(r VariableResolver) (map[string]string, error
 		if v == "" {
 			continue
 		}
+		registerCredentialValue(k, v)
 		out[k] = v
 	}
 	return out, nil
@@ -837,6 +838,14 @@ type ToolBash struct {
 	// tool's post-expansion path confinement may access alongside the
 	// workspace. The OS temporary directory is trusted by default.
 	TrustedExtraRoots []string `json:"trusted_extra_roots,omitempty" jsonschema:"description=Additional absolute directories that bash may access alongside the workspace. The OS temporary directory is trusted by default."`
+
+	Network *ToolBashNetwork `json:"network,omitempty" jsonschema:"description=Optional opt-in network egress policy for bash commands."`
+}
+
+type ToolBashNetwork struct {
+	Enabled         bool     `json:"enabled,omitempty" jsonschema:"description=Activate network egress policy for the bash tool. Default false."`
+	AllowedCommands []string `json:"allowed_commands,omitempty" jsonschema:"description=Built-in network commands permitted when Enabled is true. Empty permits all built-in network commands."`
+	HostAllowlist   []string `json:"host_allowlist,omitempty" jsonschema:"description=Hostnames FQDN suffixes or CIDR ranges permitted for outbound network commands. Empty permits any host not hard denied."`
 }
 
 type ToolLs struct {
@@ -1001,6 +1010,266 @@ type SecurityConfig struct {
 	AllowedEgress AllowedEgressConfig `json:"allowed_egress,omitempty" jsonschema:"description=Permitted outbound platforms"`
 	ToolBlacklist []string            `json:"tool_blacklist,omitempty" jsonschema:"description=List of tools to block"`
 	ReadOnly      bool                `json:"read_only,omitempty" jsonschema:"description=Force read-only mode"`
+	// RedactOutgoingSecrets is the last-resort secret mask applied to the exact
+	// message payload sent to the provider. Tri-state: nil means enabled (the
+	// secure default); set it to false only to opt out.
+	RedactOutgoingSecrets *bool `json:"redact_outgoing_secrets,omitempty" jsonschema:"description=Last-resort secret mask on the provider request body,defaults=true"`
+	// RedactOutgoingPII masks PII (email/ssn/phone/ip/credit-card) on the
+	// provider request body. Tri-state: nil means disabled because the heuristics
+	// false-positive on ordinary code; set it to true to opt in.
+	RedactOutgoingPII *bool `json:"redact_outgoing_pii,omitempty" jsonschema:"description=Mask PII on the provider request body,defaults=false"`
+	// RedactSensitiveFiles is the path-based whole-value redaction applied when the
+	// agent reads a sensitive file (.env and friends, credentials/keys): the
+	// assignment keys are kept but the values become a non-reusable sentinel.
+	// Tri-state: nil means enabled (the secure default); set it to false only to
+	// opt out. The core .env family is always sensitive; SensitiveFilePatterns can
+	// only extend the set, never remove it.
+	RedactSensitiveFiles *bool `json:"redact_sensitive_files,omitempty" jsonschema:"description=Whole-value redaction when reading .env/credentials/keys,defaults=true"`
+	// SensitiveFilePatterns extends the default sensitive-file glob set for the
+	// read-path whole-value redaction. Entries are matched case-insensitively,
+	// either against the file base name (no slash) or the whole slash path.
+	SensitiveFilePatterns []string `json:"sensitive_file_patterns,omitempty" jsonschema:"description=Extra globs treated as sensitive files (extends the default set)"`
+	// TokenizeSecrets turns reversible-by-id tokenization on. When on, the read
+	// path emits <secret:kind:id> tokens instead of static sentinels and the
+	// original value is restored only when the agent writes to a trusted
+	// sensitive file (an .env round-trip). Tri-state: nil means disabled (the
+	// default keeps the shipped non-reusable sentinels, which are already safe).
+	TokenizeSecrets *bool `json:"tokenize_secrets,omitempty" jsonschema:"description=Reversible-by-id tokenization of redacted secrets for trusted .env round-trips,defaults=false"`
+	// CodeFileFalsePositiveMode suppresses the low-precision generic KEY=value /
+	// "apiKey":"value" detector family when a scan is known to be reading source
+	// code, keeping the high-precision vendor-prefix, PEM, JWT and connection-
+	// string checks. Tri-state: nil means enabled (the secure, low-noise default).
+	CodeFileFalsePositiveMode *bool `json:"code_file_false_positive_mode,omitempty" jsonschema:"description=Skip generic KEY=value detectors when reading source code,defaults=true"`
+	// WireSecretRedactionForce keeps the last-resort secret mask on the provider
+	// request body even if redact_outgoing_secrets is turned off: the provider
+	// wire is a hard boundary. Tri-state: nil means enabled; set it to false only
+	// to allow fully disabling wire secret masking (in which case
+	// redact_outgoing_secrets alone governs it).
+	WireSecretRedactionForce *bool `json:"wire_secret_redaction_force,omitempty" jsonschema:"description=Always mask secrets on the provider request body,defaults=true"`
+	// RedactJSONKeys enables the structured-JSON key-drop layer for JSON-producing
+	// tool results (MCP servers and JSON-emitting CLIs). When a tool result is a
+	// whole JSON document, any field whose key is itself secret-shaped
+	// (SecretString, SessionToken, *_api_key, *_secret, ...) has its value dropped
+	// by key name, which is cheaper and lower on false positives than value
+	// scanning. It is a complement to the value scanner, which still runs.
+	// Tri-state: nil means enabled (the secure, low-noise default).
+	RedactJSONKeys *bool `json:"redact_json_keys,omitempty" jsonschema:"description=Drop secret-named fields from JSON tool results by key,defaults=true"`
+	// JSONSecretKeys extends the built-in set of JSON object keys whose value is
+	// dropped by the key-drop layer. Entries are matched case-insensitively against
+	// the object key. It may only add to the built-in set, never remove from it.
+	JSONSecretKeys []string `json:"json_secret_keys,omitempty" jsonschema:"description=Extra JSON object keys whose value is dropped from JSON tool results"`
+	// LearnedSecretMemory enables the hashed learned-secret memory: when the
+	// detector flags a value as a genuine secret, its keyed hash (HMAC, never the
+	// plaintext) is remembered for the session so the same value is recognised and
+	// scrubbed on every later appearance, including where a per-context
+	// false-positive rule would otherwise spare it (e.g. a generic KEY=value hit on
+	// a source file). Tri-state: nil means enabled (the secure, low-noise default).
+	LearnedSecretMemory *bool `json:"learned_secret_memory,omitempty" jsonschema:"description=Remember detected secrets by keyed hash and scrub them on reappearance,defaults=true"`
+	// EgressIsolation is the opt-in architectural credential-isolation tier (Phase 11).
+	// When enabled, detected credentials are sealed into encrypted sentinels in the
+	// agent's context and resolved only by a loopback egress broker at an
+	// allowlisted HTTPS hop, so a prompt-injected agent cannot move a real secret even
+	// if it tried to. It is off by default; the detection/redaction tiers stay on.
+	EgressIsolation *EgressIsolationConfig `json:"egress_isolation,omitempty" jsonschema:"description=Opt-in encrypted secret sentinels plus a brokered host-scoped egress proxy"`
+}
+
+// EgressIsolationConfig configures the opt-in architectural egress-isolation tier.
+// Everything here is inert until Enabled is set; the shipped default is off so the
+// behavior of a normal Phosphor session is unchanged.
+type EgressIsolationConfig struct {
+	// Enabled turns the tier on. Off by default (an explicit opt-in).
+	Enabled bool `json:"enabled,omitempty" jsonschema:"description=Turn on encrypted sentinels plus the brokered egress path,defaults=false"`
+	// HTTPSOnly rejects any egress scheme other than https at the broker. Tri-state:
+	// nil means enabled.
+	HTTPSOnly *bool `json:"https_only,omitempty" jsonschema:"description=Allow only https through the egress broker,defaults=true"`
+	// SealDetectedSecrets makes the read path emit a sealed sentinel (rather than the
+	// plain non-reusable one) for a detected credential, so the agent can still
+	// round-trip it through the broker. Only effective when Enabled is on. Tri-state:
+	// nil means enabled.
+	SealDetectedSecrets *bool `json:"seal_detected_secrets,omitempty" jsonschema:"description=Emit encrypted sentinels for detected credentials so the broker can resolve them,defaults=true"`
+	// AllowedHosts is the egress destination allowlist the broker enforces. Deny-by-
+	// default: an empty list permits no destination.
+	AllowedHosts []string `json:"allowed_hosts,omitempty" jsonschema:"description=Hosts the egress broker may resolve sentinels toward (deny by default)"`
+	// DenyPrivateIPs refuses literal-IP destinations in the loopback/private/link-
+	// local/metadata ranges even if allowlisted. Tri-state: nil means enabled.
+	DenyPrivateIPs *bool `json:"deny_private_ips,omitempty" jsonschema:"description=Refuse private and reserved IP destinations at the broker,defaults=true"`
+	// MaxBodyBytes bounds the request body the broker buffers to resolve sentinels.
+	// Zero means the built-in default.
+	MaxBodyBytes int64 `json:"max_body_bytes,omitempty" jsonschema:"description=DoS bound on a buffered egress request body"`
+	// RouteSubprocesses makes the bash child process inherit the broker as
+	// HTTP_PROXY/HTTPS_PROXY so a network-allowed CLI's egress is gated by the
+	// destination allowlist. Only effective when Enabled is on. Tri-state: nil means
+	// enabled.
+	RouteSubprocesses *bool `json:"route_subprocesses,omitempty" jsonschema:"description=Route the bash child process through the egress broker,defaults=true"`
+}
+
+// DefaultSensitiveFilePatterns is the built-in set the read path treats as
+// sensitive for whole-value redaction: the .env family, dotenv-style rc files,
+// GCP/ADC-style credential JSON, and opaque private-key material. It is always
+// active; SensitiveFilePatterns may only add to it. Globs with no slash match
+// the file base name, globs with a slash match the whole slash-normalized path.
+var DefaultSensitiveFilePatterns = []string{
+	// dotenv family (mechanism A whole-value redaction by KEY=value shape).
+	".env", ".env.*", "*.env",
+	".npmrc", ".netrc", "_netrc", ".git-credentials",
+	// direnv setup file is MIXED tier (see the classifier): sensitive, but known
+	// harmless keys stay visible.
+	".envrc",
+	// credential JSON (GCP service accounts, ADC-style files).
+	"credentials*.json", "*service-account*.json", "secrets.*",
+	// opaque private-key material (whole content is the secret).
+	"id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", "*.pem", "*.p12", "*.pfx",
+}
+
+// ShouldRedactSensitiveFiles reports whether the path-based whole-value
+// read redaction is on. The secure default is on: a nil Security block or a nil
+// field both mean enabled.
+func (c Config) ShouldRedactSensitiveFiles() bool {
+	if c.Security == nil || c.Security.RedactSensitiveFiles == nil {
+		return true
+	}
+	return *c.Security.RedactSensitiveFiles
+}
+
+// ShouldTokenizeSecrets reports whether reversible-by-id tokenization is on. The
+// default is off: the shipped non-reusable sentinels are already safe, so this is
+// an explicit opt-in for the trusted .env round-trip flow.
+func (c Config) ShouldTokenizeSecrets() bool {
+	return c.Security != nil && c.Security.TokenizeSecrets != nil && *c.Security.TokenizeSecrets
+}
+
+// ShouldCodeFileFalsePositiveMode reports whether the code-file false-positive
+// suppression is on. The secure, low-noise default is on; a nil field keeps it on.
+func (c Config) ShouldCodeFileFalsePositiveMode() bool {
+	if c.Security == nil || c.Security.CodeFileFalsePositiveMode == nil {
+		return true
+	}
+	return *c.Security.CodeFileFalsePositiveMode
+}
+
+// ShouldForceWireSecretRedaction reports whether the provider-boundary secret mask
+// is forced on regardless of redact_outgoing_secrets. The secure default is on; a
+// nil field keeps it on.
+func (c Config) ShouldForceWireSecretRedaction() bool {
+	if c.Security == nil || c.Security.WireSecretRedactionForce == nil {
+		return true
+	}
+	return *c.Security.WireSecretRedactionForce
+}
+
+// ShouldRedactJSONKeys reports whether the structured-JSON key-drop layer for
+// JSON-producing tool results is on. The secure, low-noise default is on; a nil
+// field keeps it on.
+func (c Config) ShouldRedactJSONKeys() bool {
+	if c.Security == nil || c.Security.RedactJSONKeys == nil {
+		return true
+	}
+	return *c.Security.RedactJSONKeys
+}
+
+// ShouldLearnedSecretMemory reports whether the hashed learned-secret memory is
+// on. The secure, low-noise default is on: it stores only keyed hashes of values
+// already judged sensitive and never the plaintext, so it cannot introduce a
+// false block. A nil field keeps it on.
+func (c Config) ShouldLearnedSecretMemory() bool {
+	if c.Security == nil || c.Security.LearnedSecretMemory == nil {
+		return true
+	}
+	return *c.Security.LearnedSecretMemory
+}
+
+// ShouldEnableEgressIsolation reports whether the opt-in architectural
+// credential-isolation tier is on. The default is off: it is an explicit operator
+// opt-in, and a nil Security block or nil field leaves it off.
+func (c Config) ShouldEnableEgressIsolation() bool {
+	return c.Security != nil && c.Security.EgressIsolation != nil && c.Security.EgressIsolation.Enabled
+}
+
+// ShouldEgressHTTPSONly reports whether the broker restricts egress to https. When
+// the tier is configured but the field is unset it is on (the secure default).
+func (c Config) ShouldEgressHTTPSONly() bool {
+	if c.Security == nil || c.Security.EgressIsolation == nil || c.Security.EgressIsolation.HTTPSOnly == nil {
+		return true
+	}
+	return *c.Security.EgressIsolation.HTTPSOnly
+}
+
+// ShouldSealDetectedSecrets reports whether the read path should emit a sealed
+// sentinel for a detected credential. It is on by default when the tier is
+// configured, but has no effect unless ShouldEnableEgressIsolation is also true.
+func (c Config) ShouldSealDetectedSecrets() bool {
+	if c.Security == nil || c.Security.EgressIsolation == nil || c.Security.EgressIsolation.SealDetectedSecrets == nil {
+		return true
+	}
+	return *c.Security.EgressIsolation.SealDetectedSecrets
+}
+
+// EffectiveEgressAllowedHosts is the broker's destination allowlist. An empty result
+// denies every destination (deny-by-default).
+func (c Config) EffectiveEgressAllowedHosts() []string {
+	if c.Security == nil || c.Security.EgressIsolation == nil {
+		return nil
+	}
+	return c.Security.EgressIsolation.AllowedHosts
+}
+
+// ShouldDenyEgressPrivateIPs reports whether the broker refuses private and reserved
+// IP destinations. On by default when the tier is configured.
+func (c Config) ShouldDenyEgressPrivateIPs() bool {
+	if c.Security == nil || c.Security.EgressIsolation == nil || c.Security.EgressIsolation.DenyPrivateIPs == nil {
+		return true
+	}
+	return *c.Security.EgressIsolation.DenyPrivateIPs
+}
+
+// EgressMaxBodyBytes is the broker's buffered-body DoS bound; zero means the built-in
+// default.
+func (c Config) EgressMaxBodyBytes() int64 {
+	if c.Security == nil || c.Security.EgressIsolation == nil {
+		return 0
+	}
+	return c.Security.EgressIsolation.MaxBodyBytes
+}
+
+// ShouldRouteEgressSubprocesses reports whether the bash child process should be
+// pointed at the broker via HTTP_PROXY/HTTPS_PROXY. On by default when the tier is
+// configured; no effect unless the tier is enabled.
+func (c Config) ShouldRouteEgressSubprocesses() bool {
+	if c.Security == nil || c.Security.EgressIsolation == nil || c.Security.EgressIsolation.RouteSubprocesses == nil {
+		return true
+	}
+	return *c.Security.EgressIsolation.RouteSubprocesses
+}
+
+// EffectiveJSONSecretKeys is the operator-added set of JSON object keys to drop
+// from JSON tool results, on top of the built-in set the tools package owns.
+func (c Config) EffectiveJSONSecretKeys() []string {
+	if c.Security == nil {
+		return nil
+	}
+	return c.Security.JSONSecretKeys
+}
+
+// EffectiveSensitiveFilePatterns is the default sensitive set plus any operator
+// additions, de-duplicated while preserving order.
+func (c Config) EffectiveSensitiveFilePatterns() []string {
+	var extra []string
+	if c.Security != nil {
+		extra = c.Security.SensitiveFilePatterns
+	}
+	if len(extra) == 0 {
+		return DefaultSensitiveFilePatterns
+	}
+	out := make([]string, 0, len(DefaultSensitiveFilePatterns)+len(extra))
+	seen := make(map[string]bool, len(DefaultSensitiveFilePatterns)+len(extra))
+	for _, p := range append(append([]string{}, DefaultSensitiveFilePatterns...), extra...) {
+		if seen[p] {
+			continue
+		}
+		seen[p] = true
+		out = append(out, p)
+	}
+	return out
 }
 
 // WorkspaceSearch holds settings for the unified workspace search system
@@ -1144,6 +1413,7 @@ func allToolNames() []string {
 		"agentic_fetch",
 		"glob",
 		"grep",
+		"scan_secrets",
 		"ls",
 		"structural_search",
 		"reload_queries",
@@ -1335,6 +1605,7 @@ func resolveEnvs(envs map[string]string, r VariableResolver) ([]string, error) {
 		if err != nil {
 			return nil, fmt.Errorf("env %s: %w", k, err)
 		}
+		registerCredentialValue(k, v)
 		res = append(res, fmt.Sprintf("%s=%s", k, v))
 	}
 	return res, nil

@@ -130,6 +130,45 @@ When `securityTransport` intercepts a request to a raw IP:
 3. **`AllowRawIPs = true`** → allowed (if no CIDR match)
 4. **No match** → TUI prompt shows "WebFetch is requesting access to [host]. Allow this domain?"
 
+## Bash Network Egress Policy
+
+The "web_fetch" and "web_search" controls above do not govern arbitrary commands
+started by the bash tool. The bash tool also ships an optional argv-based network
+policy for built-in network commands such as "curl", "wget", "nc", "ssh", and
+"scp".
+
+"""json
+{
+  "tools": {
+    "bash": {
+      "network": {
+        "enabled": true,
+        "allowed_commands": ["curl", "wget"],
+        "host_allowlist": [".github.com", "registry.npmjs.org"]
+      }
+    }
+  }
+}
+"""
+
+The policy is disabled by default. When it is absent or disabled, the built-in
+network command deny list remains active. When it is enabled, commands listed in
+"allowed_commands" may run if their destination argv hosts match "host_allowlist".
+An empty "host_allowlist" allows any host that is not hard denied.
+
+Hard-denied targets include RFC 1918 private ranges, IPv6 private equivalents,
+loopback and unspecified addresses, link-local and metadata ranges, plus
+"localhost", ".localhost", "metadata", and "metadata.google.internal". Those
+targets cannot be allowed by configuration. User "tools.bash.banned_commands"
+also override the policy.
+
+This is not an OS packet filter. It checks expanded argv values after the
+embedded shell has performed variable expansion. It does not intercept socket
+syscalls, dynamically constructed destinations, URLs read from files, or child
+processes spawned by allowed commands. OS network isolation, a brokered egress
+proxy, or a network namespace remains the correct enforcement layer for stronger
+guarantees.
+
 ## Security Properties
 
 - **Fail-closed**: no network requests succeed until the agent confirms the domain is trusted

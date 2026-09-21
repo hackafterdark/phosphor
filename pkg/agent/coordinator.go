@@ -26,6 +26,7 @@ import (
 	"github.com/hackafterdark/phosphor/pkg/agent/prompt"
 	"github.com/hackafterdark/phosphor/pkg/agent/tools"
 	"github.com/hackafterdark/phosphor/pkg/config"
+	"github.com/hackafterdark/phosphor/pkg/egress"
 	"github.com/hackafterdark/phosphor/pkg/filetracker"
 	"github.com/hackafterdark/phosphor/pkg/goal"
 	"github.com/hackafterdark/phosphor/pkg/history"
@@ -820,6 +821,19 @@ func getProviderOptions(model Model, providerCfg config.ProviderConfig) fantasy.
 			}
 		}
 
+		// Route stop sequences through extraBody so they reach the inference
+		// server. openaicompat.ProviderOptions has no Stop field, so any
+		// value in mergedOptions["stop"] is silently dropped by ParseOptions.
+		// mergedOptions["stop"] already holds the highest-priority value
+		// (set at line ~570 from model.ModelCfg.Stop, overriding any
+		// catwalk/provider-level defaults). Injecting here lets users
+		// configure stop: ["<|im_end|>"] under models.large in phosphor.json
+		// to override vLLM's default ChatML stop tokens (which include
+		// <|im_start|>, causing generation to cut off prematurely).
+		if stopVal, ok := mergedOptions["stop"]; ok {
+			extraBody["stop"] = stopVal
+		}
+
 		mergedOptions["extra_body"] = extraBody
 
 		parsed, err := openaicompat.ParseOptions(mergedOptions)
@@ -875,23 +889,89 @@ func (c *coordinator) buildAgent(ctx context.Context, prompt *prompt.Prompt, age
 		maxReflectionTurns = c.cfg.Config().Options.Agent.MaxTurns
 	}
 
+	sec := c.cfg.Config().Security
+	redactOutgoingSecrets := true
+	redactOutgoingPII := false
+	redactSensitiveFiles := true
+	wireSecretsForced := c.cfg.Config().ShouldForceWireSecretRedaction()
+	var sensitiveFilePatterns []string
+	if sec != nil {
+		if sec.RedactOutgoingSecrets != nil {
+			redactOutgoingSecrets = *sec.RedactOutgoingSecrets
+		}
+		if sec.RedactOutgoingPII != nil {
+			redactOutgoingPII = *sec.RedactOutgoingPII
+		}
+		if sec.RedactSensitiveFiles != nil {
+			redactSensitiveFiles = *sec.RedactSensitiveFiles
+		}
+		sensitiveFilePatterns = sec.SensitiveFilePatterns
+	}
+	tools.SetSensitiveFilePolicy(redactSensitiveFiles, sensitiveFilePatterns)
+	// Freeze the read-path redaction snapshot (secrets toggle, code-file FP mode,
+	// tokenization, token store bounds) once here so nothing re-derives it from
+	// mutable state during the session.
+	codeFileFP := c.cfg.Config().ShouldCodeFileFalsePositiveMode()
+	tokenize := c.cfg.Config().ShouldTokenizeSecrets()
+	jsonKeys := c.cfg.Config().ShouldRedactJSONKeys()
+	learnedMem := c.cfg.Config().ShouldLearnedSecretMemory()
+	// The sealed-sentinel read path is the opt-in egress-isolation tier. It arms
+	// only when the operator both enabled the tier and asked to seal detected
+	// secrets; otherwise the read path keeps emitting the plain non-reusable
+	// sentinel and shipped output is unchanged.
+	egressOn := c.cfg.Config().ShouldEnableEgressIsolation()
+	sealSentinels := egressOn && c.cfg.Config().ShouldSealDetectedSecrets()
+	tools.SetRedactionPolicy(tools.RedactionPolicyOptions{
+		CodeFileFPEnabled:          &codeFileFP,
+		TokenizationEnabled:        &tokenize,
+		JSONKeyRedactionEnabled:    &jsonKeys,
+		ExtraJSONSecretKeys:        c.cfg.Config().EffectiveJSONSecretKeys(),
+		LearnedSecretMemoryEnabled: &learnedMem,
+		SealSentinelsEnabled:       &sealSentinels,
+	})
+	tools.SetSecretRulesPath(filepath.Join(c.cfg.WorkingDir(), ".phosphor", "secret-rules.toml"))
+	// Arm the credential-isolation tier once, here at the same frozen snapshot
+	// boundary. Start binds the loopback broker under the operator's net-policy
+	// and latches whether subprocesses are routed through it. Only after the
+	// broker is accepting do we enable the store, so an explicit opt-in that
+	// cannot start fails closed instead of minting sentinels nobody can resolve.
+	// Both operations are idempotent and frozen-at-startup, so a repeated build
+	// or a model update that rebuilds the tools neither re-arms nor disarms the
+	// tier mid-session.
+	if egressOn {
+		policy := egress.Policy{
+			Enabled:        true,
+			HTTPSOnly:      c.cfg.Config().ShouldEgressHTTPSONly(),
+			AllowedHosts:   c.cfg.Config().EffectiveEgressAllowedHosts(),
+			DenyPrivateIPs: c.cfg.Config().ShouldDenyEgressPrivateIPs(),
+			MaxBodyBytes:   c.cfg.Config().EgressMaxBodyBytes(),
+		}
+		if err := egress.Start(policy, c.cfg.Config().ShouldRouteEgressSubprocesses()); err != nil {
+			return nil, fmt.Errorf("egress isolation is enabled but the broker failed to start: %w", err)
+		}
+		egress.SetEnabled(true)
+	}
+
 	result := NewSessionAgent(SessionAgentOptions{
-		LargeModel:           large,
-		SmallModel:           small,
-		SystemPromptPrefix:   largeProviderCfg.SystemPromptPrefix,
-		SystemPrompt:         "",
-		IsSubAgent:           isSubAgent,
-		DisableAutoSummarize: c.cfg.Config().Options.DisableAutoSummarize,
-		SummarizeThreshold:   c.cfg.Config().Options.SummarizeThreshold,
-		IsYolo:               c.permissions.SkipRequests(),
-		Sessions:             c.sessions,
-		Messages:             c.messages,
-		GoalService:          c.goalService,
-		Tools:                nil,
-		Notify:               c.notify,
-		RunComplete:          c.runComplete,
-		ReflectionEnabled:    reflectionEnabled,
-		MaxReflectionTurns:   maxReflectionTurns,
+		LargeModel:            large,
+		SmallModel:            small,
+		SystemPromptPrefix:    largeProviderCfg.SystemPromptPrefix,
+		SystemPrompt:          "",
+		IsSubAgent:            isSubAgent,
+		DisableAutoSummarize:  c.cfg.Config().Options.DisableAutoSummarize,
+		SummarizeThreshold:    c.cfg.Config().Options.SummarizeThreshold,
+		IsYolo:                c.permissions.SkipRequests(),
+		Sessions:              c.sessions,
+		Messages:              c.messages,
+		GoalService:           c.goalService,
+		Tools:                 nil,
+		Notify:                c.notify,
+		RunComplete:           c.runComplete,
+		ReflectionEnabled:     reflectionEnabled,
+		MaxReflectionTurns:    maxReflectionTurns,
+		RedactOutgoingSecrets: redactOutgoingSecrets,
+		RedactOutgoingPII:     redactOutgoingPII,
+		WireSecretsForced:     wireSecretsForced,
 	})
 
 	c.readyWg.Go(func() error {
@@ -971,6 +1051,7 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, isSubA
 		tools.NewFetchTool(c.permissions, c.cfg.WorkingDir(), nil),
 		tools.NewGlobTool(c.cfg.WorkingDir()),
 		tools.NewGrepTool(c.cfg.WorkingDir(), c.cfg.Config().Tools.Grep),
+		tools.NewScanSecretsTool(c.cfg.WorkingDir()),
 		tools.NewReloadQueriesTool(c.cfg.WorkingDir()),
 		tools.NewLsTool(c.permissions, c.cfg.WorkingDir(), c.cfg.Config().Tools.Ls),
 		tools.NewSourcegraphTool(nil),
@@ -1177,10 +1258,7 @@ func (c *coordinator) buildAnthropicProvider(baseURL, apiKey string, headers map
 		opts = append(opts, anthropic.WithBaseURL(baseURL))
 	}
 
-	if c.cfg.Config().Options.Debug {
-		httpClient := log.NewHTTPClient()
-		opts = append(opts, anthropic.WithHTTPClient(httpClient))
-	}
+	opts = append(opts, anthropic.WithHTTPClient(log.NewProviderHTTPClient(c.cfg.Config().Options.Debug)))
 	return anthropic.New(opts...)
 }
 
@@ -1189,10 +1267,7 @@ func (c *coordinator) buildOpenaiProvider(baseURL, apiKey string, headers map[st
 		openai.WithAPIKey(apiKey),
 		openai.WithUseResponsesAPI(),
 	}
-	if c.cfg.Config().Options.Debug {
-		httpClient := log.NewHTTPClient()
-		opts = append(opts, openai.WithHTTPClient(httpClient))
-	}
+	opts = append(opts, openai.WithHTTPClient(log.NewProviderHTTPClient(c.cfg.Config().Options.Debug)))
 	if len(headers) > 0 {
 		opts = append(opts, openai.WithHeaders(headers))
 	}
@@ -1206,10 +1281,7 @@ func (c *coordinator) buildOpenrouterProvider(_, apiKey string, headers map[stri
 	opts := []openrouter.Option{
 		openrouter.WithAPIKey(apiKey),
 	}
-	if c.cfg.Config().Options.Debug {
-		httpClient := log.NewHTTPClient()
-		opts = append(opts, openrouter.WithHTTPClient(httpClient))
-	}
+	opts = append(opts, openrouter.WithHTTPClient(log.NewProviderHTTPClient(c.cfg.Config().Options.Debug)))
 	if len(headers) > 0 {
 		opts = append(opts, openrouter.WithHeaders(headers))
 	}
@@ -1220,10 +1292,7 @@ func (c *coordinator) buildVercelProvider(_, apiKey string, headers map[string]s
 	opts := []vercel.Option{
 		vercel.WithAPIKey(apiKey),
 	}
-	if c.cfg.Config().Options.Debug {
-		httpClient := log.NewHTTPClient()
-		opts = append(opts, vercel.WithHTTPClient(httpClient))
-	}
+	opts = append(opts, vercel.WithHTTPClient(log.NewProviderHTTPClient(c.cfg.Config().Options.Debug)))
 	if len(headers) > 0 {
 		opts = append(opts, vercel.WithHeaders(headers))
 	}
@@ -1248,9 +1317,11 @@ func (c *coordinator) buildOpenaiCompatProvider(baseURL, apiKey string, headers 
 			}),
 		)
 		httpClient = copilot.NewClient(isSubAgent, c.cfg.Config().Options.Debug)
-	}
-	if httpClient == nil && c.cfg.Config().Options.Debug {
-		httpClient = log.NewHTTPClient()
+	default:
+		// Hardened transport for every non-Copilot OpenAI-compatible backend
+		// (including custom/vLLM-style providers): bounds a stalled request so
+		// it surfaces as a provider error instead of hanging the turn forever.
+		httpClient = log.NewProviderHTTPClient(c.cfg.Config().Options.Debug)
 	}
 	if httpClient != nil {
 		opts = append(opts, openaicompat.WithHTTPClient(httpClient))
@@ -1273,10 +1344,7 @@ func (c *coordinator) buildAzureProvider(baseURL, apiKey string, headers map[str
 		azure.WithAPIKey(apiKey),
 		azure.WithUseResponsesAPI(),
 	}
-	if c.cfg.Config().Options.Debug {
-		httpClient := log.NewHTTPClient()
-		opts = append(opts, azure.WithHTTPClient(httpClient))
-	}
+	opts = append(opts, azure.WithHTTPClient(log.NewProviderHTTPClient(c.cfg.Config().Options.Debug)))
 	if options == nil {
 		options = make(map[string]string)
 	}
@@ -1292,10 +1360,7 @@ func (c *coordinator) buildAzureProvider(baseURL, apiKey string, headers map[str
 
 func (c *coordinator) buildBedrockProvider(apiKey string, headers map[string]string, providerID string) (fantasy.Provider, error) {
 	var opts []bedrock.Option
-	if c.cfg.Config().Options.Debug {
-		httpClient := log.NewHTTPClient()
-		opts = append(opts, bedrock.WithHTTPClient(httpClient))
-	}
+	opts = append(opts, bedrock.WithHTTPClient(log.NewProviderHTTPClient(c.cfg.Config().Options.Debug)))
 	if len(headers) > 0 {
 		opts = append(opts, bedrock.WithHeaders(headers))
 	}
@@ -1324,10 +1389,7 @@ func (c *coordinator) buildGoogleProvider(baseURL, apiKey string, headers map[st
 		google.WithBaseURL(baseURL),
 		google.WithGeminiAPIKey(apiKey),
 	}
-	if c.cfg.Config().Options.Debug {
-		httpClient := log.NewHTTPClient()
-		opts = append(opts, google.WithHTTPClient(httpClient))
-	}
+	opts = append(opts, google.WithHTTPClient(log.NewProviderHTTPClient(c.cfg.Config().Options.Debug)))
 	if len(headers) > 0 {
 		opts = append(opts, google.WithHeaders(headers))
 	}
@@ -1335,11 +1397,8 @@ func (c *coordinator) buildGoogleProvider(baseURL, apiKey string, headers map[st
 }
 
 func (c *coordinator) buildGoogleVertexProvider(headers map[string]string, options map[string]string) (fantasy.Provider, error) {
-	opts := []google.Option{}
-	if c.cfg.Config().Options.Debug {
-		httpClient := log.NewHTTPClient()
-		opts = append(opts, google.WithHTTPClient(httpClient))
-	}
+	var opts []google.Option
+	opts = append(opts, google.WithHTTPClient(log.NewProviderHTTPClient(c.cfg.Config().Options.Debug)))
 	if len(headers) > 0 {
 		opts = append(opts, google.WithHeaders(headers))
 	}
@@ -1377,6 +1436,10 @@ func (c *coordinator) buildProvider(providerCfg config.ProviderConfig, model con
 
 	apiKey, _ := c.cfg.Resolve(providerCfg.APIKey)
 	baseURL, _ := c.cfg.Resolve(providerCfg.BaseURL)
+	config.RegisterSecret(apiKey)
+	for hk, hv := range headers {
+		config.RegisterCredentialValue(hk, hv)
+	}
 
 	switch providerCfg.ID {
 	case string(catwalk.InferenceProviderOpenCodeGo), string(catwalk.InferenceProviderOpenCodeZen):

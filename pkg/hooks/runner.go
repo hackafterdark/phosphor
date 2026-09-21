@@ -11,6 +11,7 @@ import (
 
 	"github.com/hackafterdark/phosphor/pkg/config"
 	"github.com/hackafterdark/phosphor/pkg/otel"
+	"github.com/hackafterdark/phosphor/pkg/saferegex"
 	"github.com/hackafterdark/phosphor/pkg/shell"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -59,6 +60,15 @@ func NewRunner(hooks []config.HookConfig, cwd, projectDir string) *Runner {
 			if err != nil {
 				slog.Warn(
 					"Hook matcher failed to compile; skipping hook",
+					"matcher", h.Matcher,
+					"command", h.Command,
+					"error", err,
+				)
+				continue
+			}
+			if err := saferegex.Check(h.Matcher); err != nil {
+				slog.Warn(
+					"Hook matcher rejected by the ReDoS guard; skipping hook",
 					"matcher", h.Matcher,
 					"command", h.Command,
 					"error", err,

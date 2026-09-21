@@ -177,15 +177,18 @@ type sessionAgent struct {
 	systemPrompt       *csync.Value[string]
 	tools              *csync.Slice[fantasy.AgentTool]
 
-	isSubAgent           bool
-	sessions             session.Service
-	messages             message.Service
-	goalService          goal.Service
-	disableAutoSummarize bool
-	summarizeThreshold   float64
-	isYolo               bool
-	notify               pubsub.Publisher[notify.Notification]
-	runComplete          pubsub.Publisher[notify.RunComplete]
+	isSubAgent            bool
+	sessions              session.Service
+	messages              message.Service
+	goalService           goal.Service
+	disableAutoSummarize  bool
+	summarizeThreshold    float64
+	isYolo                bool
+	redactOutgoingSecrets bool
+	redactOutgoingPII     bool
+	wireSecretsForced     bool
+	notify                pubsub.Publisher[notify.Notification]
+	runComplete           pubsub.Publisher[notify.RunComplete]
 
 	// Reflection loop state.
 	reflectionEnabled  *csync.Value[bool]
@@ -233,49 +236,55 @@ type sessionAgent struct {
 }
 
 type SessionAgentOptions struct {
-	LargeModel           Model
-	SmallModel           Model
-	SystemPromptPrefix   string
-	SystemPrompt         string
-	IsSubAgent           bool
-	DisableAutoSummarize bool
-	SummarizeThreshold   float64
-	IsYolo               bool
-	Sessions             session.Service
-	Messages             message.Service
-	GoalService          goal.Service
-	Tools                []fantasy.AgentTool
-	Notify               pubsub.Publisher[notify.Notification]
-	RunComplete          pubsub.Publisher[notify.RunComplete]
-	ReflectionEnabled    bool
-	MaxReflectionTurns   int
+	LargeModel            Model
+	SmallModel            Model
+	SystemPromptPrefix    string
+	SystemPrompt          string
+	IsSubAgent            bool
+	DisableAutoSummarize  bool
+	SummarizeThreshold    float64
+	IsYolo                bool
+	RedactOutgoingSecrets bool
+	RedactOutgoingPII     bool
+	WireSecretsForced     bool
+	Sessions              session.Service
+	Messages              message.Service
+	GoalService           goal.Service
+	Tools                 []fantasy.AgentTool
+	Notify                pubsub.Publisher[notify.Notification]
+	RunComplete           pubsub.Publisher[notify.RunComplete]
+	ReflectionEnabled     bool
+	MaxReflectionTurns    int
 }
 
 func NewSessionAgent(
 	opts SessionAgentOptions,
 ) SessionAgent {
 	return &sessionAgent{
-		largeModel:           csync.NewValue(opts.LargeModel),
-		smallModel:           csync.NewValue(opts.SmallModel),
-		systemPromptPrefix:   csync.NewValue(opts.SystemPromptPrefix),
-		systemPrompt:         csync.NewValue(opts.SystemPrompt),
-		isSubAgent:           opts.IsSubAgent,
-		sessions:             opts.Sessions,
-		messages:             opts.Messages,
-		goalService:          opts.GoalService,
-		disableAutoSummarize: opts.DisableAutoSummarize,
-		summarizeThreshold:   opts.SummarizeThreshold,
-		tools:                csync.NewSliceFrom(opts.Tools),
-		isYolo:               opts.IsYolo,
-		notify:               opts.Notify,
-		runComplete:          opts.RunComplete,
-		reflectionEnabled:    csync.NewValue(opts.ReflectionEnabled),
-		maxReflectionTurns:   csync.NewValue(opts.MaxReflectionTurns),
-		messageQueue:         csync.NewMap[string, []SessionAgentCall](),
-		activeRequests:       csync.NewMap[string, context.CancelFunc](),
-		dispatchMu:           csync.NewMap[string, *sync.Mutex](),
-		acceptedRuns:         csync.NewMap[string, int](),
-		cancelMark:           csync.NewMap[string, uint64](),
+		largeModel:            csync.NewValue(opts.LargeModel),
+		smallModel:            csync.NewValue(opts.SmallModel),
+		systemPromptPrefix:    csync.NewValue(opts.SystemPromptPrefix),
+		systemPrompt:          csync.NewValue(opts.SystemPrompt),
+		isSubAgent:            opts.IsSubAgent,
+		sessions:              opts.Sessions,
+		messages:              opts.Messages,
+		goalService:           opts.GoalService,
+		disableAutoSummarize:  opts.DisableAutoSummarize,
+		summarizeThreshold:    opts.SummarizeThreshold,
+		tools:                 csync.NewSliceFrom(opts.Tools),
+		isYolo:                opts.IsYolo,
+		redactOutgoingSecrets: opts.RedactOutgoingSecrets,
+		redactOutgoingPII:     opts.RedactOutgoingPII,
+		wireSecretsForced:     opts.WireSecretsForced,
+		notify:                opts.Notify,
+		runComplete:           opts.RunComplete,
+		reflectionEnabled:     csync.NewValue(opts.ReflectionEnabled),
+		maxReflectionTurns:    csync.NewValue(opts.MaxReflectionTurns),
+		messageQueue:          csync.NewMap[string, []SessionAgentCall](),
+		activeRequests:        csync.NewMap[string, context.CancelFunc](),
+		dispatchMu:            csync.NewMap[string, *sync.Mutex](),
+		acceptedRuns:          csync.NewMap[string, int](),
+		cancelMark:            csync.NewMap[string, uint64](),
 	}
 }
 
@@ -1088,6 +1097,17 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 			}
 			prepared.System = &combined
 
+			// Last-resort secret/PII mask over the exact payload about to go over
+			// the wire, catching anything that reached history by some path the
+			// per-tool redactors missed (user paste, compaction reintroduction).
+			// Runs on a cloned copy; the stored transcript is left intact. The gate
+			// honours the forced provider-wire boundary, so disabling the opt-in
+			// redact_outgoing_secrets cannot drop the last-resort mask.
+			prepared.Messages = defangOutgoingMessages(prepared.Messages)
+			if a.outgoingRedactionEnabled() {
+				prepared.Messages = a.redactOutgoingMessages(prepared.Messages)
+			}
+
 			// Propagate goal ID if present in the caller context.
 			if goalID, ok := ctx.Value(goal.GoalIDContextKey).(string); ok {
 				callContext = context.WithValue(callContext, goal.GoalIDContextKey, goalID)
@@ -1162,10 +1182,21 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 				text = strings.TrimPrefix(text, "\n")
 			}
 
-			currentAssistant.AppendContent(text)
+			// The arrival of visible text proves the reasoning phase is over.
+			// Providers that stream reasoning as a plain delta field (vLLM and
+			// other OpenAI-compatible backends) never emit OnReasoningEnd, so
+			// without this the thinking block keeps FinishedAt at zero and the
+			// "Thought for" footer counts up forever. FinishThinking is
+			// idempotent, so for providers that do send OnReasoningEnd this is
+			// a no-op.
+			currentAssistant.FinishThinking()
+			currentAssistant.AppendContent(tools.DefangSpecialTokens(text))
 			return a.messages.Update(genCtx, *currentAssistant)
 		},
 		OnToolInputStart: func(id string, toolName string) error {
+			// A tool call means the model stopped reasoning, so freeze the
+			// thinking duration here too (see the OnTextDelta note).
+			currentAssistant.FinishThinking()
 			toolCall := message.ToolCall{
 				ID:               id,
 				Name:             toolName,
@@ -1181,6 +1212,9 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 			slog.Warn("Provider request failed, retrying", providerRetryLogFields(err, delay)...)
 		},
 		OnToolCall: func(tc fantasy.ToolCallContent) error {
+			// A tool call means the model stopped reasoning, so freeze the
+			// thinking duration here too (see the OnTextDelta note).
+			currentAssistant.FinishThinking()
 			toolCall := message.ToolCall{
 				ID:               tc.ToolCallID,
 				Name:             tc.ToolName,
@@ -1273,6 +1307,11 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 					}
 				}
 			}
+			// Catch-all: by the time a step is finishing the model is no longer
+			// reasoning. Some providers never emit a reasoning-end event, so
+			// freeze the thinking duration here as a last resort to keep the
+			// "Thought for" footer from counting up unboundedly.
+			currentAssistant.FinishThinking()
 			currentAssistant.AddFinish(finishReason, "", "")
 			sessionLock.Lock()
 			defer sessionLock.Unlock()
@@ -1815,6 +1854,11 @@ func (a *sessionAgent) createUserMessage(ctx context.Context, call SessionAgentC
 	if prompt == "" {
 		prompt = call.Prompt
 	}
+	// Defang ChatML control tokens before storing. The model echoes back
+	// whatever it reads in the user turn; storing the defanged form makes it
+	// far more likely to reproduce the defanged form in its response, which
+	// prevents vLLM from stopping mid-response on tokens like <|im_end|>.
+	prompt = tools.DefangSpecialTokens(prompt)
 	parts := []message.ContentPart{message.TextContent{Text: prompt}}
 	var attachmentParts []message.ContentPart
 	for _, attachment := range call.Attachments {
@@ -1831,7 +1875,7 @@ func (a *sessionAgent) createUserMessage(ctx context.Context, call SessionAgentC
 		for _, m := range msgs {
 			if m.Role == message.User {
 				for _, p := range m.Parts {
-					if tc, ok := p.(message.TextContent); ok && tc.Text == call.Prompt {
+					if tc, ok := p.(message.TextContent); ok && tc.Text == prompt {
 						return m, nil
 					}
 				}
@@ -2578,11 +2622,11 @@ func (a *sessionAgent) convertToToolResult(result fantasy.ToolResultContent) mes
 	switch result.Result.GetType() {
 	case fantasy.ToolResultContentTypeText:
 		if r, ok := fantasy.AsToolResultOutputType[fantasy.ToolResultOutputContentText](result.Result); ok {
-			baseResult.Content = r.Text
+			baseResult.Content = tools.DefangSpecialTokens(r.Text)
 		}
 	case fantasy.ToolResultContentTypeError:
 		if r, ok := fantasy.AsToolResultOutputType[fantasy.ToolResultOutputContentError](result.Result); ok {
-			baseResult.Content = r.Error.Error()
+			baseResult.Content = tools.DefangSpecialTokens(r.Error.Error())
 			baseResult.IsError = true
 		}
 	case fantasy.ToolResultContentTypeMedia:

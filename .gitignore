@@ -58,3 +58,6 @@ completions/phosphor.*sh
 # Machine-local environment overrides (never committed; see .envrc.windows.ps1)
 .env.*.local
 .envrc.windows.ps1
+
+# Local planning/scratch artifacts (temporary working docs, never committed)
+/_scratch/

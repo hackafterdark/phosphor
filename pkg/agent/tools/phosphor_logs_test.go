@@ -131,8 +131,11 @@ func TestPhosphorLogs_EmptyFile(t *testing.T) {
 	t.Parallel()
 	tempDir := t.TempDir()
 	logFile := filepath.Join(tempDir, "phosphor.log")
-	_, err := os.Create(logFile)
+	file, err := os.Create(logFile)
 	require.NoError(t, err)
+	// Close the handle so t.TempDir cleanup can delete the file on Windows,
+	// where an open fd blocks removal ("file in use").
+	require.NoError(t, file.Close())
 
 	result := runPhosphorLogs(logFile, PhosphorLogsParams{Lines: 50})
 	require.Contains(t, result, "Log file is empty")

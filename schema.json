@@ -20,6 +20,11 @@
           "description": "Maximum number of tool-use turns per prompt (0 = unlimited)",
           "default": 0
         },
+        "max_continuations": {
+          "type": "integer",
+          "description": "Maximum number of goal continuation turns before the goal is auto-paused for review (0 = default 25",
+          "default": 0
+        },
         "structural_search_languages": {
           "items": {
             "type": "string"
@@ -193,6 +198,43 @@
         "workspace_search": {
           "$ref": "#/$defs/WorkspaceSearch",
           "description": "Unified workspace search configuration"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "EgressIsolationConfig": {
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Turn on encrypted sentinels plus the brokered egress path"
+        },
+        "https_only": {
+          "type": "boolean",
+          "description": "Allow only https through the egress broker"
+        },
+        "seal_detected_secrets": {
+          "type": "boolean",
+          "description": "Emit encrypted sentinels for detected credentials so the broker can resolve them"
+        },
+        "allowed_hosts": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Hosts the egress broker may resolve sentinels toward (deny by default)"
+        },
+        "deny_private_ips": {
+          "type": "boolean",
+          "description": "Refuse private and reserved IP destinations at the broker"
+        },
+        "max_body_bytes": {
+          "type": "integer",
+          "description": "DoS bound on a buffered egress request body"
+        },
+        "route_subprocesses": {
+          "type": "boolean",
+          "description": "Route the bash child process through the egress broker"
         }
       },
       "additionalProperties": false,
@@ -1043,6 +1085,56 @@
         "read_only": {
           "type": "boolean",
           "description": "Force read-only mode"
+        },
+        "redact_outgoing_secrets": {
+          "type": "boolean",
+          "description": "Last-resort secret mask on the provider request body"
+        },
+        "redact_outgoing_pii": {
+          "type": "boolean",
+          "description": "Mask PII on the provider request body"
+        },
+        "redact_sensitive_files": {
+          "type": "boolean",
+          "description": "Whole-value redaction when reading .env/credentials/keys"
+        },
+        "sensitive_file_patterns": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Extra globs treated as sensitive files (extends the default set)"
+        },
+        "tokenize_secrets": {
+          "type": "boolean",
+          "description": "Reversible-by-id tokenization of redacted secrets for trusted .env round-trips"
+        },
+        "code_file_false_positive_mode": {
+          "type": "boolean",
+          "description": "Skip generic KEY=value detectors when reading source code"
+        },
+        "wire_secret_redaction_force": {
+          "type": "boolean",
+          "description": "Always mask secrets on the provider request body"
+        },
+        "redact_json_keys": {
+          "type": "boolean",
+          "description": "Drop secret-named fields from JSON tool results by key"
+        },
+        "json_secret_keys": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Extra JSON object keys whose value is dropped from JSON tool results"
+        },
+        "learned_secret_memory": {
+          "type": "boolean",
+          "description": "Remember detected secrets by keyed hash and scrub them on reappearance"
+        },
+        "egress_isolation": {
+          "$ref": "#/$defs/EgressIsolationConfig",
+          "description": "Opt-in encrypted secret sentinels plus a brokered host-scoped egress proxy"
         }
       },
       "additionalProperties": false,
@@ -1361,6 +1453,34 @@
           },
           "type": "array",
           "description": "Additional absolute directories that bash may access alongside the workspace. The OS temporary directory is trusted by default."
+        },
+        "network": {
+          "$ref": "#/$defs/ToolBashNetwork",
+          "description": "Optional opt-in network egress policy for bash commands."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "ToolBashNetwork": {
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Activate network egress policy for the bash tool. Default false."
+        },
+        "allowed_commands": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Built-in network commands permitted when Enabled is true. Empty permits all built-in network commands."
+        },
+        "host_allowlist": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Hostnames FQDN suffixes or CIDR ranges permitted for outbound network commands. Empty permits any host not hard denied."
         }
       },
       "additionalProperties": false,

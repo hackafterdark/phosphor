@@ -222,6 +222,11 @@ Note that you can omit `matcher` and match in your shell script instead,
 however you'll incur some additional overhead as Phosphor will still parse and
 run each hook.
 
+Matchers are checked at config-load time for both syntax and regular-expression
+denial-of-service shapes (such as `(a+)+` or `(a|aa)+`); a rejected matcher
+surfaces as a config error, and one that slips past validation skips its hook
+with a warning instead of hanging every matching tool call.
+
 ### Input
 
 Each hook receives data two ways: environment variables and stdin (as JSON).

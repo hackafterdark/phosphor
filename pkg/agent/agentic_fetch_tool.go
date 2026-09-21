@@ -13,7 +13,9 @@ import (
 
 	"github.com/hackafterdark/phosphor/pkg/agent/prompt"
 	"github.com/hackafterdark/phosphor/pkg/agent/tools"
+	"github.com/hackafterdark/phosphor/pkg/egress"
 	"github.com/hackafterdark/phosphor/pkg/permission"
+	"github.com/hackafterdark/phosphor/pkg/security/externalcontent"
 )
 
 //go:embed templates/agentic_fetch.md
@@ -52,15 +54,12 @@ var agenticFetchPromptTmpl []byte
 
 func (c *coordinator) agenticFetchTool(_ context.Context, client *http.Client) (fantasy.AgentTool, error) {
 	if client == nil {
-		transport := http.DefaultTransport.(*http.Transport).Clone()
-		transport.MaxIdleConns = 100
-		transport.MaxIdleConnsPerHost = 10
-		transport.IdleConnTimeout = 90 * time.Second
-
 		client = &http.Client{
 			Timeout:   30 * time.Second,
-			Transport: transport,
+			Transport: egress.NewHTTPTransport(),
 		}
+	} else {
+		client = egress.WrapClient(client)
 	}
 
 	return fantasy.NewParallelAgentTool(
@@ -113,6 +112,12 @@ func (c *coordinator) agenticFetchTool(_ context.Context, client *http.Client) (
 				if err != nil {
 					return fantasy.NewTextErrorResponse(fmt.Sprintf("Failed to fetch URL: %s", err)), nil
 				}
+
+				// Frame the page as untrusted external content so an injected page
+				// cannot forge chat-template tokens or an early boundary marker to
+				// hijack the sub-agent. Covers both the inline branch and the saved
+				// large-page file the sub-agent later reads via view/grep.
+				content = externalcontent.Wrap(content, "web-fetch")
 
 				hasLargeContent := len(content) > tools.LargeContentThreshold
 

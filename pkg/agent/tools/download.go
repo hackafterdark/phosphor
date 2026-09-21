@@ -14,6 +14,7 @@ import (
 
 	"charm.land/fantasy"
 	"github.com/hackafterdark/phosphor/internal/filepathext"
+	"github.com/hackafterdark/phosphor/pkg/egress"
 	"github.com/hackafterdark/phosphor/pkg/otel"
 	"github.com/hackafterdark/phosphor/pkg/permission"
 	"go.opentelemetry.io/otel/attribute"
@@ -53,15 +54,12 @@ func downloadDescription() string {
 
 func NewDownloadTool(permissions permission.Service, workingDir string, client *http.Client) fantasy.AgentTool {
 	if client == nil {
-		transport := http.DefaultTransport.(*http.Transport).Clone()
-		transport.MaxIdleConns = 100
-		transport.MaxIdleConnsPerHost = 10
-		transport.IdleConnTimeout = 90 * time.Second
-
 		client = &http.Client{
-			Timeout:   5 * time.Minute, // Default 5 minute timeout for downloads
-			Transport: transport,
+			Timeout:   5 * time.Minute,
+			Transport: egress.NewHTTPTransport(),
 		}
+	} else {
+		client = egress.WrapClient(client)
 	}
 	return fantasy.NewParallelAgentTool(
 		DownloadToolName,

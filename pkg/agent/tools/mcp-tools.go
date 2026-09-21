@@ -11,6 +11,7 @@ import (
 	"github.com/hackafterdark/phosphor/pkg/config"
 	"github.com/hackafterdark/phosphor/pkg/otel"
 	"github.com/hackafterdark/phosphor/pkg/permission"
+	"github.com/hackafterdark/phosphor/pkg/security/externalcontent"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -245,10 +246,25 @@ func (m *Tool) Run(ctx context.Context, params fantasy.ToolCall) (fantasy.ToolRe
 		response = fantasy.NewTextResponse(result.Content)
 	}
 
+	// Drop self-labelled secret fields from a JSON result by key, then scrub any
+	// credential the value scanner can see. MCP results are path-less, so they are
+	// scanned in full mode and honour the read-path secrets toggle.
+	if response.Content != "" {
+		response.Content = redactSecretsForTool(RedactJSONForTool(response.Content, "mcp"), "", "mcp")
+	}
+
 	// Record the tool result on the span (opt-in per MCP semconv).
 	// Sanitize to prevent leaking sensitive data into OTel.
 	if response.Content != "" {
 		span.SetAttributes(attribute.String("gen_ai.tool.call.result", sanitizeResult(m.cfg, m.mcpName, response.Content)))
+	}
+
+	// Frame the result as untrusted external content: strip chat-template control
+	// tokens and enclose it in random boundary markers so a malicious MCP server
+	// cannot forge an early END marker and resume "trusted" instructions. This runs
+	// after redaction so the secret/JSON passes still see the raw payload.
+	if response.Content != "" {
+		response.Content = externalcontent.Wrap(response.Content, "mcp:"+m.mcpName)
 	}
 	return response, nil
 }

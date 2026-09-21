@@ -95,6 +95,13 @@ type Options struct {
 	ExtraTrustedRoots []string
 	// DisableTempRoot opts out of trusting the OS temporary directory.
 	DisableTempRoot bool
+	// ProxyEnv carries additional environment entries (for example the loopback
+	// egress broker's HTTP_PROXY/HTTPS_PROXY and proxy-auth token) that are
+	// appended to the child environment *after* allowlist filtering, so an
+	// operator's allowed_env list cannot accidentally drop them and a credential-
+	// named variable still cannot leak through the allowlist. It is nil in a
+	// normal session; only the opt-in egress-isolation tier populates it.
+	ProxyEnv []string
 }
 
 // NewShell creates a new shell instance with the given options
@@ -119,6 +126,12 @@ func NewShell(opts *Options) *Shell {
 
 	// Allow tools to detect execution by Phosphor.
 	env = append(env, PhosphorEnvMarkers()...)
+
+	// Append the caller-supplied proxy entries last, after allowlist filtering, so
+	// the egress broker's proxy vars and its proxy-auth token survive the filter
+	// (they are not operator allowlisted) yet still cannot smuggle a credential-
+	// named variable past it. This is nil unless the opt-in egress tier is on.
+	env = append(env, opts.ProxyEnv...)
 
 	logger := opts.Logger
 	if logger == nil {

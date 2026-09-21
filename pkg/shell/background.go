@@ -97,6 +97,17 @@ func WithTrustedRoots(roots []string) StartOption {
 	}
 }
 
+// WithProxyEnv configures extra environment entries that the background shell
+// should expose to its child process after allowlist filtering — today only the
+// loopback egress broker's proxy vars and its proxy-auth token, supplied by the
+// opt-in credential-isolation tier. A nil/empty slice is a no-op, so a normal
+// session's child environment is unchanged.
+func WithProxyEnv(env []string) StartOption {
+	return func(opts *Options) {
+		opts.ProxyEnv = env
+	}
+}
+
 // Start creates and starts a new background shell with the given command.
 func (m *BackgroundShellManager) Start(ctx context.Context, workingDir string, workspace string, blockFuncs []BlockFunc, command string, description string, opts ...StartOption) (*BackgroundShell, error) {
 	// Check job limit

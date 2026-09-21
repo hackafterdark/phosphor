@@ -649,6 +649,17 @@ func TestValidateCommandPaths_ExpansionAware(t *testing.T) {
 		// operand; unrelated arguments must not be inflated into absolute paths.
 		require.NoError(t, ValidateCommandPaths(`grep $HOME $PHOSPHOR_VECTOR_UNSET_DOES_NOT_EXIST_9F3A2C`, workspace))
 	})
+	t.Run("device file redirection targets stay allowed", func(t *testing.T) {
+		// The classic "2>/dev/null" discard redirect must not be flagged as an
+		// out-of-workspace write, on any OS. On Windows the validator resolves
+		// it to a rooted \dev\null form, which the device-file allowlist maps
+		// back before the bounds check runs.
+		require.NoError(t, ValidateCommandPaths("rg pattern . 2>/dev/null", workspace))
+		require.NoError(t, ValidateCommandPaths("make > /dev/null 2>&1", workspace))
+		require.NoError(t, ValidateCommandPaths("tee /dev/null < ./notes.txt", workspace))
+		require.NoError(t, ValidateCommandPaths(`echo x > "\dev\null"`, workspace))
+		require.NoError(t, ValidateCommandPaths("echo x > nul", workspace))
+	})
 
 	if runtime.GOOS == "windows" {
 		t.Run("windows system root var reached via redirection", func(t *testing.T) {

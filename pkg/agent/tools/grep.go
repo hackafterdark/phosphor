@@ -187,6 +187,11 @@ func NewGrepTool(workingDir string, config config.ToolGrep) fantasy.AgentTool {
 					}
 					if match.lineNum > 0 {
 						lineText := match.lineText
+						// Whole-value redaction for a sensitive file: a KEY=value line matched
+						// inside a .env keeps its key but loses its value, so the generic
+						// detector downstream is not the only thing standing between an
+						// opaque custom key and the transcript.
+						lineText = redactSensitiveLine(lineText, match.path)
 						if len(lineText) > maxGrepContentWidth {
 							lineText = lineText[:maxGrepContentWidth] + "..."
 						}
@@ -205,8 +210,9 @@ func NewGrepTool(workingDir string, config config.ToolGrep) fantasy.AgentTool {
 				}
 			}
 
+			redacted := redactSecretsForTool(output.String(), "", "grep")
 			return fantasy.WithResponseMetadata(
-				fantasy.NewTextResponse(output.String()),
+				fantasy.NewTextResponse(redacted),
 				GrepResponseMetadata{
 					NumberOfMatches: len(matches),
 					Truncated:       truncated,

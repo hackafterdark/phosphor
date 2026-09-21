@@ -15,6 +15,7 @@ import (
 
 	"charm.land/fantasy"
 	"github.com/hackafterdark/phosphor/pkg/otel"
+	"github.com/hackafterdark/phosphor/pkg/security/externalcontent"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -71,7 +72,7 @@ func NewWebSearchTool(client *http.Client) fantasy.AgentTool {
 			}
 			slog.Debug("Web search completed", "query", params.Query, "results", len(results))
 
-			return fantasy.NewTextResponse(sanitizeSearchResults(formatSearchResults(results))), nil
+			return fantasy.NewTextResponse(externalcontent.Wrap(sanitizeSearchResults(formatSearchResults(results)), "web-fetch")), nil
 		},
 	)
 }

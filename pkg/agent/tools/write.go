@@ -154,7 +154,11 @@ func NewWriteTool(
 				return resp, nil
 			}
 
-			err = os.WriteFile(filePath, []byte(params.Content), 0o644)
+			// Resolve reversible tokens for a trusted sensitive target (an .env
+			// round-trip); inert for any other destination, no-op when off.
+			contentToWrite := restoreSecretTokensForWrite(params.Content, filePath)
+
+			err = os.WriteFile(filePath, []byte(contentToWrite), 0o644)
 			if err != nil {
 				return fantasy.ToolResponse{}, fmt.Errorf("error writing file: %w", err)
 			}

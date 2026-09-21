@@ -161,11 +161,15 @@ func NewAppendTool(
 				return resp, nil
 			}
 
+			// Resolve reversible tokens for a trusted sensitive target (an .env
+			// round-trip); inert for any other destination, no-op when off.
+			contentToAppend := restoreSecretTokensForWrite(params.Content, filePath)
+
 			f, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 			if err != nil {
 				return fantasy.ToolResponse{}, fmt.Errorf("error opening file for appending: %w", err)
 			}
-			_, err = f.WriteString(params.Content)
+			_, err = f.WriteString(contentToAppend)
 			if closeErr := f.Close(); err == nil {
 				err = closeErr
 			}

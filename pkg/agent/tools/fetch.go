@@ -12,8 +12,10 @@ import (
 	"unicode/utf8"
 
 	"charm.land/fantasy"
+	"github.com/hackafterdark/phosphor/pkg/egress"
 	"github.com/hackafterdark/phosphor/pkg/otel"
 	"github.com/hackafterdark/phosphor/pkg/permission"
+	"github.com/hackafterdark/phosphor/pkg/security/externalcontent"
 	"go.opentelemetry.io/otel/attribute"
 
 	md "github.com/JohannesKaufmann/html-to-markdown"
@@ -47,15 +49,12 @@ func fetchDescription() string {
 
 func NewFetchTool(permissions permission.Service, workingDir string, client *http.Client) fantasy.AgentTool {
 	if client == nil {
-		transport := http.DefaultTransport.(*http.Transport).Clone()
-		transport.MaxIdleConns = 100
-		transport.MaxIdleConnsPerHost = 10
-		transport.IdleConnTimeout = 90 * time.Second
-
 		client = &http.Client{
 			Timeout:   30 * time.Second,
-			Transport: transport,
+			Transport: egress.NewHTTPTransport(),
 		}
+	} else {
+		client = egress.WrapClient(client)
 	}
 
 	return fantasy.NewParallelAgentTool(
@@ -194,7 +193,7 @@ func NewFetchTool(permissions permission.Service, workingDir string, client *htt
 				content += fmt.Sprintf("\n\n[Content truncated to %d bytes]", MaxFetchSize)
 			}
 
-			return fantasy.NewTextResponse(content), nil
+			return fantasy.NewTextResponse(externalcontent.Wrap(content, "web-fetch")), nil
 		},
 	)
 }
