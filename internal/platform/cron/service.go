@@ -130,6 +130,16 @@ func (s *Service) GetScheduledJobs() []*Job {
 
 // loadJobsFromDir loads jobs from the given directory.
 func (s *Service) loadJobsFromDir(ctx context.Context, dir string) error {
+	// Workspace trust gate. Repo-defined scheduled jobs are prompts this service runs
+	// unattended and in auto-approve (yolo) mode, so an untrusted checkout must not be
+	// able to register them: when the workspace is not trusted, load no repo jobs. The
+	// decision is the shared cached one the CLI resolved at startup, so this never
+	// prompts from inside the service.
+	if !config.WorkspaceToolingAllowed(s.cfg.WorkingDir()) {
+		s.logger.Warn("Ignoring repo-defined scheduled jobs: untrusted workspace", "working_dir", s.cfg.WorkingDir())
+		return nil
+	}
+
 	// Make the path absolute if it's relative.
 	if !filepath.IsAbs(dir) {
 		dir = filepath.Join(s.cfg.WorkingDir(), dir)

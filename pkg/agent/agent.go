@@ -2622,11 +2622,11 @@ func (a *sessionAgent) convertToToolResult(result fantasy.ToolResultContent) mes
 	switch result.Result.GetType() {
 	case fantasy.ToolResultContentTypeText:
 		if r, ok := fantasy.AsToolResultOutputType[fantasy.ToolResultOutputContentText](result.Result); ok {
-			baseResult.Content = tools.DefangSpecialTokens(r.Text)
+			baseResult.Content = tools.StripDeviceControls(tools.DefangSpecialTokens(r.Text))
 		}
 	case fantasy.ToolResultContentTypeError:
 		if r, ok := fantasy.AsToolResultOutputType[fantasy.ToolResultOutputContentError](result.Result); ok {
-			baseResult.Content = tools.DefangSpecialTokens(r.Error.Error())
+			baseResult.Content = tools.StripDeviceControls(tools.DefangSpecialTokens(r.Error.Error()))
 			baseResult.IsError = true
 		}
 	case fantasy.ToolResultContentTypeMedia:
@@ -2644,7 +2644,7 @@ func (a *sessionAgent) convertToToolResult(result fantasy.ToolResultContent) mes
 				if content == "" {
 					content = fmt.Sprintf("Loaded %s content", r.MediaType)
 				}
-				baseResult.Content = content
+				baseResult.Content = tools.StripDeviceControls(tools.DefangSpecialTokens(content))
 				baseResult.Data = r.Data
 				baseResult.MIMEType = r.MediaType
 			}

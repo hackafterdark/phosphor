@@ -16,6 +16,7 @@ import (
 	"github.com/hackafterdark/phosphor/pkg/otel"
 	"github.com/hackafterdark/phosphor/pkg/permission"
 	"github.com/hackafterdark/phosphor/pkg/security/externalcontent"
+	"github.com/hackafterdark/phosphor/pkg/security/urlguard"
 	"go.opentelemetry.io/otel/attribute"
 
 	md "github.com/JohannesKaufmann/html-to-markdown"
@@ -79,6 +80,14 @@ func NewFetchTool(permissions permission.Service, workingDir string, client *htt
 
 			if !strings.HasPrefix(params.URL, "http://") && !strings.HasPrefix(params.URL, "https://") {
 				return fantasy.NewTextErrorResponse("URL must start with http:// or https://"), nil
+			}
+
+			// Side-channel exfiltration defense: refuse to dial a URL whose query
+			// string carries a known secret or a high-entropy credential token
+			// before any request is put on the wire.
+			if err := urlguard.Check(params.URL); err != nil {
+				span.SetAttributes(attribute.String("gen_ai.network.blocked_reason", "url_credential_guard"))
+				return fantasy.NewTextErrorResponse(err.Error()), nil
 			}
 
 			sessionID := GetSessionFromContext(ctx)

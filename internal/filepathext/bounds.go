@@ -3,6 +3,7 @@ package filepathext
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -35,12 +36,16 @@ func IsInside(absPath, absWorkspace string) bool {
 // resolveSymlinks resolves every symlink component of absPath, even when the
 // final (or a trailing) component does not exist on disk. os.EvalSymlinks
 // refuses to resolve a path containing a missing component, so a naive caller
-// that falls back to the raw path can be fooled by a symlinked intermediate
+// that falls back to using it as-is can be fooled by a symlinked intermediate
 // directory when writing a brand-new file (the symlink is only followed later,
 // at open time, by the kernel). We resolve the deepest existing ancestor with
 // EvalSymlinks and re-append the still-missing components, which mirrors how
 // the path will actually be opened.
 func resolveSymlinks(absPath string) string {
+	if isNetworkPath(absPath) {
+		return filepath.Clean(absPath)
+	}
+
 	if resolved, err := filepath.EvalSymlinks(absPath); err == nil {
 		return resolved
 	}
@@ -63,4 +68,18 @@ func resolveSymlinks(absPath string) string {
 		missing = append(missing, filepath.Base(root))
 		root = parent
 	}
+}
+
+// isNetworkPath reports whether a Windows path names a UNC resource. Checking
+// such paths on disk can make the SMB redirecter start NetBIOS/DNS resolution
+// and TCP connection attempts, so bounds checks compare them lexically instead
+// of risking a long block while the operating system tries to contact the
+// remote host.
+func isNetworkPath(absPath string) bool {
+	if runtime.GOOS != "windows" {
+		return false
+	}
+
+	cleaned := filepath.ToSlash(filepath.Clean(absPath))
+	return strings.HasPrefix(cleaned, "//")
 }

@@ -50,6 +50,15 @@ var acpCmd = &cobra.Command{
 			}
 		}
 
+		// Workspace trust gate. ACP is a headless, protocol-driven mode (stdin is the
+		// JSON-RPC stream from the editor), so an interactive [y/N] prompt can not be
+		// shown. Record --trust and resolve the decision up front, before the backend
+		// builds an App that starts MCP clients and registers tools. An untrusted
+		// workspace falls back to native-only tools; --trust (or a previously trusted
+		// path) enables its repo-local MCP/tools.
+		applyWorkspaceTrustFlags(cmd, workingDir)
+		config.WorkspaceToolingAllowed(workingDir)
+
 		cfg, err := config.Load(workingDir, dataDir, debug)
 		if err != nil {
 			return fmt.Errorf("failed to load configuration: %v", err)
