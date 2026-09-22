@@ -153,7 +153,7 @@ var serverCmd = &cobra.Command{
 		// front, before any service builds an App that starts MCP clients and
 		// registers tools. An untrusted workspace runs native tools only; --trust (or a
 		// previously trusted path) enables its repo-local MCP/tools.
-		applyWorkspaceTrustFlags(cmd)
+		applyWorkspaceTrustFlags(cmd, wsDir)
 		config.WorkspaceToolingAllowed(wsDir)
 
 		var httpSrvLogger *slog.Logger = httpLogger

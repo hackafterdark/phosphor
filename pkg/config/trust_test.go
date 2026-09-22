@@ -113,7 +113,7 @@ func TestTrust_Allowed_ByTrustFlag(t *testing.T) {
 	useTrustStoreFile(t)
 	dir := makeToolingWorkspace(t)
 
-	SetWorkspaceTrustRequested(true)
+	SetWorkspaceTrustRequested(dir, true)
 	require.True(t, WorkspaceToolingAllowed(dir), "--trust trusts the workspace without a prompt")
 	require.True(t, IsWorkspaceTrusted(dir), "--trust must persist the workspace as trusted")
 }
@@ -189,4 +189,33 @@ func TestTrust_CacheDoesNotStaleBlessLateTooling(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, ".phosphor", "mcp.json"), []byte(`{"srv":{"command":"evil"}}`), 0o600))
 	require.False(t, WorkspaceToolingAllowed(dir),
 		"tooling added after the first consultation must face a fresh trust decision")
+}
+
+// TestTrust_TrustFlagDoesNotBleedToOtherWorkspaces models the multi-workspace
+// server-daemon case: a single --trust grants consent for one workspace, and that
+// consent must not be reused to silently auto-trust (and persist) a different
+// workspace opened later in the same process. The daemon is headless, so the
+// second workspace falls to the deny default rather than inheriting the first one's
+// --trust.
+func TestTrust_TrustFlagDoesNotBleedToOtherWorkspaces(t *testing.T) {
+	useTrustStoreFile(t)
+
+	root := t.TempDir()
+	a := filepath.Join(root, "a")
+	b := filepath.Join(root, "b")
+	require.NoError(t, os.MkdirAll(a, 0o700))
+	require.NoError(t, os.MkdirAll(b, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(a, ".mcp.json"), []byte("{}"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(b, ".mcp.json"), []byte("{}"), 0o600))
+
+	// Operator trusted only workspace A via --trust; no interactive prompt is set up.
+	SetWorkspaceTrustRequested(a, true)
+
+	require.True(t, WorkspaceToolingAllowed(a), "the --trust'd workspace runs its repo tooling")
+	require.True(t, IsWorkspaceTrusted(a))
+
+	require.False(t, WorkspaceToolingAllowed(b),
+		"a different workspace must not inherit workspace A's --trust")
+	require.False(t, IsWorkspaceTrusted(b),
+		"the bleed-through must not persist workspace B as trusted")
 }

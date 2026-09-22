@@ -24,6 +24,7 @@ func mustConfig(t *testing.T, data string) *Config {
 // onByDefault reports the effective value of a tri-state secure-by-default flag
 // (nil means on).
 func onByDefault(v *bool) bool { return v == nil || *v }
+
 // TestHarden_WorkspaceCannotDisableWireSecretRedaction is the core invariant: a
 // workspace config that tries to turn off the provider-wire secret mask is ignored
 // when the trusted floor keeps it on.
@@ -178,7 +179,6 @@ func TestHarden_FullMergePath(t *testing.T) {
 
 	hardenAgainstWorkspaceOverrides(merged, floor)
 
-
 	require.True(t, merged.ShouldForceWireSecretRedaction())
 	require.True(t, slices.Contains(merged.EffectiveSensitiveFilePatterns(), ".env"))
 	require.True(t, slices.Contains(merged.EffectiveSensitiveFilePatterns(), "only-this.txt"))
@@ -222,3 +222,22 @@ func TestHarden_LoadWithMaliciousWorkspaceConfig(t *testing.T) {
 		"operator-added sensitive pattern must survive the workspace override")
 }
 
+// TestHarden_LockedDownEnvFloorExcludesSafeDefaults verifies that once the
+// operator pins an explicit AllowedEnv floor, the built-in SafeDefaultEnv set is
+// NOT unioned back in, so a workspace can not resurrect a safe-default name the
+// operator deliberately left out. Before this guarantee the safe-default union let
+// a repo re-add (e.g.) HOME even under a locked-down operator floor.
+func TestHarden_LockedDownEnvFloorExcludesSafeDefaults(t *testing.T) {
+	floor := &Config{}
+	floor.setDefaults(t.TempDir(), "")
+	// Operator allows only PATH, deliberately omitting HOME (a SafeDefaultEnv member).
+	floor.Tools.Bash.AllowedEnv = []string{"PATH"}
+
+	// Workspace tries to smuggle HOME back in alongside a clearly secret name.
+	workspace := mustConfig(t, `{"tools":{"bash":{"allowed_env":["PATH","HOME","AWS_SECRET_ACCESS_KEY"]}}}`)
+
+	hardenAgainstWorkspaceOverrides(workspace, floor)
+
+	require.ElementsMatch(t, []string{"PATH"}, workspace.Tools.Bash.AllowedEnv,
+		"HOME is a safe-default but not in the operator floor, and the secret name is never allowed")
+}

@@ -170,14 +170,19 @@ func requiredSuperset(current, floor []string, name string, revert func(string, 
 // noBroadenAllowList keeps only the entries of current that are present in the
 // trusted allow-set. An allow-list may be narrowed by a workspace but never
 // broadened beyond the operator's setting. defaultFloor supplies the built-in
-// trusted set to compare against when the floor list itself is empty (e.g. the
-// bash child environment's safe default).
+// trusted set to compare against only when the operator configured no floor at
+// all (an empty floor means "use the safe default", e.g. the bash child
+// environment's SafeDefaultEnv). Once the operator has pinned an explicit floor,
+// defaultFloor is deliberately ignored: otherwise every built-in safe-default
+// entry would silently rejoin the allow-set and let a workspace re-add a name the
+// operator removed, broadening the list past the operator's setting.
 func noBroadenAllowList(current, floor []string, name string, defaultFloor []string, revert func(string, string)) []string {
-	allowed := make(map[string]struct{}, len(floor)+len(defaultFloor))
-	for _, a := range floor {
-		allowed[a] = struct{}{}
+	base := floor
+	if len(base) == 0 {
+		base = defaultFloor
 	}
-	for _, a := range defaultFloor {
+	allowed := make(map[string]struct{}, len(base))
+	for _, a := range base {
 		allowed[a] = struct{}{}
 	}
 	var dropped []string

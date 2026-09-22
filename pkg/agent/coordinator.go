@@ -47,8 +47,8 @@ import (
 	"charm.land/fantasy/providers/openaicompat"
 	"charm.land/fantasy/providers/openrouter"
 	"charm.land/fantasy/providers/vercel"
-	"github.com/hackafterdark/phosphor/internal/jsonmerge"
 	openaisdk "github.com/charmbracelet/openai-go/option"
+	"github.com/hackafterdark/phosphor/internal/jsonmerge"
 )
 
 // Coordinator errors.
@@ -1029,10 +1029,16 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, isSubA
 
 	logFile := filepath.Join(c.cfg.Config().Options.DataDirectory, "logs", "phosphor.log")
 
-	// Build hook runner if PreToolUse hooks are configured.
+	// Build hook runner if PreToolUse hooks are configured. Hooks run arbitrary
+	// shell commands with the user's privileges, so they are part of the
+	// repository's executable surface: an untrusted workspace's repo-local
+	// PreToolUse hooks must not be constructed or fired, exactly like its
+	// repo-local MCP servers and scheduled jobs.
 	var hookRunner *hooks.Runner
-	if preToolHooks := c.cfg.Config().Hooks[hooks.EventPreToolUse]; len(preToolHooks) > 0 {
-		hookRunner = hooks.NewRunner(preToolHooks, c.cfg.WorkingDir(), c.cfg.WorkingDir())
+	if allowRepoTooling {
+		if preToolHooks := c.cfg.Config().Hooks[hooks.EventPreToolUse]; len(preToolHooks) > 0 {
+			hookRunner = hooks.NewRunner(preToolHooks, c.cfg.WorkingDir(), c.cfg.WorkingDir())
+		}
 	}
 
 	allTools = append(

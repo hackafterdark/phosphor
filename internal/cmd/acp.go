@@ -56,7 +56,7 @@ var acpCmd = &cobra.Command{
 		// builds an App that starts MCP clients and registers tools. An untrusted
 		// workspace falls back to native-only tools; --trust (or a previously trusted
 		// path) enables its repo-local MCP/tools.
-		applyWorkspaceTrustFlags(cmd)
+		applyWorkspaceTrustFlags(cmd, workingDir)
 		config.WorkspaceToolingAllowed(workingDir)
 
 		cfg, err := config.Load(workingDir, dataDir, debug)

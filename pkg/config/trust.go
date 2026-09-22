@@ -71,6 +71,12 @@ var (
 	customPromptSet bool
 	trustInteractve bool
 	trustRequested  bool
+	// trustRequestedFor is the normalized workspace key the --trust consent was
+	// granted for. --trust trusts a single workspace, so the consent is bound to
+	// this path and must not leak to other workspaces that share the process (a
+	// multi-workspace server daemon). An empty value means the consent is
+	// unbound (legacy/global) and applies to whatever workspace is consulted.
+	trustRequestedFor string
 	// trustedWorkspacesPathOverride lets tests point the store at a temp file.
 	trustedWorkspacesPathOverride string
 
@@ -105,18 +111,32 @@ func SetWorkspaceTrustInteractive(interactive bool) {
 }
 
 // SetWorkspaceTrustRequested records that the operator explicitly passed --trust,
-// which trusts the current workspace without a prompt (including headless).
-func SetWorkspaceTrustRequested(requested bool) {
+// which trusts the given workspace without a prompt (including headless). The
+// consent is bound to workingDir so that a --trust granted for one workspace can
+// not silently trust a different one that happens to be decided later in the same
+// process; only the workspace the operator named is trusted automatically. An
+// empty workingDir records an unbound (global) consent for callers that have no
+// specific path at set time.
+func SetWorkspaceTrustRequested(workingDir string, requested bool) {
+	key := ""
+	if requested && strings.TrimSpace(workingDir) != "" {
+		if normalized, ok := normalizeWorkspacePath(workingDir); ok {
+			key = normalized
+		}
+	}
 	trustMu.Lock()
 	defer trustMu.Unlock()
 	trustRequested = requested
+	trustRequestedFor = key
 }
 
-// trustGateState reads the mutable gate settings under the lock.
-func trustGateState() (prompt TrustPrompt, interactive, requested, customPrompt bool) {
+// trustGateState reads the mutable gate settings under the lock. requestedFor is
+// the normalized workspace key the current --trust consent is bound to, or "" when
+// the consent is unbound.
+func trustGateState() (prompt TrustPrompt, interactive, requested, customPrompt bool, requestedFor string) {
 	trustMu.Lock()
 	defer trustMu.Unlock()
-	return trustPrompt, trustInteractve, trustRequested, customPromptSet
+	return trustPrompt, trustInteractve, trustRequested, customPromptSet, trustRequestedFor
 }
 
 // stdinTrustPrompt is the fallback used when an interactive session has not
@@ -238,8 +258,14 @@ func decideWorkspaceTooling(workingDir string) bool {
 		return true
 	}
 
-	prompt, interactive, requested, customPrompt := trustGateState()
-	if requested {
+	key, _ := normalizeWorkspacePath(workingDir)
+	prompt, interactive, requested, customPrompt, requestedFor := trustGateState()
+	// --trust only consents the single workspace the operator named. An unbound
+	// consent (requestedFor == "") still applies everywhere for back-compat, but a
+	// consent bound to a different path must not bless this one: in a shared,
+	// multi-workspace server daemon a sticky global --trust would otherwise
+	// auto-trust (and persist) every other workspace opened through it.
+	if requested && (requestedFor == "" || requestedFor == key) {
 		if err := TrustWorkspace(workingDir); err != nil {
 			slog.Warn("Failed to persist trusted workspace", "path", workingDir, "error", err)
 		}
@@ -270,10 +296,10 @@ func decideWorkspaceTooling(workingDir string) bool {
 // WorkspaceTrustStore persists the set of trusted workspace roots as JSON under the
 // user's global config directory. It is safe for concurrent use.
 type WorkspaceTrustStore struct {
-	mu       sync.Mutex
-	path     string
-	loaded   bool
-	trusted  map[string]struct{}
+	mu      sync.Mutex
+	path    string
+	loaded  bool
+	trusted map[string]struct{}
 	// display keeps the first-seen original spelling of a normalized key so the
 	// file is readable and the original-case path can be recovered on load.
 	display map[string]string
@@ -530,6 +556,7 @@ func resetWorkspaceTrustStateForTest() {
 	customPromptSet = false
 	trustInteractve = false
 	trustRequested = false
+	trustRequestedFor = ""
 	trustedWorkspacesPathOverride = ""
 	trustMu.Unlock()
 

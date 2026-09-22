@@ -265,10 +265,12 @@ func setupWorkspaceWithProgressBar(cmd *cobra.Command) (workspace.Workspace, fun
 
 // applyWorkspaceTrustFlags records the --trust decision and the session's
 // interactivity so the workspace trust gate knows whether it may prompt. A stdin
-// that is a terminal is treated as an interactive (TUI) session.
-func applyWorkspaceTrustFlags(cmd *cobra.Command) {
+// that is a terminal is treated as an interactive (TUI) session. The --trust
+// consent is bound to workingDir so a single --trust can not later be reused to
+// auto-trust a different workspace that shares the process.
+func applyWorkspaceTrustFlags(cmd *cobra.Command, workingDir string) {
 	trust, _ := cmd.Flags().GetBool("trust")
-	config.SetWorkspaceTrustRequested(trust)
+	config.SetWorkspaceTrustRequested(workingDir, trust)
 	config.SetWorkspaceTrustInteractive(term.IsTerminal(os.Stdin.Fd()))
 }
 
@@ -292,13 +294,13 @@ func setupLocalWorkspace(cmd *cobra.Command) (workspace.Workspace, func(), *sql.
 	ctx := cmd.Context()
 
 	// Workspace trust gate: honor an explicit --trust and mark this command's
-	// interactivity so the gate knows whether it may prompt the operator.
-	applyWorkspaceTrustFlags(cmd)
-
+	// interactivity so the gate knows whether it may prompt the operator. The
+	// --trust consent is bound to cwd so it can not leak to another workspace.
 	cwd, err := ResolveCwd(cmd)
 	if err != nil {
 		return nil, nil, nil, err
 	}
+	applyWorkspaceTrustFlags(cmd, cwd)
 
 	// Resolve the workspace trust decision here, while stdin is still free, so the
 	// one-time "[y/N]" prompt is shown before the TUI takes over the terminal. The
