@@ -816,6 +816,10 @@ func (s *ConfigStore) reloadFromDiskLocked(ctx context.Context) error {
 		}
 	}
 
+	// Security hardening: reject workspace/project downgrades of security-critical
+	// fields relative to the trusted user/system baseline (mirrors Load).
+	hardenAgainstWorkspaceOverrides(cfg, trustedSecurityFloor(s.workingDir, cfg.Options.DataDirectory))
+
 	// Validate hooks after all config merging is complete so matcher
 	// regexes are recompiled on the reloaded config (mirrors Load).
 	if err := cfg.ValidateHooks(); err != nil {

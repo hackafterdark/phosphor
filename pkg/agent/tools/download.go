@@ -16,6 +16,7 @@ import (
 	"github.com/hackafterdark/phosphor/internal/filepathext"
 	"github.com/hackafterdark/phosphor/pkg/egress"
 	"github.com/hackafterdark/phosphor/pkg/otel"
+	"github.com/hackafterdark/phosphor/pkg/security/urlguard"
 	"github.com/hackafterdark/phosphor/pkg/permission"
 	"go.opentelemetry.io/otel/attribute"
 )
@@ -82,6 +83,14 @@ func NewDownloadTool(permissions permission.Service, workingDir string, client *
 
 			if !strings.HasPrefix(params.URL, "http://") && !strings.HasPrefix(params.URL, "https://") {
 				return fantasy.NewTextErrorResponse("URL must start with http:// or https://"), nil
+			}
+
+			// Side-channel exfiltration defense: a model- or repo-constructed download URL can
+			// smuggle a known secret or high-entropy credential in its query string out to an
+			// attacker host. Refuse before dialing, the same gate fetch/web_fetch apply.
+			if err := urlguard.Check(params.URL); err != nil {
+				span.SetAttributes(attribute.String("gen_ai.network.blocked_reason", "url_credential_guard"))
+				return fantasy.NewTextErrorResponse(err.Error()), nil
 			}
 
 			filePath := filepathext.SmartJoin(workingDir, params.FilePath)

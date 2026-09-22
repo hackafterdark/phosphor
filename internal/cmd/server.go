@@ -148,6 +148,14 @@ var serverCmd = &cobra.Command{
 		}
 		slog.Info("Using workspace directory", "path", wsDir)
 
+		// Workspace trust gate. The server is a headless daemon with no terminal to
+		// prompt in, so record --trust and resolve the workspace-trust decision up
+		// front, before any service builds an App that starts MCP clients and
+		// registers tools. An untrusted workspace runs native tools only; --trust (or a
+		// previously trusted path) enables its repo-local MCP/tools.
+		applyWorkspaceTrustFlags(cmd)
+		config.WorkspaceToolingAllowed(wsDir)
+
 		var httpSrvLogger *slog.Logger = httpLogger
 		srv := httpapi.NewService(cfg, hostURL.Scheme, hostURL.Host, wsDir, httpSrvLogger)
 

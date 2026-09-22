@@ -997,6 +997,12 @@ func (c *coordinator) buildAgent(ctx context.Context, prompt *prompt.Prompt, age
 
 func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, isSubAgent bool) ([]fantasy.AgentTool, error) {
 	var allTools []fantasy.AgentTool
+
+	// Interactive workspace trust gate: an untrusted repository's repo-local MCP
+	// servers and custom tool definitions must not be registered. When the decision
+	// denies them, the agent runs with only the built-in native tools.
+	allowRepoTooling := config.WorkspaceToolingAllowed(c.cfg.WorkingDir())
+
 	if slices.Contains(agent.AllowedTools, AgentToolName) {
 		agentTool, err := c.agentTool(ctx)
 		if err != nil {
@@ -1084,7 +1090,7 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, isSubA
 		allTools = append(allTools, tools.NewSemanticSearchTool(*c.cfg.Config(), c.cfg.WorkingDir()))
 	}
 
-	if len(c.cfg.Config().MCP) > 0 {
+	if len(c.cfg.Config().MCP) > 0 && allowRepoTooling {
 		allTools = append(
 			allTools,
 			tools.NewListMCPResourcesTool(c.cfg, c.permissions),
@@ -1099,28 +1105,32 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, isSubA
 		}
 	}
 
-	for _, tool := range tools.GetMCPTools(c.permissions, c.cfg, c.cfg.WorkingDir()) {
-		if agent.AllowedMCP == nil {
-			// No MCP restrictions
-			filteredTools = append(filteredTools, tool)
-			continue
-		}
-		if len(agent.AllowedMCP) == 0 {
-			// No MCPs allowed
-			slog.Debug("No MCPs allowed", "tool", tool.Name(), "agent", agent.Name)
-			break
-		}
-
-		for mcp, tools := range agent.AllowedMCP {
-			if mcp != tool.MCP() {
+	if allowRepoTooling {
+		for _, tool := range tools.GetMCPTools(c.permissions, c.cfg, c.cfg.WorkingDir()) {
+			if agent.AllowedMCP == nil {
+				// No MCP restrictions
+				filteredTools = append(filteredTools, tool)
 				continue
 			}
-			if len(tools) == 0 || slices.Contains(tools, tool.MCPToolName()) {
-				filteredTools = append(filteredTools, tool)
+			if len(agent.AllowedMCP) == 0 {
+				// No MCPs allowed
+				slog.Debug("No MCPs allowed", "tool", tool.Name(), "agent", agent.Name)
 				break
 			}
-			slog.Debug("MCP not allowed", "tool", tool.Name(), "agent", agent.Name)
+
+			for mcp, tools := range agent.AllowedMCP {
+				if mcp != tool.MCP() {
+					continue
+				}
+				if len(tools) == 0 || slices.Contains(tools, tool.MCPToolName()) {
+					filteredTools = append(filteredTools, tool)
+					break
+				}
+				slog.Debug("MCP not allowed", "tool", tool.Name(), "agent", agent.Name)
+			}
 		}
+	} else {
+		slog.Warn("Ignoring repo-local MCP tools: untrusted workspace", "working_dir", c.cfg.WorkingDir())
 	}
 	slices.SortFunc(filteredTools, func(a, b fantasy.AgentTool) int {
 		return strings.Compare(a.Info().Name, b.Info().Name)

@@ -103,6 +103,12 @@ func Load(workingDir, dataDir string, debug bool) (*ConfigStore, error) {
 		}
 	}
 
+	// Security hardening: clamp any security-relevant field that a workspace- or
+	// project-local config tried to weaken below the trusted user/system baseline,
+	// so an untrusted repository cannot silently disable a secret mask, shrink the
+	// sensitive-file set, or broaden the bash child environment.
+	hardenAgainstWorkspaceOverrides(cfg, trustedSecurityFloor(workingDir, cfg.Options.DataDirectory))
+
 	// Validate hooks after all config merging is complete so workspace
 	// hooks also get their matcher regexes compiled.
 	if err := cfg.ValidateHooks(); err != nil {

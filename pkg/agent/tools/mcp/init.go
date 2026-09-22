@@ -23,6 +23,7 @@ import (
 	"github.com/hackafterdark/phosphor/pkg/egress"
 	"github.com/hackafterdark/phosphor/pkg/permission"
 	"github.com/hackafterdark/phosphor/pkg/pubsub"
+	"github.com/hackafterdark/phosphor/pkg/security/urlguard"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -178,6 +179,15 @@ func Close(ctx context.Context) error {
 // Initialize initializes MCP clients based on the provided configuration.
 func Initialize(ctx context.Context, permissions permission.Service, cfg *config.ConfigStore) {
 	slog.Info("Initializing MCP clients")
+
+	// Interactive workspace trust gate: an untrusted repository's repo-local MCP
+	// servers must not be started. Consult the shared decision (cached, prompted at
+	// most once) and, when it denies, run with no MCP clients at all.
+	if !config.WorkspaceToolingAllowed(cfg.WorkingDir()) {
+		slog.Warn("Skipping MCP initialization: untrusted workspace, ignoring repo-local MCP configuration", "working_dir", cfg.WorkingDir())
+		return
+	}
+
 	var wg sync.WaitGroup
 	// Initialize states for all configured MCPs
 	for name, m := range cfg.Config().MCP {
@@ -542,6 +552,15 @@ func newHeaderRoundTripper(headers map[string]string) *headerRoundTripper {
 }
 
 func (rt *headerRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	// Side-channel exfiltration defense: an MCP HTTP/SSE server whose endpoint or
+	// request query string carries a known secret or a high-entropy credential
+	// token is refused before the request is dialed, so the agent cannot be baited
+	// into POSTing a real credential to an attacker host via a repo-supplied URL.
+	if req.URL != nil {
+		if err := urlguard.Check(req.URL.String()); err != nil {
+			return nil, err
+		}
+	}
 	for k, v := range rt.headers {
 		req.Header.Set(k, v)
 	}

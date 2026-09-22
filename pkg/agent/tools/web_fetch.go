@@ -20,6 +20,7 @@ import (
 	"github.com/hackafterdark/phosphor/pkg/egress"
 	"github.com/hackafterdark/phosphor/pkg/otel"
 	"github.com/hackafterdark/phosphor/pkg/security/externalcontent"
+	"github.com/hackafterdark/phosphor/pkg/security/urlguard"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -68,6 +69,13 @@ func newSecurityTransport(inner http.RoundTripper, allowFn func(ctx context.Cont
 // then delegates to the inner transport.
 func (t *securityTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	host := req.URL.Host
+
+	// Side-channel exfiltration defense at the transport layer: a request whose
+	// query string smuggles a known secret or high-entropy token is refused here
+	// too, so any caller that reaches this transport directly is still covered.
+	if err := urlguard.Check(req.URL.String()); err != nil {
+		return nil, err
+	}
 
 	// Strip the port for allow-list lookups.
 	lookupHost := stripPort(host)
@@ -330,6 +338,14 @@ func NewWebFetchTool(workingDir string, client *http.Client, allowFn func(ctx co
 			)
 			if params.URL == "" {
 				return fantasy.NewTextErrorResponse("url is required"), nil
+			}
+
+			// Side-channel exfiltration defense: refuse to dial a URL whose query
+			// string carries a known secret or high-entropy credential token before
+			// any request reaches the network.
+			if err := urlguard.Check(params.URL); err != nil {
+				span.SetAttributes(attribute.String("gen_ai.network.blocked_reason", "url_credential_guard"))
+				return fantasy.NewTextErrorResponse(err.Error()), nil
 			}
 
 			// The securityTransport already handles the trust hierarchy; the
