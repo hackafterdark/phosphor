@@ -98,3 +98,20 @@ func TestStripDeviceControls_NoOsc52Survives(t *testing.T) {
 	require.NotContains(t, out, payload)
 	require.False(t, strings.Contains(out, "\x1b]52"))
 }
+
+// TestStripDeviceControls_RawC1ByteDoesNotSurvive is the raw-byte regression: a
+// bare 0x9D byte is invalid UTF-8, so the rune-based fast-path predicate never
+// sees the C1 value and would return the input untouched, handing the terminal a
+// live 8-bit control introducer. Invalid UTF-8 must therefore take the scanner
+// path, where the byte collapses to an inert replacement character.
+func TestStripDeviceControls_RawC1ByteDoesNotSurvive(t *testing.T) {
+	t.Parallel()
+
+	in := string([]byte{'a', 0x9d, 'b'})
+	out := StripDeviceControls(in)
+	require.NotContains(t, out, string([]byte{0x9d}))
+	require.Equal(t, "a\uFFFDb", out)
+
+	// Idempotent: the replacement character is plain printable text.
+	require.Equal(t, out, StripDeviceControls(out))
+}

@@ -23,6 +23,9 @@ func TestHeaderRoundTripper_RefusesSecretInURL(t *testing.T) {
 	require.NoError(t, err)
 
 	resp, err := rt.RoundTrip(req)
+	if resp != nil {
+		defer resp.Body.Close()
+	}
 	require.Error(t, err, "the MCP transport must refuse a URL carrying a known secret")
 	require.ErrorContains(t, err, urlguard.ErrMessage)
 	require.Nil(t, resp)
@@ -37,7 +40,10 @@ func TestHeaderRoundTripper_AllowsCleanURL(t *testing.T) {
 	// The guard passes (no secret in the URL); the request proceeds to the base
 	// transport, which fails only on the connection/SSRF layer, never with a
 	// credential-block message. That asymmetry is what proves the guard let it by.
-	_, err = rt.RoundTrip(req)
+	resp, err := rt.RoundTrip(req)
+	if resp != nil {
+		defer resp.Body.Close()
+	}
 	if err != nil {
 		require.NotContains(t, err.Error(), urlguard.ErrMessage)
 	}

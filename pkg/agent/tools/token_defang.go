@@ -1,6 +1,9 @@
 package tools
 
-import "strings"
+import (
+	"strings"
+	"unicode/utf8"
+)
 
 // defanger is built once at init time. Order matters: the explicit token
 // replacements run first so that e.g. "[im_end]" → "[im_end]" before the
@@ -72,7 +75,11 @@ func StripDeviceControls(s string) string {
 	// introducer, no DEL, no 8-bit C1 control, and no stray C0 control, so return
 	// it untouched. The predicate is kept in step with the switch below so the
 	// fast path and the scanner can never disagree about what counts as control.
-	if !strings.ContainsFunc(s, isTerminalControl) {
+	// A raw (non-UTF-8-encoded) C1 byte such as 0x9D is not visible to the
+	// rune-based predicate, which only ever sees U+FFFD for it, so invalid UTF-8
+	// must also take the scanner path; there the byte becomes an inert U+FFFD
+	// instead of reaching the terminal as a live 8-bit control introducer.
+	if utf8.ValidString(s) && !strings.ContainsFunc(s, isTerminalControl) {
 		return s
 	}
 

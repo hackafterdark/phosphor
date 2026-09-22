@@ -185,6 +185,9 @@ func Initialize(ctx context.Context, permissions permission.Service, cfg *config
 	// most once) and, when it denies, run with no MCP clients at all.
 	if !config.WorkspaceToolingAllowed(cfg.WorkingDir()) {
 		slog.Warn("Skipping MCP initialization: untrusted workspace, ignoring repo-local MCP configuration", "working_dir", cfg.WorkingDir())
+		// Signal completion so WaitForInit callers are not parked until context
+		// cancellation on a run where no client is ever going to start.
+		initOnce.Do(func() { close(initDone) })
 		return
 	}
 

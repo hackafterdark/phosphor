@@ -46,6 +46,18 @@ var repoLocalToolingDirs = []string{
 	filepath.Join(".phosphor", "jobs"),
 }
 
+// repoLocalConfigFiles are the repository-committed configuration files that
+// lookupConfigs and Load merge into the effective configuration. Because they can
+// define MCP servers ("mcp") and hook commands ("hooks"), a repository that
+// declares them only through one of these files must still pass the trust gate.
+// Presence alone does not imply an executable surface, so they count only when a
+// non-empty executable section is present.
+var repoLocalConfigFiles = []string{
+	appName + ".json",
+	"." + appName + ".json",
+	filepath.Join(".phosphor", appName+".json"),
+}
+
 // TrustPrompt is asked once for an untrusted workspace that declares repo-local
 // tooling. It receives the human-readable working directory and the rendered
 // question and returns whether the user trusts the workspace. The TUI installs a
@@ -142,6 +154,38 @@ func RepoDefinesCustomTooling(workingDir string) bool {
 			return true
 		}
 	}
+	for _, rel := range repoLocalConfigFiles {
+		if declaresExecutableConfig(filepath.Join(workingDir, filepath.FromSlash(rel))) {
+			return true
+		}
+	}
+	return false
+}
+
+// declaresExecutableConfig reports whether a repository configuration file defines
+// a non-empty "mcp" or "hooks" section, i.e. an executable surface that must pass
+// the trust gate. A missing or empty file registers nothing; a non-empty file
+// that cannot be parsed is treated as declaring tooling so the gate fails closed.
+func declaresExecutableConfig(path string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil || len(data) == 0 {
+		return false
+	}
+	var sections map[string]json.RawMessage
+	if err := json.Unmarshal(data, &sections); err != nil {
+		return true
+	}
+	for _, key := range []string{"mcp", "hooks"} {
+		raw, ok := sections[key]
+		if !ok {
+			continue
+		}
+		switch strings.TrimSpace(string(raw)) {
+		case "", "null", "{}", "[]":
+		default:
+			return true
+		}
+	}
 	return false
 }
 
@@ -153,6 +197,16 @@ func RepoDefinesCustomTooling(workingDir string) bool {
 // The decision is computed once per workspace and cached: buildTools and the MCP
 // initializer both consult it, but the operator is prompted at most once.
 func WorkspaceToolingAllowed(workingDir string) bool {
+	// Consult the repository surface before the cache: the executable files can
+	// appear mid-session (config reload, agent writes, git operations), and a
+	// stale allow decision from a moment when nothing was declared must not
+	// silently bless them without operator consent. Only real decisions (made
+	// while tooling was present) are cached, so the cache never stores the
+	// "nothing to protect against" answer.
+	if !RepoDefinesCustomTooling(workingDir) {
+		return true
+	}
+
 	key, ok := normalizeWorkspacePath(workingDir)
 	if !ok {
 		// Could not resolve the path: fail closed and treat it as needing trust.
@@ -418,7 +472,7 @@ func normalizeWorkspacePathWithDisplay(dir string) (key, display string, ok bool
 
 	display = abs
 	key = abs
-	if runtime.GOOS == "windows" || isCaseInsensitivePlatform() {
+	if isCaseInsensitivePlatform() {
 		key = strings.ToLower(abs)
 	}
 	if key == "" {
@@ -427,10 +481,14 @@ func normalizeWorkspacePathWithDisplay(dir string) (key, display string, ok bool
 	return key, display, true
 }
 
-// isCaseInsensitivePlatform reports whether path comparison should ignore case. On
-// Windows paths are case-insensitive; on darwin they commonly are too.
+// isCaseInsensitivePlatform reports whether path comparison should ignore case.
+// Only Windows is assumed case-insensitive: macOS volumes may be formatted
+// case-sensitively, where /repo/Foo and /repo/foo are distinct workspaces, so
+// folding their keys together would let consent for one silently trust the other.
+// A case-insensitive macoS volume then just re-prompts alternate spellings, which
+// fails closed and is the safe direction for a mistaken guess.
 func isCaseInsensitivePlatform() bool {
-	return runtime.GOOS == "windows" || runtime.GOOS == "darwin"
+	return runtime.GOOS == "windows"
 }
 
 func fileExists(path string) bool {

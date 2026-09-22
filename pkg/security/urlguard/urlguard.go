@@ -75,14 +75,29 @@ func Check(rawURL string) error {
 		return fmt.Errorf("%s", ErrMessage)
 	}
 
-	if !highEntropyEnabled {
-		return nil
-	}
-
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
 		return nil
 	}
+
+	// Registry pass over the *decoded* query values. The registry stores the raw
+	// value and one canonical percent-encoded form, but a query may smuggle the
+	// same secret in a different valid encoding (e.g. lower-case escapes), which
+	// the raw scan above cannot match. Parsing decodes it back to the exact
+	// registered value. This is the high-precision pass and stays on even when
+	// the speculative entropy scan is dialed back.
+	for _, values := range parsed.Query() {
+		for _, v := range values {
+			if secrets.Scrub(v) != v {
+				return fmt.Errorf("%s", ErrMessage)
+			}
+		}
+	}
+
+	if !highEntropyEnabled {
+		return nil
+	}
+
 	// Values are the decoded query parameters; we scan the values only, never the
 	// keys, so a long literal passed as ?q=<text> is still allowed while a random
 	// blob in ?token= is caught.

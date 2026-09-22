@@ -96,3 +96,31 @@ func TestScrubURL_RedactsKnownSecret(t *testing.T) {
 	require.Contains(t, scrubbed, "redacted")
 	require.NotEqual(t, raw, ScrubURL("https://example.com/plain?x=1"))
 }
+
+// altEncodingSecret contains a character the registry stores only raw and in one
+// canonical escape form, so a request can smuggle it past the raw-URL scan using
+// a different, equally valid percent-encoding.
+const altEncodingSecret = "Ab17-Q.K.PG25!6gkP"
+
+// altEncodedSecretURL spells altEncodingSecret with lower-case hex escapes, which
+// matches neither the raw nor the canonical QueryEscape form literally but decodes
+// back to the exact registered value.
+const altEncodedSecretURL = "https://example.com/log?sig=Ab17-Q.K.PG25%216gkP"
+
+func TestCheck_KnownSecretInAlternateEncodingAborts(t *testing.T) {
+	secrets.Register(altEncodingSecret)
+	err := Check(altEncodedSecretURL)
+	require.Error(t, err, "an alternate-encoded known secret must still abort")
+	require.Equal(t, ErrMessage, err.Error())
+}
+
+func TestCheck_DecodedRegistryPassRunsWithoutEntropyScan(t *testing.T) {
+	secrets.Register(altEncodingSecret)
+	prev := HighEntropyDetection()
+	SetHighEntropyDetection(false)
+	t.Cleanup(func() { SetHighEntropyDetection(prev) })
+
+	// The decoded registry pass is the high-precision control: it stays on even
+	// when the speculative entropy scan is dialed back.
+	require.ErrorContains(t, Check(altEncodedSecretURL), ErrMessage)
+}

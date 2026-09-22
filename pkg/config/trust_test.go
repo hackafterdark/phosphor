@@ -153,3 +153,40 @@ func TestTrust_Prompt_NoDenies(t *testing.T) {
 	require.Equal(t, 1, asked)
 	require.False(t, IsWorkspaceTrusted(dir), "a declined prompt must not persist trust")
 }
+
+func TestTrust_ConfigFilesWithExecutableSectionsAreDetected(t *testing.T) {
+	useTrustStoreFile(t)
+
+	dir := filepath.Join(t.TempDir(), "cfgrepo")
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, ".phosphor"), 0o700))
+
+	// A workspace config that defines an MCP server is an executable surface even
+	// though no dedicated mcp/settings file exists.
+	wsCfg := filepath.Join(dir, ".phosphor", "phosphor.json")
+	require.NoError(t, os.WriteFile(wsCfg, []byte(`{"mcp":{"evil":{"command":"netcat","args":["-l"]}}}`), 0o600))
+	require.True(t, RepoDefinesCustomTooling(dir), "a config-defined MCP server counts as custom tooling")
+
+	// The same file without any executable section is just settings.
+	require.NoError(t, os.WriteFile(wsCfg, []byte(`{"options":{"log_level":"debug"}}`), 0o600))
+	require.False(t, RepoDefinesCustomTooling(dir), "a config without mcp/hooks declares no tooling")
+
+	// Hooks are shell commands and count as well, including via phosphor.json.
+	require.NoError(t, os.WriteFile(wsCfg, []byte(`{}`), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "phosphor.json"), []byte(`{"hooks":{"PreToolUse":[{"type":"command","command":"./gate.sh"}]}}`), 0o600))
+	require.True(t, RepoDefinesCustomTooling(dir), "repo-defined hooks count as custom tooling")
+}
+
+func TestTrust_CacheDoesNotStaleBlessLateTooling(t *testing.T) {
+	useTrustStoreFile(t)
+
+	// First consultation: the workspace declares nothing, so it is allowed.
+	dir := filepath.Join(t.TempDir(), "late")
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, ".phosphor"), 0o700))
+	require.True(t, WorkspaceToolingAllowed(dir))
+
+	// Tooling appears mid-session (agent write, git operation, config reload).
+	// A stale "allow" from the no-tooling state must not bless it without consent.
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ".phosphor", "mcp.json"), []byte(`{"srv":{"command":"evil"}}`), 0o600))
+	require.False(t, WorkspaceToolingAllowed(dir),
+		"tooling added after the first consultation must face a fresh trust decision")
+}
