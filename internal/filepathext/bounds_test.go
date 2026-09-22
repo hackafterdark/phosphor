@@ -3,6 +3,7 @@ package filepathext
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -99,4 +100,23 @@ func TestIsInside_RealPaths(t *testing.T) {
 
 	sibling := IsInside(filepath.Join(os.TempDir()), tmpDir)
 	require.False(t, sibling, "parent of workspace should be outside")
+}
+
+func TestIsInside_UncPaths(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("UNC paths are Windows-only")
+	}
+	t.Parallel()
+
+	const (
+		localWorkspace = `C:\workspace\project`
+		remoteBase     = `\\server\share\project`
+	)
+
+	require.False(t, IsInside(`\\server\share\secret.txt`, localWorkspace),
+		"UNC paths are outside a local workspace")
+	require.True(t, IsInside(remoteBase+`\src\main.go`, remoteBase),
+		"a path under the same UNC workspace should be inside")
+	require.False(t, IsInside(remoteBase+`\outside\file.txt`, localWorkspace),
+		"UNC paths must not be compared against a local drive root")
 }

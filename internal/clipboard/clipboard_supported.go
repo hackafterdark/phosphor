@@ -2,14 +2,19 @@
 
 package clipboard
 
-import "golang.design/x/clipboard"
+import (
+	"context"
+	"fmt"
+
+	"golang.design/x/clipboard"
+)
 
 func initClipboard() error {
 	return clipboard.Init()
 }
 
 func writeText(text string) {
-	clipboard.Write(clipboard.FmtText, []byte(text))
+	_, _ = clipboard.Write(context.Background(), clipboard.FmtText, []byte(text))
 }
 
 func read(f Format) ([]byte, error) {
@@ -22,7 +27,10 @@ func read(f Format) ([]byte, error) {
 	default:
 		return nil, ErrEmpty
 	}
-	data := clipboard.Read(format)
+	data, err := clipboard.Read(context.Background(), format)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read clipboard: %w", err)
+	}
 	if data == nil {
 		return nil, ErrEmpty
 	}

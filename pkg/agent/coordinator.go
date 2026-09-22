@@ -48,7 +48,7 @@ import (
 	"charm.land/fantasy/providers/openrouter"
 	"charm.land/fantasy/providers/vercel"
 	"github.com/hackafterdark/phosphor/internal/jsonmerge"
-	openaisdk "github.com/openai/openai-go/v3/option"
+	openaisdk "github.com/charmbracelet/openai-go/option"
 )
 
 // Coordinator errors.
