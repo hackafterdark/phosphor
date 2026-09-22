@@ -97,18 +97,25 @@ func TestScrubURL_RedactsKnownSecret(t *testing.T) {
 	require.NotEqual(t, raw, ScrubURL("https://example.com/plain?x=1"))
 }
 
-// altEncodingSecret contains a character the registry stores only raw and in one
-// canonical escape form, so a request can smuggle it past the raw-URL scan using
-// a different, equally valid percent-encoding.
-const altEncodingSecret = "Ab17-Q.K.PG25!6gkP"
+// altEncodingSecret contains a colon, whose canonical url.QueryEscape form uses
+// upper-case hex (%3A). The fixture URL below spells the escape in lower-case
+// (%3a), an equally valid encoding that matches none of the stored forms
+// literally, so only the decoded-query registry pass can catch it.
+const altEncodingSecret = "Ab17-Q.K.PG25:6gkP"
 
-// altEncodedSecretURL spells altEncodingSecret with lower-case hex escapes, which
+// altEncodedSecretURL spells altEncodingSecret with a lower-case hex escape, which
 // matches neither the raw nor the canonical QueryEscape form literally but decodes
 // back to the exact registered value.
-const altEncodedSecretURL = "https://example.com/log?sig=Ab17-Q.K.PG25%216gkP"
+const altEncodedSecretURL = "https://example.com/log?sig=Ab17-Q.K.PG25%3a6gkP"
 
 func TestCheck_KnownSecretInAlternateEncodingAborts(t *testing.T) {
 	secrets.Register(altEncodingSecret)
+	// The registry stores the raw value and the canonical url.QueryEscape form,
+	// which uses upper-case hex (%3A). The fixture spells the escape in lower-case
+	// (%3a), so the pre-parse registry scan over the raw URL provably misses it and
+	// only the decoded-query pass can catch it.
+	require.Equal(t, altEncodedSecretURL, secrets.Scrub(altEncodedSecretURL),
+		"the raw pre-parse registry pass must miss this spelling or the decoded pass is untested")
 	err := Check(altEncodedSecretURL)
 	require.Error(t, err, "an alternate-encoded known secret must still abort")
 	require.Equal(t, ErrMessage, err.Error())
