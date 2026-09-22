@@ -16,6 +16,7 @@ import (
 	"github.com/hackafterdark/phosphor/internal/filepathext"
 	"github.com/hackafterdark/phosphor/internal/home"
 	"github.com/hackafterdark/phosphor/pkg/config"
+	"github.com/hackafterdark/phosphor/pkg/security/externalcontent"
 	"github.com/hackafterdark/phosphor/pkg/shell"
 	"github.com/hackafterdark/phosphor/pkg/skills"
 )
@@ -343,9 +344,15 @@ func processFile(filePath string) *ContextFile {
 	if err != nil {
 		return nil
 	}
+	// Workspace context files (AGENTS.md, PHOSPHOR.md, …) ride the system prompt
+	// verbatim and are authored by whoever can open a PR, making them the
+	// highest-privilege injection surface in the product. Run the same ChatML /
+	// homoglyph defanger that guards web and MCP content over their bodies so a
+	// poisoned rules file cannot forge control tokens or smuggle lookalike Unicode
+	// into the system turn. Sanitize is idempotent and inert on clean files.
 	return &ContextFile{
 		Path:    filePath,
-		Content: string(content),
+		Content: externalcontent.Sanitize(string(content)),
 	}
 }
 

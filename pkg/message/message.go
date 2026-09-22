@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/hackafterdark/phosphor/pkg/db"
 	"github.com/hackafterdark/phosphor/pkg/pubsub"
+	"github.com/hackafterdark/phosphor/pkg/secrets"
 )
 
 // defaultUpdateDebounce is the default debounce window for [Service.Update].
@@ -599,9 +600,26 @@ func marshalParts(parts []ContentPart) ([]byte, error) {
 			return nil, fmt.Errorf("unknown part type: %T", part)
 		}
 
+		// At-rest backstop for gap #5: a provider key or OAuth token this process
+		// owns must not linger in the SQLite copy of an assistant-authored tool
+		// call (the bash command, grep pattern, or edit body the model wrote) or of
+		// a tool result. Scrub the exact registered values on the way to disk
+		// only, onto a copy, so the live in-memory message and tool execution are
+		// left untouched and a leaked, synced, or shared session file carries no
+		// plaintext credential the transcript UI never shows.
+		var data ContentPart = part
+		switch p := part.(type) {
+		case ToolCall:
+			p.Input = secrets.Scrub(p.Input)
+			data = p
+		case ToolResult:
+			p.Content = secrets.Scrub(p.Content)
+			data = p
+		}
+
 		wrappedParts[i] = partWrapper{
 			Type: typ,
-			Data: part,
+			Data: data,
 		}
 	}
 	return json.Marshal(wrappedParts)
