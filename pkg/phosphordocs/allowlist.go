@@ -22,6 +22,10 @@ var excludedFiles = []string{
 	// Reserved landing-doc name; the generator writes content/README.md itself, so a
 	// canonical doc of the same name is never copied into that slot.
 	"README.md",
+	// Human-facing sitemap linked from the repository README. The generator emits its
+	// own content/README.md index for the in-app corpus, so shipping this too would
+	// give agents two competing tables of contents to choose between.
+	"INDEX.md",
 	// Internal roadmap/forward-looking notes, not a description of shipped behavior.
 	"hooks/FUTURE.md",
 	// A QA harness description, useful to maintainers rather than to users asking

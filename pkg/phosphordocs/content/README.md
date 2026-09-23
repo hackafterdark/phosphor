@@ -11,6 +11,7 @@ Search it with the `phosphor_docs` tool, or open a file below with the
 - [Agent Context Chain](phosphor://docs/CONTEXT_CHAIN.md)
 - [Phosphor Core Philosophy](phosphor://docs/CORE_PHILOSOPHY.md)
 - [Chat History Pagination and Performance Configuration](phosphor://docs/HISTORY_LIMIT.md)
+- [Configurable TUI Key Bindings](phosphor://docs/KEYBINDINGS.md)
 - [Logo Customization](phosphor://docs/LOGO_CUSTOMIZATION.md)
 - [Mermaid Rendering Service](phosphor://docs/MERMAID.md)
 - [Models and Providers Configuration](phosphor://docs/MODELS_AND_PROVIDERS_CONFIG.md)
