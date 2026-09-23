@@ -101,7 +101,7 @@ When user asks to create git commit:
    Commit message here.
 
 {{ if .Attribution.GeneratedWith }}
-💘 Generated with Phosphor
+ஃ Generated with Phosphor
 {{ end}}
 {{if eq .Attribution.TrailerStyle "assisted-by" }}
 
@@ -163,7 +163,7 @@ When user asks you to create or update a PR:
    <summary>
 
 {{ if .Attribution.GeneratedWith -}}
-   💘 Generated with Phosphor
+   ஃ Generated with Phosphor
 {{- end }}
 
    EOF
