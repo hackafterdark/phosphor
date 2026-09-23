@@ -6,8 +6,6 @@ Phosphor is a terminal-based, hardened agentic runtime built in Go, designed for
 
 It is also a research project and a reference. It is not a commercial project, and its success isn't measured by how many people use it. The goal is to raise awareness around agent security and to share ideas and strategies. I borrow freely from other projects when building features into Phosphor, and I encourage you to borrow from it in return: it takes the best of what I find, adds entirely new ideas and my own design input, tests it, and shares what works. Along the way I'll make decisions you may not agree with, and that's fine: this is an open-source project, so you're free to adapt it to your own tastes.
 
-> **Important Note:** *To set expectations, this is a personal research project.* While the goal is to make it useful for others, it will primarily be driven by my own needs and preferences, and there is no formal support. There's some real experiments in here and they won't all be winners at all times. That said, it is my own day-to-day agent and is used for real work, so please don't let that stop you from trying it for yours. So yes, it absolutely works and I do hope you find it useful!
-
 ## Why Phosphor?
 
 Phosphor originated from the need to run AI agents against local inference engines and a need to experiment with agents.
