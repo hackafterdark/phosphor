@@ -157,7 +157,14 @@ func (m *UI) codebaseIndexInfo(width int) string {
 					statusParts = append(statusParts, t.ModelInfo.Provider.Render("  "+truncRunes(p.CurrentFile, max(4, width-4))))
 				}
 			case workspaceindex.IndexStatusError:
-				statusParts = append(statusParts, t.ModelInfo.Provider.Render("Index error — open Workspace Index"))
+				line := "Index error — open Workspace Index"
+				if !statusFits(t.ModelInfo.Provider, line, width) {
+					line = "Index error — see Workspace Index"
+				}
+				if !statusFits(t.ModelInfo.Provider, line, width) {
+					line = "Index error"
+				}
+				statusParts = append(statusParts, t.ModelInfo.Provider.Render(line))
 			default:
 				counts, hint := indexStatusLines(p, wi.AutoIndexEnabled(), width, t.ModelInfo.Provider, t.ModelInfo.Reasoning)
 				for _, line := range counts {

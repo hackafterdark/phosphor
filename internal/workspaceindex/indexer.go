@@ -115,6 +115,7 @@ func (i *Indexer) IndexWorkspace(ctx context.Context, rootDir string, excludePat
 	var (
 		jobs      = make(chan string)
 		processed atomic.Int64
+		failed    atomic.Int64
 		errMu     sync.Mutex
 		firstErr  error
 		wg        sync.WaitGroup
@@ -139,6 +140,7 @@ func (i *Indexer) IndexWorkspace(ctx context.Context, rootDir string, excludePat
 					continue
 				}
 				if err := i.processFile(ctx, rootDir, path); err != nil {
+					failed.Add(1)
 					setErr(err)
 				}
 				count := int(processed.Add(1))
@@ -163,9 +165,22 @@ func (i *Indexer) IndexWorkspace(ctx context.Context, rootDir string, excludePat
 		i.store.FailBuild(ctx, ctx.Err().Error())
 		return ctx.Err()
 	}
-	if err := getErr(); err != nil {
-		i.store.FailBuild(ctx, err.Error())
-		return err
+	// A single unreadable or unparsable file must not pin the whole index to the
+	// error state: the walk already collected a valid candidate set and the rest
+	// of the files indexed fine, so treat per-file failures as best-effort skips
+	// (matching the watcher's per-file path). Only fail the build when every
+	// candidate file failed, which signals a systemic problem such as the index
+	// store being unwritable rather than one bad file.
+	total, failedCount := len(files), int(failed.Load())
+	if shouldFailBuild(total, failedCount) {
+		if err := getErr(); err != nil {
+			slog.Error("Workspace index build failed for every file", "error", err, "total", total)
+			i.store.FailBuild(ctx, err.Error())
+			return err
+		}
+	}
+	if failedCount > 0 {
+		slog.Warn("Workspace index finished with skipped files", "skipped", failedCount, "total", total, "first_error", getErr())
 	}
 	// Reconcile: the walk is the source of truth for what should be indexed,
 	// so any previously-indexed path it did not visit has been deleted or
@@ -179,6 +194,15 @@ func (i *Indexer) IndexWorkspace(ctx context.Context, rootDir string, excludePat
 	}
 	i.store.FinishBuild(ctx, int(processed.Load()))
 	return nil
+}
+
+// shouldFailBuild decides whether a completed build should be recorded in the
+// error state. Isolated per-file failures are treated as best-effort skips so a
+// single unreadable or unparsable file cannot pin the whole index to an error; a
+// build is only failed when it had files to index and every single one of them
+// failed, which points at a systemic problem such as an unwritable store.
+func shouldFailBuild(total, failed int) bool {
+	return total > 0 && failed == total
 }
 
 // loadIgnorePatterns reads .gitignore, .phosphorignore, and

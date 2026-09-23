@@ -125,3 +125,73 @@ func TestSelectCurrentWithSlashCommand(t *testing.T) {
 	require.Equal(t, "help", selection.Value.Name)
 	require.False(t, selection.KeepOpen)
 }
+
+func TestFilterSelectedCompletionsMatchVisibleItems(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		query string
+		paths []string
+	}{
+		{
+			name:  "ambiguous basename",
+			query: "chat",
+			paths: []string{
+				"internal/ui/chat/chat.go",
+				"internal/ui/chat/mcp.go",
+				"internal/ui/model/chat.go",
+				"internal/ui/model/xychat.go",
+			},
+		},
+		{
+			name:  "ambiguous single character",
+			query: "m",
+			paths: []string{
+				"internal/ui/chat/mcp.go",
+				"docs/chat.md",
+				"README.md",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			c := New(lipgloss.NewStyle(), lipgloss.NewStyle(), lipgloss.NewStyle())
+			values := make([]FileCompletionValue, len(tt.paths))
+			for i, path := range tt.paths {
+				values[i] = FileCompletionValue{Path: path}
+			}
+			c.SetItems(values, nil)
+			c.Filter(tt.query)
+
+			require.NotEmpty(t, c.filtered)
+			for i, item := range c.filtered {
+				c.list.SetSelected(i)
+				require.Equal(t, completionText(item), completionText(c.list.ItemAt(i)))
+			}
+
+			c.list.SetSelected(0)
+			first, ok := c.list.ItemAt(0).(*CompletionItem)
+			require.True(t, ok)
+			want, ok := first.Value().(FileCompletionValue)
+			require.True(t, ok)
+
+			msg := c.selectCurrent(false)
+			require.NotNil(t, msg)
+			got, ok := msg.(SelectionMsg[FileCompletionValue])
+			require.True(t, ok)
+			require.Equal(t, want, got.Value)
+		})
+	}
+}
+
+func completionText(item any) string {
+	completion, ok := item.(*CompletionItem)
+	if !ok {
+		return "<unknown>"
+	}
+	return completion.Text()
+}

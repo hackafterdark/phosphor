@@ -1703,7 +1703,12 @@ func getSummarizationPrompt(ctx context.Context, store *config.ConfigStore) stri
 
 // summarizeWithModel runs summarization using the specified model (large or small).
 func (c *coordinator) summarizeWithModel(ctx context.Context, sessionID string, model Model) error {
-	providerCfg, ok := c.cfg.Config().Providers.Get(model.Model.Provider())
+	// Look the provider up by its config ID (ModelCfg.Provider), the key that
+	// Providers is stored under and what every other request path uses. The
+	// fantasy model's Provider() returns the built-in provider name, which
+	// differs from the config ID for custom/OpenAI-compatible/Copilot-style
+	// providers and would make this lookup miss.
+	providerCfg, ok := c.cfg.Config().Providers.Get(model.ModelCfg.Provider)
 	if !ok {
 		return errModelProviderNotConfigured
 	}

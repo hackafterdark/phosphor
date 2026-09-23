@@ -1144,6 +1144,9 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case completions.CompletionItemsLoadedMsg:
 		if m.completionsOpen {
 			m.completions.SetItems(msg.Files, msg.Resources)
+			if m.completionsQuery != "" {
+				m.completions.Filter(m.completionsQuery)
+			}
 		}
 	case uv.KittyGraphicsEvent:
 		if !bytes.HasPrefix(msg.Payload, []byte("OK")) {
@@ -2621,27 +2624,37 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 		case uiFocusEditor:
 			// Handle completions if open.
 			if m.completionsOpen {
-				// Accepting a completion must behave identically for Tab and
-				// Enter, so normalize a Tab keypress into an Enter before it
-				// reaches the completions component. This guarantees both keys
-				// run the same file/slash/MCP acceptance path (which adds the
-				// reference as a context chip) and stops a Tab from ever
-				// falling through to the textarea and inserting raw text.
 				isTab := key.Matches(msg, m.keyMap.Tab)
-				selection := msg
-				if isTab {
-					selection = tea.KeyPressMsg{Code: tea.KeyEnter}
-				}
-				if selMsg, ok := m.completions.Update(selection); ok {
-					cmds = append(cmds, m.handleCompletionSelection(selMsg)...)
-					return tea.Batch(cmds...)
-				}
-				// Nothing was there to accept. A Tab must not fall through to
-				// the editor's Tab handler (which moves focus to the chat pane),
-				// so neutralize it; an Enter is allowed to fall through so the
-				// message can still be sent.
-				if isTab {
-					return tea.Batch(cmds...)
+				// A fully typed, argument-free slash command (for example
+				// '/compact') should run on the first Enter. Without this
+				// bypass the completion popup swallows the keystroke and only
+				// re-inserts the highlighted entry, forcing a second Enter
+				// before the command actually fires.
+				if !isTab && key.Matches(msg, m.keyMap.Editor.SendMessage) &&
+					m.slashMode && m.isCompleteSlashCommand(strings.TrimSpace(m.textarea.Value())) {
+					m.closeCompletions()
+				} else {
+					// Accepting a completion must behave identically for Tab and
+					// Enter, so normalize a Tab keypress into an Enter before it
+					// reaches the completions component. This guarantees both keys
+					// run the same file/slash/MCP acceptance path (which adds the
+					// reference as a context chip) and stops a Tab from ever
+					// falling through to the textarea and inserting raw text.
+					selection := msg
+					if isTab {
+						selection = tea.KeyPressMsg{Code: tea.KeyEnter}
+					}
+					if selMsg, ok := m.completions.Update(selection); ok {
+						cmds = append(cmds, m.handleCompletionSelection(selMsg)...)
+						return tea.Batch(cmds...)
+					}
+					// Nothing was there to accept. A Tab must not fall through to
+					// the editor's Tab handler (which moves focus to the chat pane),
+					// so neutralize it; an Enter is allowed to fall through so the
+					// message can still be sent.
+					if isTab {
+						return tea.Batch(cmds...)
+					}
 				}
 			}
 
@@ -4428,6 +4441,33 @@ func (m *UI) handleLearnSlashCommand(args []string) tea.Cmd {
 }
 
 // handleSlashCommand processes slash commands from the textarea.
+// isCompleteSlashCommand reports whether value is a fully typed slash command
+// that takes no arguments and has a registered handler. Such commands can run
+// immediately on Enter instead of first being accepted from the completion
+// popup, so the user does not have to press Enter a second time.
+func (m *UI) isCompleteSlashCommand(value string) bool {
+	if !strings.HasPrefix(value, "/") {
+		return false
+	}
+	parts := strings.Fields(value)
+	if len(parts) != 1 {
+		return false
+	}
+	cmdName := strings.TrimLeft(parts[0], "/")
+	if cmdName == "" {
+		return false
+	}
+	if _, ok := m.slashHandlers[cmdName]; !ok {
+		return false
+	}
+	for _, cmd := range commands.GetSlashCommands() {
+		if cmd.Name == cmdName {
+			return len(cmd.Arguments) == 0
+		}
+	}
+	return false
+}
+
 func (m *UI) handleSlashCommand(value string) tea.Cmd {
 	// Check if the value starts with a slash.
 	if !strings.HasPrefix(value, "/") {

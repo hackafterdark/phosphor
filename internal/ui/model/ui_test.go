@@ -2,6 +2,7 @@ package model
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"charm.land/bubbles/v2/textarea"
@@ -151,10 +152,12 @@ func newTestUIWithConfig(t *testing.T, cfg *config.Config) *UI {
 // testWorkspace is a minimal [workspace.Workspace] stub for unit tests.
 type testWorkspace struct {
 	workspace.Workspace
-	cfg          *config.Config
-	agentIsReady bool
-	runCalled    bool
-	lastPrompt   string
+	cfg             *config.Config
+	agentIsReady    bool
+	runCalled       bool
+	lastPrompt      string
+	summarizeCalled bool
+	summarizeSessID string
 }
 
 func (w *testWorkspace) Config() *config.Config {
@@ -176,6 +179,12 @@ func (w *testWorkspace) PermissionSkipRequests() bool {
 func (w *testWorkspace) AgentRun(ctx context.Context, sessionID, prompt string, attachments ...message.Attachment) error {
 	w.runCalled = true
 	w.lastPrompt = prompt
+	return nil
+}
+
+func (w *testWorkspace) AgentSummarize(ctx context.Context, sessionID string) error {
+	w.summarizeCalled = true
+	w.summarizeSessID = sessionID
 	return nil
 }
 
@@ -242,6 +251,36 @@ func TestUI_HandleSlashCommand_CompactTriggersSummarize(t *testing.T) {
 	// Verify state sanitization.
 	require.False(t, ui.slashMode)
 	require.False(t, ui.completionsOpen)
+
+	// Running the returned command must actually trigger session summarization.
+	cmd()
+	require.True(t, tw.summarizeCalled)
+	require.Equal(t, "test-session-123", tw.summarizeSessID)
+}
+
+func TestUI_IsCompleteSlashCommand(t *testing.T) {
+	t.Parallel()
+
+	ui := &UI{}
+	ui.registerSlashCommands()
+
+	tests := []struct {
+		value string
+		want  bool
+	}{
+		{"/compact", true},  // no-argument command, fires on first Enter
+		{"/compact ", true}, // trailing whitespace is trimmed by caller
+		{"/compact extra", false},
+		{"/learn", false}, // requires an argument
+		{"/learn https://x", false},
+		{"/", false},
+		{"//", false},
+		{"/bogus", false},
+		{"hello", false},
+	}
+	for _, tt := range tests {
+		require.Equal(t, tt.want, ui.isCompleteSlashCommand(strings.TrimSpace(tt.value)), tt.value)
+	}
 }
 
 func TestUI_SendMessage_IgnoresDuplicateWhileUserMessageAwaited(t *testing.T) {

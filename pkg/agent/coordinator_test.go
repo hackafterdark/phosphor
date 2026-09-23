@@ -871,3 +871,66 @@ func TestCoordinator_UpdateModels_UpdatesSystemPromptAndReflection(t *testing.T)
 	assert.True(t, mockAgent.reflectionEnabled)
 	assert.Equal(t, 10, mockAgent.maxReflectionTurns)
 }
+
+// recordingSummarizer wraps mockSessionAgent so the Summarize call can be
+// observed. It overrides Summarize while inheriting the rest of the interface.
+type recordingSummarizer struct {
+	*mockSessionAgent
+	summarized bool
+	err        error
+}
+
+func (r *recordingSummarizer) Summarize(context.Context, string, fantasy.ProviderOptions) error {
+	r.summarized = true
+	return r.err
+}
+
+// TestCoordinator_SummarizeResolvesProviderByConfigID guards the regression
+// where the on-demand compaction path looked the provider up by the fantasy
+// model's built-in Provider() name instead of the config provider ID stored in
+// ModelCfg.Provider. For custom / OpenAI-compatible style providers those two
+// strings differ, so the lookup missed and /compact failed with
+// "model provider not configured" even though the same provider works fine for
+// normal turns.
+func TestCoordinator_SummarizeResolvesProviderByConfigID(t *testing.T) {
+	t.Parallel()
+	env := testEnv(t)
+	cfg, err := config.Init(env.workingDir, "", false)
+	require.NoError(t, err)
+
+	const providerID = "my-custom-openai-endpoint"
+	cfg.Config().Providers.Set(providerID, config.ProviderConfig{ID: providerID})
+
+	agent := &recordingSummarizer{mockSessionAgent: &mockSessionAgent{}}
+	c := &coordinator{
+		cfg:          cfg,
+		sessions:     env.sessions,
+		currentAgent: agent,
+	}
+
+	// Model.Model is intentionally left nil: if the lookup used the fantasy
+	// model's Provider() (as the buggy path did) this would dereference a nil
+	// interface. Resolving via ModelCfg.Provider keeps it untouched.
+	model := Model{ModelCfg: config.SelectedModel{Provider: providerID, Model: "custom-model"}}
+
+	require.NoError(t, c.summarizeWithModel(t.Context(), "session-1", model))
+	require.True(t, agent.summarized, "expected the agent's Summarize to run once the provider resolved")
+}
+
+// TestCoordinator_SummarizeUnknownProviderStillErrors confirms the positive
+// result above is not just the lookup always succeeding: a provider that is
+// genuinely absent still reports the configuration error.
+func TestCoordinator_SummarizeUnknownProviderStillErrors(t *testing.T) {
+	t.Parallel()
+	env := testEnv(t)
+	cfg, err := config.Init(env.workingDir, "", false)
+	require.NoError(t, err)
+
+	agent := &recordingSummarizer{mockSessionAgent: &mockSessionAgent{}}
+	c := &coordinator{cfg: cfg, sessions: env.sessions, currentAgent: agent}
+
+	model := Model{ModelCfg: config.SelectedModel{Provider: "provider-that-does-not-exist", Model: "m"}}
+	err = c.summarizeWithModel(t.Context(), "session-1", model)
+	require.ErrorIs(t, err, errModelProviderNotConfigured)
+	require.False(t, agent.summarized, "must not call Summarize when the provider is missing")
+}

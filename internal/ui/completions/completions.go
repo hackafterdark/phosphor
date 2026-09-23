@@ -257,7 +257,8 @@ func (c *Completions) Filter(query string) {
 func (c *Completions) applyNamePriorityFilter(query string) {
 	if query == "" {
 		c.filtered = append([]list.FilterableItem(nil), c.allItems...)
-		c.list.SetItems(c.filtered...)
+		c.list.SetFilter("")
+		c.list.List.SetItems(listItems(c.filtered)...)
 		return
 	}
 
@@ -278,7 +279,15 @@ func (c *Completions) applyNamePriorityFilter(query string) {
 		return namePriorityTier(a.Filter(), queryLower) - namePriorityTier(b.Filter(), queryLower)
 	})
 	c.filtered = filtered
-	c.list.SetItems(c.filtered...)
+	c.list.List.SetItems(listItems(c.filtered)...)
+}
+
+func listItems(items []list.FilterableItem) []list.Item {
+	out := make([]list.Item, len(items))
+	for i, item := range items {
+		out[i] = item
+	}
+	return out
 }
 
 func namePriorityTier(path, queryLower string) int {

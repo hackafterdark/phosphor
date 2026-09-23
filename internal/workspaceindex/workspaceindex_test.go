@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -740,5 +741,107 @@ func TestIndexerUndecodableBinaryDocIsSkipped(t *testing.T) {
 	}
 	if docs, _ := store.CountDocs(ctx); docs != 0 {
 		t.Errorf("expected undecodable office doc to be skipped, got %d docs", docs)
+	}
+}
+
+func TestShouldFailBuild(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		total, failed int
+		want          bool
+	}{
+		{"no files", 0, 0, false},
+		{"all succeed", 5, 0, false},
+		{"some fail", 5, 3, false},
+		{"all fail", 5, 5, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := shouldFailBuild(tt.total, tt.failed); got != tt.want {
+				t.Errorf("shouldFailBuild(%d, %d) = %v, want %v", tt.total, tt.failed, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestIndexerPartialFailuresAreBestEffort proves that a handful of unreadable
+// files no longer pin the whole build to the error state: the successful files
+// are still indexed and search works, while the build reports success.
+func TestIndexerPartialFailuresAreBestEffort(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX file permissions do not gate reads on windows")
+	}
+	dir := t.TempDir()
+	store, err := NewStore(dir)
+	if err != nil {
+		t.Fatalf("NewStore() error: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	if err := os.WriteFile(filepath.Join(dir, "good.go"),
+		[]byte("package main\nfunc zebraGood() {}\n"), 0o644); err != nil {
+		t.Fatalf("write good.go: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "bad.go"),
+		[]byte("package main\nfunc zebraBad() {}\n"), 0o600); err != nil {
+		t.Fatalf("write bad.go: %v", err)
+	}
+	if err := os.Chmod(filepath.Join(dir, "bad.go"), 0o000); err != nil {
+		t.Fatalf("chmod bad.go: %v", err)
+	}
+
+	indexer := NewIndexer(store, 0)
+	if err := indexer.IndexWorkspace(ctx, dir, nil); err != nil {
+		t.Fatalf("IndexWorkspace() should tolerate a single unreadable file, got: %v", err)
+	}
+
+	progress, err := store.GetProgress(ctx)
+	if err != nil {
+		t.Fatalf("GetProgress() error: %v", err)
+	}
+	if progress.Status == IndexStatusError {
+		t.Fatal("build must not report the error state when only one file failed")
+	}
+	results, err := store.SearchSymbols(ctx, "zebraGood", 10)
+	if err != nil {
+		t.Fatalf("SearchSymbols() error: %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatal("expected the readable file to be indexed despite a sibling read error")
+	}
+}
+
+// TestIndexerTotalFailureStillReportsError proves the other side of the fix:
+// when every candidate file fails (here because the store is unwritable), the
+// build still surfaces the failure instead of silently reporting success.
+func TestIndexerTotalFailureStillReportsError(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	store, err := NewStore(dir)
+	if err != nil {
+		t.Fatalf("NewStore() error: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, "a.go"),
+		[]byte("package main\nfunc a() {}\n"), 0o644); err != nil {
+		t.Fatalf("write a.go: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "b.go"),
+		[]byte("package main\nfunc b() {}\n"), 0o644); err != nil {
+		t.Fatalf("write b.go: %v", err)
+	}
+
+	indexer := NewIndexer(store, 0)
+	// Close the store so every write-backed file operation fails, simulating a
+	// systemic problem rather than a single bad file.
+	store.Close()
+
+	if err := indexer.IndexWorkspace(context.Background(), dir, nil); err == nil {
+		t.Fatal("expected the build to fail when every file fails to index")
 	}
 }
