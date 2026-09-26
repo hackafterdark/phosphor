@@ -23,6 +23,7 @@ const (
 	ModelIcon       string = "◇"
 	CodebaseIcon    string = "◉"
 	HypercreditIcon string = "◆"
+	MemoryIcon      string = "❂"
 
 	ArrowRightIcon string = "→"
 

@@ -45,6 +45,14 @@ searchable through the `phosphor_docs` tool or by viewing any
 | [SYSTEM_PROMPT.md](SYSTEM_PROMPT.md) | How the modular system prompt is composed. |
 | [CODEBASE_INDEXING.md](CODEBASE_INDEXING.md) | Workspace indexing for semantic and full-text search. |
 
+## Memory
+
+| Doc | Covers |
+| --- | --- |
+| [memory/OVERVIEW.md](memory/OVERVIEW.md) | How the memory system works: vaults, the entry model, write/read paths, Tier A/B injection, config, `/memory`. |
+| [memory/INTEGRITY.md](memory/INTEGRITY.md) | The tamper seal: the HMAC key, what is signed vs. deliberately exempt, the threat model, key operations. |
+| [memory/POISONING.md](memory/POISONING.md) | The layered defenses against a poisoned memory entry reaching the system prompt. |
+
 ## Extending the Agent
 
 | Doc | Covers |

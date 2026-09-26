@@ -48,6 +48,11 @@ var SlashCommands = []SlashCommand{
 		Name:        "compact",
 		Description: "On-demand session summarization (compaction)",
 	},
+	{
+		Name:        "memory",
+		Description: "Inspect and manage the memory vault (status, sources, fsck, budget, policy, key)",
+		Arguments:   []string{"[status|sources|fsck|budget|policy|key|pin|unpin|demote|dispute|retire|cite]"},
+	},
 }
 
 // GetSlashCommands returns all registered slash commands.

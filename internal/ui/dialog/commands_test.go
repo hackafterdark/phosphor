@@ -46,7 +46,7 @@ func TestCommands_PreserveSelection(t *testing.T) {
 		Styles:    &sty,
 		Workspace: ws,
 	}
-	c, err := NewCommands(com, "session-123", true, true, true, goal.GoalStatus(""), nil, nil)
+	c, err := NewCommands(com, "session-123", true, true, true, false, goal.GoalStatus(""), nil, nil)
 	require.NoError(t, err)
 
 	// Test case 1: No query filter, preserve selection index
@@ -88,7 +88,7 @@ func TestCommands_RenderInitial(t *testing.T) {
 		Styles:    &sty,
 		Workspace: ws,
 	}
-	c, err := NewCommands(com, "session-123", true, true, true, goal.GoalStatus(""), nil, nil)
+	c, err := NewCommands(com, "session-123", true, true, true, false, goal.GoalStatus(""), nil, nil)
 	require.NoError(t, err)
 
 	// Set size of the list
@@ -104,4 +104,44 @@ func TestCommands_RenderInitial(t *testing.T) {
 	fmt.Printf("DEBUG RENDER: rendered = %q\n", rendered)
 
 	require.NotEmpty(t, rendered)
+}
+
+func TestCommands_MemoryTab(t *testing.T) {
+	sty := styles.CharmtonePantera()
+	com := &common.Common{Styles: &sty, Workspace: &mockWorkspace{}}
+
+	// With memory off the tab is not offered and cycling never lands on it.
+	off, err := NewCommands(com, "s", false, false, false, false, goal.GoalStatus(""), nil, nil)
+	require.NoError(t, err)
+	require.NotContains(t, off.availableCommandTypes(), MemoryCommands)
+
+	// With memory on the tab appears, cycles in, and lists slash-command items.
+	on, err := NewCommands(com, "s", false, false, false, true, goal.GoalStatus(""), nil, nil)
+	require.NoError(t, err)
+	require.Contains(t, on.availableCommandTypes(), MemoryCommands)
+
+	// Only System and Memory are present, so both directions from System wrap to
+	// Memory, and both directions from Memory wrap back to System.
+	on.selected = SystemCommands
+	require.Equal(t, MemoryCommands, on.nextCommandType())
+	require.Equal(t, MemoryCommands, on.previousCommandType())
+	on.selected = MemoryCommands
+	require.Equal(t, SystemCommands, on.nextCommandType())
+	require.Equal(t, SystemCommands, on.previousCommandType())
+
+	on.setCommandItems(MemoryCommands)
+	items := on.list.FilteredItems()
+	require.NotEmpty(t, items)
+
+	var sawReview bool
+	for _, it := range items {
+		item, ok := it.(*CommandItem)
+		require.True(t, ok)
+		action, ok := item.Action().(ActionRunSlashCommand)
+		require.True(t, ok, "memory items dispatch a slash command, not a bespoke action")
+		if action.Line == "memory review" {
+			sawReview = true
+		}
+	}
+	require.True(t, sawReview, "the review decision loop is reachable from the menu")
 }

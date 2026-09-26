@@ -140,3 +140,43 @@ func BenchmarkPromptWithTextAttachments(b *testing.B) {
 		})
 	}
 }
+
+// The stuck-thinking guard: a message whose reasoning phase ended but that
+// never persisted a Finish part (a run canceled at the end of the stream drops
+// the final message update, which is exactly how the TUI came to render answers
+// as perpetual thinking blocks) must not report as live thinking. Before the
+// FinishedAt guard IsThinking stayed true for that state, so the footer never
+// froze and the message looked like it was still thinking forever.
+func TestIsThinkingStopsOnceReasoningIsStampedFinished(t *testing.T) {
+	t.Parallel()
+
+	thinkingOnly := func() *Message {
+		return &Message{
+			Role: Assistant,
+			Parts: []ContentPart{
+				ReasoningContent{Thinking: "pondering", StartedAt: 1_700_000_000},
+			},
+		}
+	}
+
+	live := thinkingOnly()
+	require.True(t, live.IsThinking(), "reasoning with no finish stamp is live thinking")
+
+	stamped := thinkingOnly()
+	stamped.FinishThinking()
+	require.NotZero(t, stamped.ReasoningContent().FinishedAt)
+	require.False(t, stamped.IsThinking(),
+		"stamped reasoning must not render as live thinking even when the Finish part was lost")
+
+	withFinish := thinkingOnly()
+	withFinish.AddFinish(FinishReasonEndTurn, "", "")
+	require.False(t, withFinish.IsThinking())
+
+	textAndThinking := thinkingOnly()
+	textAndThinking.FinishThinking()
+	textAndThinking.AppendContent("the answer")
+	require.False(t, textAndThinking.IsThinking())
+
+	empty := &Message{Role: Assistant, Parts: []ContentPart{ReasoningContent{}}}
+	require.False(t, empty.IsThinking(), "an empty reasoning phase is never live thinking")
+}

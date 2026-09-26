@@ -252,6 +252,7 @@ require (
 	github.com/tree-sitter/tree-sitter-php v0.24.2 // indirect
 	github.com/tree-sitter/tree-sitter-python v0.25.0 // indirect
 	github.com/tree-sitter/tree-sitter-rust v0.24.2 // indirect
+	github.com/tsawler/prose/v3 v3.0.0-beta2 // indirect
 	github.com/u-root/u-root v0.16.0 // indirect
 	github.com/u-root/uio v0.0.0-20240224005618-d2acac8f3701 // indirect
 	github.com/ulikunitz/xz v0.5.17 // indirect
@@ -281,6 +282,7 @@ require (
 	golang.org/x/term v0.46.0 // indirect
 	golang.org/x/time v0.16.0 // indirect
 	golang.org/x/tools v0.50.0 // indirect
+	gonum.org/v1/gonum v0.17.0 // indirect
 	google.golang.org/api v0.299.0 // indirect
 	google.golang.org/genai v1.71.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260921155816-b14227669459 // indirect
@@ -288,6 +290,7 @@ require (
 	google.golang.org/grpc v1.85.0-dev.0.20260825072537-93e31b48545e // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
 	gopkg.in/dnaeon/go-vcr.v4 v4.0.6-0.20251110073552-01de4eb40290 // indirect
+	gopkg.in/neurosnap/sentences.v1 v1.0.7 // indirect
 	gopkg.in/tomb.v1 v1.0.0-20141024135613-dd632973f1e7 // indirect
 	gopkg.in/warnings.v0 v0.1.2 // indirect
 	modernc.org/libc v1.77.0 // indirect

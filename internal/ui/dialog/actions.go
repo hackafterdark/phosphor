@@ -102,6 +102,14 @@ type (
 		Arguments   []commands.Argument
 		Args        map[string]string // Actual argument values
 	}
+	// ActionRunSlashCommand is a message to run a slash command (with its
+	// arguments) as if the user had typed it into the editor. It is how the
+	// command menu dispatches the /memory family without leaving the dialog
+	// surface: the model routes it through the same slash dispatcher, so the
+	// menu and the editor can never disagree about what a command does.
+	ActionRunSlashCommand struct {
+		Line string
+	}
 	// ActionEnableDockerMCP is a message to enable Docker MCP.
 	ActionEnableDockerMCP struct{}
 	// ActionDisableDockerMCP is a message to disable Docker MCP.

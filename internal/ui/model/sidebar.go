@@ -390,6 +390,8 @@ func (m *UI) renderSidebarComponent(cfg config.SidebarComponentConfig, width int
 		return m.sidebarListComponent(cfg, width)
 	case "skills":
 		return m.sidebarListComponent(cfg, width)
+	case "memory":
+		return m.memoryInfo(width)
 	default:
 		return ""
 	}

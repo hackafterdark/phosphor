@@ -826,6 +826,12 @@ func (s *ConfigStore) reloadFromDiskLocked(ctx context.Context) error {
 		return fmt.Errorf("invalid hook configuration on reload: %w", err)
 	}
 
+	// Validate the memory block on reload so a bad dial value written at runtime is
+	// rejected here rather than surfacing mid-turn (mirrors Load).
+	if err := cfg.ValidateMemory(); err != nil {
+		return fmt.Errorf("invalid memory configuration on reload: %w", err)
+	}
+
 	// Preserve runtime overrides
 	overrides := s.overrides
 

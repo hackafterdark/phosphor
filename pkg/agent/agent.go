@@ -39,6 +39,8 @@ import (
 	"charm.land/lipgloss/v2"
 	oinference "github.com/Arize-ai/openinference/go/openinference-semantic-conventions"
 	"github.com/charmbracelet/x/exp/charmtone"
+	"github.com/hackafterdark/phosphor/internal/memory"
+	memorytools "github.com/hackafterdark/phosphor/internal/memory/tools"
 	"github.com/hackafterdark/phosphor/internal/stringext"
 	"github.com/hackafterdark/phosphor/internal/version"
 	"github.com/hackafterdark/phosphor/pkg/agent/hyper"
@@ -48,8 +50,10 @@ import (
 	"github.com/hackafterdark/phosphor/pkg/config"
 	"github.com/hackafterdark/phosphor/pkg/csync"
 	"github.com/hackafterdark/phosphor/pkg/goal"
+	"github.com/hackafterdark/phosphor/pkg/hooks"
 	"github.com/hackafterdark/phosphor/pkg/message"
 	"github.com/hackafterdark/phosphor/pkg/otel"
+	"github.com/hackafterdark/phosphor/pkg/permission"
 	"github.com/hackafterdark/phosphor/pkg/pubsub"
 	"github.com/hackafterdark/phosphor/pkg/session"
 	"go.opentelemetry.io/otel/attribute"
@@ -190,6 +194,33 @@ type sessionAgent struct {
 	notify                pubsub.Publisher[notify.Notification]
 	runComplete           pubsub.Publisher[notify.RunComplete]
 
+	// workingDir anchors the cwd hooks and the memory vault are opened against.
+	workingDir string
+	// stopRunner and endRunner fire the Stop and SessionEnd hook events; nil when
+	// no hooks are configured for the event, so an unused event costs nothing.
+	stopRunner *hooks.Runner
+	endRunner  *hooks.Runner
+	// memoryEnabled gates the post-turn nudge so it stays silent when the vault is off.
+	memoryEnabled bool
+	// memoryDistill is the resolved memory.distill tri-state: when true, a run of the
+	// summarizer also proposes pending candidate memories so decisions survive window
+	// compaction. Off by default; it never auto-injects and is skipped below the floor.
+	memoryDistill bool
+	// memoryRateFloorPct is the resolved memory.rate_limit_floor_pct, carried here so
+	// the summarizer can decide whether distillation may spend a model token.
+	memoryRateFloorPct float64
+	// permissions is the approval service a distillation proposal is gated through, so
+	// a proposed draft runs the same write-approval path an in-conversation write does.
+	permissions permission.Service
+	// cfg is the config the memory vault is opened against for the compaction splice
+	// and distillation; nil when the agent was built without a config handle.
+	cfg *config.ConfigStore
+	// pendingNotes holds the one-line reminder queued at the end of a turn (a Stop
+	// hook's additional context or the memory nudge) to be surfaced at the start of
+	// the next one. It is consumed once, never persisted, and never triggers a model
+	// call by itself.
+	pendingNotes *csync.Map[string, string]
+
 	// Reflection loop state.
 	reflectionEnabled  *csync.Value[bool]
 	maxReflectionTurns *csync.Value[int]
@@ -255,12 +286,31 @@ type SessionAgentOptions struct {
 	RunComplete           pubsub.Publisher[notify.RunComplete]
 	ReflectionEnabled     bool
 	MaxReflectionTurns    int
+	// WorkingDir is the workspace the post-turn hooks and the memory vault run from.
+	WorkingDir string
+	// PostTurnHooks are the hooks registered for the Stop event; nil or empty means
+	// the event is not wired.
+	PostTurnHooks []config.HookConfig
+	// SessionEndHooks are the hooks registered for the SessionEnd event.
+	SessionEndHooks []config.HookConfig
+	// MemoryEnabled reports whether the memory subsystem is on, which is what gates
+	// the post-turn nudge.
+	MemoryEnabled bool
+	// MemoryDistill is the resolved memory.distill tri-state for the summarizer ride.
+	MemoryDistill bool
+	// MemoryRateFloorPct is the resolved memory.rate_limit_floor_pct.
+	MemoryRateFloorPct float64
+	// Permissions gates a distillation proposal through the write-approval service.
+	Permissions permission.Service
+	// Config is the config handle the vault is opened against for the compaction
+	// splice and distillation; nil disables both regardless of the flags.
+	Config *config.ConfigStore
 }
 
 func NewSessionAgent(
 	opts SessionAgentOptions,
 ) SessionAgent {
-	return &sessionAgent{
+	result := &sessionAgent{
 		largeModel:            csync.NewValue(opts.LargeModel),
 		smallModel:            csync.NewValue(opts.SmallModel),
 		systemPromptPrefix:    csync.NewValue(opts.SystemPromptPrefix),
@@ -280,12 +330,28 @@ func NewSessionAgent(
 		runComplete:           opts.RunComplete,
 		reflectionEnabled:     csync.NewValue(opts.ReflectionEnabled),
 		maxReflectionTurns:    csync.NewValue(opts.MaxReflectionTurns),
+		workingDir:            opts.WorkingDir,
+		memoryEnabled:         opts.MemoryEnabled,
+		memoryDistill:         opts.MemoryDistill,
+		memoryRateFloorPct:    opts.MemoryRateFloorPct,
+		permissions:           opts.Permissions,
+		cfg:                   opts.Config,
+		pendingNotes:          csync.NewMap[string, string](),
 		messageQueue:          csync.NewMap[string, []SessionAgentCall](),
 		activeRequests:        csync.NewMap[string, context.CancelFunc](),
 		dispatchMu:            csync.NewMap[string, *sync.Mutex](),
 		acceptedRuns:          csync.NewMap[string, int](),
 		cancelMark:            csync.NewMap[string, uint64](),
 	}
+	// The post-turn events only cost anything when a user configured a hook for them,
+	// so the runners stay nil otherwise and an unused event pays nothing.
+	if len(opts.PostTurnHooks) > 0 {
+		result.stopRunner = hooks.NewRunner(opts.PostTurnHooks, opts.WorkingDir, opts.WorkingDir)
+	}
+	if len(opts.SessionEndHooks) > 0 {
+		result.endRunner = hooks.NewRunner(opts.SessionEndHooks, opts.WorkingDir, opts.WorkingDir)
+	}
+	return result
 }
 
 // AcceptedRun owns exactly one accept reservation taken by
@@ -590,8 +656,30 @@ func ValidateCall(call SessionAgentCall) error {
 	return nil
 }
 
+// messageWriteTimeout bounds a message persistence call that has been detached
+// from the run's cancellation. Long enough for a healthy write, short enough that
+// an abandoned run can never park on the database.
+const messageWriteTimeout = 5 * time.Second
+
+// durableWriteCtx detaches a terminal message write from the caller's context so
+// a cancel racing the end of a turn cannot drop the part that ends the turn, while
+// the timeout keeps the detached write from outliving the run that issued it.
+// Use it only for the writes that carry terminal state; token-level deltas ride
+// the run context because the next delta persists the whole accumulated content.
+func durableWriteCtx(ctx context.Context) (context.Context, context.CancelFunc) {
+	// The detached context carries no deadline, err, or done channel of its own,
+	// so the timeout below is the only cancellation this write can observe.
+	return context.WithTimeout(context.WithoutCancel(ctx), messageWriteTimeout)
+}
+
 func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *fantasy.AgentResult, retErr error) {
-	var reflectionTurns int
+	// Self-critique accounting for this turn. reflectionsUsed is the number of
+	// corrective re-runs the turn has already spent, carried through the recursion
+	// below on the context so the cap covers the whole turn rather than resetting
+	// at each level; reflectionDetected counts the violations seen in the steps of
+	// this particular run.
+	reflectionsUsed := reflectionTurnsFromContext(ctx)
+	var reflectionDetected int
 	slog.Info("SessionAgent.Run called", "session_id", call.SessionID, "temp", call.Temperature, "rep_pen", call.RepetitionPenalty)
 	if err := ValidateCall(call); err != nil {
 		return nil, err
@@ -747,6 +835,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 		largeModel.Model,
 		fantasy.WithSystemPrompt(systemPrompt),
 		fantasy.WithTools(agentTools...),
+		fantasy.WithRepairToolCall(repairToolCall),
 		fantasy.WithUserAgent(userAgent),
 	)
 
@@ -798,6 +887,16 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 			}
 		}
 	}
+
+	// Stamp the live provider-budget snapshot onto the run context so a memory write
+	// made during this run can be judged against the §8 rate-limit floor without the
+	// tool reaching back into session state it has no handle for. An unknown window
+	// reads as "not low", so an unmeasured budget never silently defers a write.
+	ctx = memory.WithBudget(ctx, memory.Budget{
+		Used:     currentSession.CurrentTokens,
+		Window:   int64(largeModel.CatwalkCfg.ContextWindow),
+		FloorPct: a.memoryRateFloorPct,
+	})
 
 	// Add the user message to the session.
 	_, err = a.createUserMessage(ctx, call)
@@ -953,6 +1052,13 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 
 	var stepMessages []fantasy.Message
 	var shouldSummarize bool
+	// The post-turn note is taken from the pending queue once per run and then
+	// rides every step of that run inside the system block. It must never be
+	// appended to the message list as a trailing system message, because a
+	// system message that is not the first message is rejected outright by
+	// strict providers.
+	var runNote string
+	noteTaken := false
 	// llmSpan is the current LLM call span, set in PrepareStep and ended in
 	// OnStepFinish. It is a child of the agent turn span.
 	var llmSpan trace.Span
@@ -1080,6 +1186,16 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 				}
 			}
 
+			// Surface any reminder queued at the end of the previous turn (a Stop hook's
+			// additional context or the memory nudge). It is consumed once so a stale
+			// hint can't linger, and it joins the system block below rather than
+			// being appended to the message list as a trailing system message, which
+			// strict providers reject.
+			if !noteTaken {
+				runNote = a.takeNote(call.SessionID)
+				noteTaken = true
+			}
+
 			if promptPrefix != "" {
 				prepared.Messages = append([]fantasy.Message{fantasy.NewSystemMessage(promptPrefix)}, prepared.Messages...)
 			}
@@ -1094,6 +1210,9 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 			}
 			if activeGoal != nil {
 				combined += "\n\n" + a.renderActiveGoalBlock(activeGoal)
+			}
+			if runNote != "" {
+				combined += "\n\n<system_reminder>\n" + runNote + "\n</system_reminder>"
 			}
 			prepared.System = &combined
 
@@ -1146,6 +1265,13 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 			currentAssistant = &assistantMsg
 			return callContext, prepared, err
 		},
+		// Token-level updates ride genCtx: they only ever rewrite content that the
+		// next delta or a terminal handler persists again, so a dropped one costs
+		// nothing, and letting them run on a detached context would keep an
+		// abandoned turn writing to the database. Terminal writes (reasoning end,
+		// tool call finished, step finish) use durableWriteCtx instead, because a
+		// cancel racing the end of the stream must not drop the part that ends the
+		// turn or the UI keeps rendering the message as live thinking.
 		OnReasoningStart: func(id string, reasoning fantasy.ReasoningContent) error {
 			currentAssistant.AppendReasoningContent(reasoning.Text)
 			return a.messages.Update(genCtx, *currentAssistant)
@@ -1172,7 +1298,9 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 				}
 			}
 			currentAssistant.FinishThinking()
-			return a.messages.Update(genCtx, *currentAssistant)
+			wctx, cancelWrite := durableWriteCtx(ctx)
+			defer cancelWrite()
+			return a.messages.Update(wctx, *currentAssistant)
 		},
 		OnTextDelta: func(id string, text string) error {
 			// Strip leading newline from initial text content. This is is
@@ -1204,9 +1332,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 				Finished:         false,
 			}
 			currentAssistant.AddToolCall(toolCall)
-			// Use parent ctx instead of genCtx to ensure the update succeeds
-			// even if the request is canceled mid-stream
-			return a.messages.Update(ctx, *currentAssistant)
+			return a.messages.Update(genCtx, *currentAssistant)
 		},
 		OnRetry: func(err *fantasy.ProviderError, delay time.Duration) {
 			slog.Warn("Provider request failed, retrying", providerRetryLogFields(err, delay)...)
@@ -1223,9 +1349,11 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 				Finished:         true,
 			}
 			currentAssistant.AddToolCall(toolCall)
-			// Use parent ctx instead of genCtx to ensure the update succeeds
-			// even if the request is canceled mid-stream
-			return a.messages.Update(ctx, *currentAssistant)
+			// Terminal write: this carries the Finished flag that closes the tool
+			// call in the UI, so it outlives a cancel but not the run itself.
+			wctx, cancelWrite := durableWriteCtx(ctx)
+			defer cancelWrite()
+			return a.messages.Update(wctx, *currentAssistant)
 		},
 		OnToolResult: func(result fantasy.ToolResultContent) error {
 			toolResult := a.convertToToolResult(result)
@@ -1234,9 +1362,12 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 				secErr := fmt.Errorf("security violation: %s", toolResult.Content)
 				otel.RecordError(agentTurnSpan, secErr)
 			}
-			// Use parent ctx instead of genCtx to ensure the message is created
-			// even if the request is canceled mid-stream
-			_, createMsgErr := a.messages.Create(ctx, currentAssistant.SessionID, message.CreateMessageParams{
+			// A missing tool result would corrupt the next request to the model, so
+			// this create outlives a cancel but is bounded by a timeout rather than
+			// by the session-scoped parent context.
+			wctx, cancelWrite := durableWriteCtx(ctx)
+			defer cancelWrite()
+			_, createMsgErr := a.messages.Create(wctx, currentAssistant.SessionID, message.CreateMessageParams{
 				Role: message.Tool,
 				Parts: []message.ContentPart{
 					toolResult,
@@ -1335,11 +1466,16 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 			if a.reflectionEnabled.Get() && currentAssistant != nil {
 				text := currentAssistant.Content().String()
 				if strings.Contains(text, "<reflection>") {
-					reflectionTurns++
-					slog.Debug("Reflection detected", "turn", reflectionTurns)
+					reflectionDetected++
+					slog.Debug("Reflection detected", "turn", reflectionsUsed+reflectionDetected)
 				}
 			}
-			return a.messages.Update(genCtx, *currentAssistant)
+			// The Finish part is what ends the turn: persist it detached from the
+			// run's cancellation, bounded by a timeout, or the message stays
+			// IsThinking() forever and the answer never renders.
+			wctx, cancelWrite := durableWriteCtx(ctx)
+			defer cancelWrite()
+			return a.messages.Update(wctx, *currentAssistant)
 		},
 		StopWhen: []fantasy.StopCondition{
 			func(_ []fantasy.StepResult) bool {
@@ -1375,9 +1511,11 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 				return hasConsecutiveToolFailures(steps)
 			},
 			func(steps []fantasy.StepResult) bool {
-				// Stop if max reflection turns have been exceeded.
-				if a.reflectionEnabled.Get() && a.maxReflectionTurns.Get() > 0 && reflectionTurns >= a.maxReflectionTurns.Get() {
-					slog.Debug("Max reflection turns reached", "turns", reflectionTurns)
+				// Stop once the self-critique budget for the turn is spent. The count
+				// is the one carried across the recursive re-runs, so a model that
+				// keeps failing its own critique can no longer loop unbounded.
+				if a.reflectionEnabled.Get() && reflectionsUsed >= effectiveMaxReflectionTurns(a.maxReflectionTurns.Get()) {
+					slog.Debug("Max reflection turns reached", "turns", reflectionsUsed)
 					return true
 				}
 				return false
@@ -1386,13 +1524,23 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 	})
 
 	// After Stream returns, check if reflection is needed.
-	if err == nil && a.reflectionEnabled.Get() && reflectionTurns > 0 {
-		slog.Debug("Reflection detected, adding correction message", "turns", reflectionTurns)
-		// Add a system message with correction instructions to the conversation.
-		correctionMsg := fmt.Sprintf("Self-critique detected %d violation(s). Please review and correct your output according to the critical_rules.", reflectionTurns)
-		history = append(history, fantasy.NewSystemMessage(correctionMsg))
-		// Re-run the agent with the correction message.
-		return a.Run(ctx, call)
+	if err == nil && a.reflectionEnabled.Get() && reflectionDetected > 0 {
+		maxTurns := effectiveMaxReflectionTurns(a.maxReflectionTurns.Get())
+		if reflectionsUsed < maxTurns {
+			slog.Debug("Reflection detected, queueing correction for the re-run", "attempt", reflectionsUsed+1, "max", maxTurns)
+			// Queue the correction so the re-run carries it inside its system block.
+			// Appending it to history here was dead work, because the recursive Run
+			// rebuilds the history from the transcript and the message never reached
+			// the provider, and a trailing system message is the shape strict
+			// providers reject outright.
+			if !call.IsStateless {
+				a.queueNote(call.SessionID, fmt.Sprintf("Self-critique detected %d violation(s). Please review and correct your output according to the critical_rules.", reflectionDetected))
+			}
+			// Re-run with the correction riding its system block, and with the spent
+			// budget visible to the nested call so the cap holds for the turn.
+			return a.Run(withReflectionTurns(ctx, reflectionsUsed+1), call)
+		}
+		slog.Debug("Reflection budget exhausted, completing the turn unreflected", "used", reflectionsUsed, "max", maxTurns)
 	}
 
 	if err == nil && !call.IsStateless {
@@ -1552,6 +1700,11 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 			a.messageQueue.Set(call.SessionID, existing)
 		}
 	}
+
+	// The turn is over and persisted; run the post-turn seam (Stop hooks, the memory
+	// nudge, and SessionEnd for one-shot runs). It is fire-and-forget: nothing here
+	// re-enters the model, and any note it produces rides the next turn's context.
+	a.finishTurn(ctx, call, currentAssistant, result)
 
 	// Release active request before publishing the notification.
 	// TUI handlers poll IsSessionBusy() and only re-evaluate when a
@@ -1735,6 +1888,20 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 
 	summaryPromptText := buildSummaryPrompt(currentSession.Todos)
 
+	// Phase 6 distillation rides this same summarizer run rather than paying a second
+	// model call for candidate drafts — the design's "one extra output field." It is
+	// off unless memory.distill is on and the budget clears the §8 floor, and when it
+	// runs it only ever proposes pending drafts, never commits or injects.
+	distillEligible := a.memoryEnabled && !a.isSubAgent && a.cfg != nil && a.permissions != nil
+	distillOn := distillEligible && memory.ShouldDistill(a.memoryDistill, memory.Budget{
+		Used:     currentSession.CurrentTokens,
+		Window:   int64(largeModel.CatwalkCfg.ContextWindow),
+		FloorPct: a.memoryRateFloorPct,
+	})
+	if distillOn {
+		summaryPromptText += memory.DistillationInstruction()
+	}
+
 	resp, err := agent.Stream(genCtx, fantasy.AgentStreamCall{
 		Prompt:          summaryPromptText,
 		Messages:        aiMsgs,
@@ -1785,6 +1952,44 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 	err = a.messages.Update(genCtx, summaryMessage)
 	if err != nil {
 		return err
+	}
+
+	// Phase 6, riding the run that is already paying for the summary — neither of
+	// these is a second model pass.
+	if a.memoryEnabled && !a.isSubAgent && a.cfg != nil {
+		// Distillation: if the summarizer appended candidate drafts, pull them out, remove
+		// the side-channel block so it is not replayed forever as summary prose, and push
+		// each through the write-approval gate as a pending draft. Nothing is committed and
+		// nothing is injected here; approval stays the gate's and the human's to give.
+		if distillOn {
+			text := summaryMessage.Content().Text
+			if cands := memory.ParseDistillates(text, 8); len(cands) > 0 {
+				if stripped := memory.StripDistillates(text); stripped != text {
+					summaryMessage.SetContent(stripped)
+					if uerr := a.messages.Update(ctx, summaryMessage); uerr != nil {
+						slog.Warn("Failed to strip the distillate block from the summary", "error", uerr)
+					}
+				}
+				budget := memory.Budget{
+					Used:     currentSession.CurrentTokens,
+					Window:   int64(largeModel.CatwalkCfg.ContextWindow),
+					FloorPct: a.memoryRateFloorPct,
+				}
+				if n := memorytools.ProposeDistillates(ctx, a.cfg, a.permissions, a.workingDir, sessionID, cands, budget); n > 0 {
+					slog.Info("Distillation proposed pending candidate memories", "session", sessionID, "count", n)
+				}
+			}
+		}
+		// Compaction survival: re-stamp the durable window into the summary so the
+		// decisions a session was built on ride the next request as its head rather than
+		// being summarized away. PreCompressBlock caps the block, so survival cannot
+		// re-inflate the window this compaction was run to shrink.
+		if block := memorytools.PreCompressBlock(ctx, a.cfg, a.workingDir); block != "" {
+			summaryMessage.AppendContent("\n\n" + block)
+			if uerr := a.messages.Update(ctx, summaryMessage); uerr != nil {
+				slog.Warn("Failed to splice the memory block into the summary", "error", uerr)
+			}
+		}
 	}
 
 	var openrouterCost *float64

@@ -28,6 +28,33 @@ type Payload struct {
 	ToolInput json.RawMessage `json:"tool_input"`
 }
 
+// TurnPayload is the stdin shape for the turn-level events (Stop, SessionEnd).
+// Those events have no tool, so instead of tool_name/tool_input they carry the
+// turn itself: the assistant text and the names of the tools the turn called.
+type TurnPayload struct {
+	Event     string   `json:"event"`
+	SessionID string   `json:"session_id"`
+	CWD       string   `json:"cwd"`
+	Text      string   `json:"text"`
+	ToolCalls []string `json:"tool_calls,omitempty"`
+}
+
+// BuildTurnPayload constructs the JSON stdin payload for a turn-level hook event.
+func BuildTurnPayload(eventName, sessionID, cwd, text string, toolCalls []string) []byte {
+	p := TurnPayload{
+		Event:     eventName,
+		SessionID: sessionID,
+		CWD:       cwd,
+		Text:      text,
+		ToolCalls: toolCalls,
+	}
+	data, err := json.Marshal(p)
+	if err != nil {
+		return []byte("{}")
+	}
+	return data
+}
+
 // BuildPayload constructs the JSON stdin payload for a hook command.
 func BuildPayload(eventName, sessionID, cwd, toolName, toolInputJSON string) []byte {
 	toolInput := json.RawMessage(toolInputJSON)
@@ -73,6 +100,19 @@ func BuildEnv(eventName, toolName, sessionID, cwd, projectDir, toolInputJSON str
 	}
 
 	return env
+}
+
+// BuildTurnEnv constructs the environment for a turn-level event hook. It carries
+// the event and session but no tool variables, since those events have no tool.
+func BuildTurnEnv(eventName, sessionID, cwd, projectDir string) []string {
+	env := os.Environ()
+	env = append(env, shell.PhosphorEnvMarkers()...)
+	return append(env,
+		fmt.Sprintf("PHOSPHOR_EVENT=%s", eventName),
+		fmt.Sprintf("PHOSPHOR_SESSION_ID=%s", sessionID),
+		fmt.Sprintf("PHOSPHOR_CWD=%s", cwd),
+		fmt.Sprintf("PHOSPHOR_PROJECT_DIR=%s", projectDir),
+	)
 }
 
 // parseStdout parses the JSON output from a hook command's stdout.

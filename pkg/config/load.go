@@ -115,6 +115,12 @@ func Load(workingDir, dataDir string, debug bool) (*ConfigStore, error) {
 		return nil, fmt.Errorf("invalid hook configuration: %w", err)
 	}
 
+	// Validate the memory block after merging so an off-menu dial value or category
+	// is a load error, never a silent no-op that pretends to protect the user.
+	if err := cfg.ValidateMemory(); err != nil {
+		return nil, fmt.Errorf("invalid memory configuration: %w", err)
+	}
+
 	if !isInsideWorktree() {
 		const depth = 2
 		const items = 100
@@ -1382,6 +1388,10 @@ func normalizeHookEvent(name string) string {
 	switch strings.ToLower(strings.ReplaceAll(name, "_", "")) {
 	case "pretooluse":
 		return "PreToolUse"
+	case "stop":
+		return "Stop"
+	case "sessionend":
+		return "SessionEnd"
 	default:
 		return name
 	}
@@ -1419,4 +1429,138 @@ func (c *Config) ValidateHooks() error {
 		}
 	}
 	return nil
+}
+
+// MemoryAskModes is the closed set of write-approval postures the ask dial accepts.
+var MemoryAskModes = []string{"ask", "balanced", "auto"}
+
+// MemoryProactiveRecallModes is the closed set of session-start recall postures.
+var MemoryProactiveRecallModes = []string{"off", "hint", "on"}
+
+// MemoryCrossSessionModes is the closed set of cross-session recall postures.
+var MemoryCrossSessionModes = []string{"isolated", "related", "transcript"}
+
+// MemoryHumanEditModes is the closed set of human-edit authority postures.
+var MemoryHumanEditModes = []string{"authoritative", "advisory"}
+
+// memoryCategories is the closed menu of named categories the confirm/ignore/
+// untunable lists may reference. It mirrors memory.Categories; a test asserts the
+// two stay identical. An off-menu value is a load-time error rather than a silent
+// no-op, which is the whole guard against a typo leaving a user un-protected.
+var memoryCategories = []string{
+	"decisions", "requirements", "user-stated", "hot-set",
+	"archive-adds", "chore-notes", "inferred", "policy",
+	"other-session-working-state",
+}
+
+// MemoryCategories returns a copy of the closed category menu for validation and
+// tooling surfaces.
+func MemoryCategories() []string {
+	return append([]string(nil), memoryCategories...)
+}
+
+func memoryOneOf(list []string, value string) bool {
+	for _, v := range list {
+		if strings.EqualFold(v, value) {
+			return true
+		}
+	}
+	return false
+}
+
+// memoryClosest returns the menu entry that most resembles value for a "did you
+// mean" hint, or the empty string when nothing is close enough to suggest.
+func memoryClosest(list []string, value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	best, bestScore := "", 0.0
+	for _, c := range list {
+		score := labelOverlap(c, value)
+		if score > bestScore {
+			best, bestScore = c, score
+		}
+	}
+	if bestScore < 0.34 {
+		return ""
+	}
+	return best
+}
+
+// labelOverlap is a cheap multiset similarity score between two short labels, used
+// only to phrase a suggestion. It is deliberately simple; it is not a tokenizer.
+func labelOverlap(a, b string) float64 {
+	if a == "" || b == "" {
+		return 0
+	}
+	counts := map[rune]int{}
+	for _, r := range a {
+		counts[r]++
+	}
+	seenB := 0
+	shared := 0
+	for _, r := range b {
+		seenB++
+		if counts[r] > 0 {
+			shared++
+			counts[r]--
+		}
+	}
+	denominator := len(counts)
+	if seenB > denominator {
+		denominator = seenB
+	}
+	if denominator == 0 {
+		return 0
+	}
+	return float64(shared) / float64(denominator)
+}
+
+// ValidateMemory checks the memory block at load time so a bad dial position or an
+// off-menu category is an error the user sees immediately, not a silent no-op during
+// a turn. Enum fields are either empty (use the default) or exactly on their menu.
+func (c *Config) ValidateMemory() error {
+	m := c.Memory
+	if m == nil {
+		return nil
+	}
+	if m.Ask != "" && !memoryOneOf(MemoryAskModes, m.Ask) {
+		return memoryEnumError("memory.ask", m.Ask, MemoryAskModes)
+	}
+	if m.ProactiveRecall != "" && !memoryOneOf(MemoryProactiveRecallModes, m.ProactiveRecall) {
+		return memoryEnumError("memory.proactive_recall", m.ProactiveRecall, MemoryProactiveRecallModes)
+	}
+	if m.CrossSession != "" && !memoryOneOf(MemoryCrossSessionModes, m.CrossSession) {
+		return memoryEnumError("memory.cross_session", m.CrossSession, MemoryCrossSessionModes)
+	}
+	if m.HumanEdits != "" && !memoryOneOf(MemoryHumanEditModes, m.HumanEdits) {
+		return memoryEnumError("memory.human_edits", m.HumanEdits, MemoryHumanEditModes)
+	}
+	for _, field := range []struct {
+		name string
+		list []string
+	}{
+		{"memory.confirm", m.Confirm},
+		{"memory.ignore", m.Ignore},
+		{"memory.untunable", m.Untunable},
+	} {
+		for _, value := range field.list {
+			if memoryOneOf(memoryCategories, value) {
+				continue
+			}
+			if hint := memoryClosest(memoryCategories, value); hint != "" {
+				return fmt.Errorf("%s %q is not a known category; did you mean %q?", field.name, value, hint)
+			}
+			return fmt.Errorf("%s %q is not a known category; the menu is %v", field.name, value, memoryCategories)
+		}
+	}
+	if m.MaxInjectBytes < 0 || m.MaxUnusedDays < 0 || m.MaxAsksPerTurn < 0 || m.MinSamples < 0 {
+		return fmt.Errorf("memory: byte/day/ask/sample counts must not be negative")
+	}
+	return nil
+}
+
+func memoryEnumError(field, value string, menu []string) error {
+	if hint := memoryClosest(menu, value); hint != "" {
+		return fmt.Errorf("%s %q is not one of %v; did you mean %q?", field, value, menu, hint)
+	}
+	return fmt.Errorf("%s %q is not one of %v", field, value, menu)
 }

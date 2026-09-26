@@ -29,8 +29,11 @@ type Manager struct {
 	unavailable *csync.Map[string, time.Time]
 	cfg         *config.ConfigStore
 	manager     *powernapconfig.Manager
-	callback    func(name string, client *Client)
-	now         func() time.Time
+	// callbackMu guards callback: SetCallback writes it while Start has goroutines
+	// firing it from startServer.
+	callbackMu sync.RWMutex
+	callback   func(name string, client *Client)
+	now        func() time.Time
 }
 
 // NewManager creates a new LSP manager service.
@@ -78,7 +81,21 @@ func (s *Manager) Clients() *csync.Map[string, *Client] {
 // SetCallback sets a callback that is invoked when a new LSP
 // client is successfully started. This allows the coordinator to add LSP tools.
 func (s *Manager) SetCallback(cb func(name string, client *Client)) {
+	s.callbackMu.Lock()
+	defer s.callbackMu.Unlock()
 	s.callback = cb
+}
+
+// fireCallback invokes the state callback under the read side of its lock so a
+// concurrent SetCallback cannot be observed mid-write, and without holding the
+// lock across the subscriber's own work.
+func (s *Manager) fireCallback(name string, client *Client) {
+	s.callbackMu.RLock()
+	cb := s.callback
+	s.callbackMu.RUnlock()
+	if cb != nil {
+		cb(name, client)
+	}
 }
 
 // TrackConfigured will callback the user-configured LSPs, but will not create
@@ -90,7 +107,7 @@ func (s *Manager) TrackConfigured() {
 			continue
 		}
 		wg.Go(func() {
-			s.callback(name, nil)
+			s.fireCallback(name, nil)
 		})
 	}
 	wg.Wait()
@@ -159,10 +176,19 @@ func (s *Manager) startServer(ctx context.Context, name, filepath string, server
 		return
 	}
 
+	// A catalog entry whose command names no program can never start: the shipped
+	// "nix" server carries the literal "nil" as its command. Skip the defect here
+	// rather than letting LookPath and client creation each chase it, which logged
+	// an executable-not-found error for it on every start.
+	if cmd := strings.TrimSpace(cfg.Command); cmd == "" || cmd == "nil" {
+		slog.Debug("LSP command names no program, skipping", "name", name, "command", cfg.Command)
+		return
+	}
+
 	if client, ok := s.clients.Get(name); ok {
 		switch client.GetServerState() {
 		case StateReady, StateStarting, StateDisabled:
-			s.callback(name, client)
+			s.fireCallback(name, client)
 			// already done, return
 			return
 		}
@@ -194,7 +220,7 @@ func (s *Manager) startServer(ctx context.Context, name, filepath string, server
 	if client, ok := s.clients.Get(name); ok {
 		switch client.GetServerState() {
 		case StateReady, StateStarting, StateDisabled:
-			s.callback(name, client)
+			s.fireCallback(name, client)
 			return
 		}
 	}
@@ -217,13 +243,13 @@ func (s *Manager) startServer(ctx context.Context, name, filepath string, server
 		switch existing.GetServerState() {
 		case StateReady, StateStarting, StateDisabled:
 			_ = client.Close(ctx)
-			s.callback(name, existing)
+			s.fireCallback(name, existing)
 			return
 		}
 	}
 	s.clients.Set(name, client)
 	defer func() {
-		s.callback(name, client)
+		s.fireCallback(name, client)
 	}()
 
 	switch client.GetServerState() {
@@ -360,7 +386,7 @@ func (s *Manager) KillAll(context.Context) {
 	var wg sync.WaitGroup
 	for name, client := range s.clients.Seq2() {
 		wg.Go(func() {
-			defer func() { s.callback(name, client) }()
+			defer func() { s.fireCallback(name, client) }()
 			client.client.Kill()
 			client.SetServerState(StateStopped)
 			s.clients.Del(name)
@@ -375,7 +401,7 @@ func (s *Manager) StopAll(ctx context.Context) {
 	var wg sync.WaitGroup
 	for name, client := range s.clients.Seq2() {
 		wg.Go(func() {
-			defer func() { s.callback(name, client) }()
+			defer func() { s.fireCallback(name, client) }()
 			if err := client.Close(ctx); err != nil &&
 				!errors.Is(err, io.EOF) &&
 				!errors.Is(err, context.Canceled) &&

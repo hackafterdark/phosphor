@@ -118,11 +118,34 @@ When errors occur:
 </error_handling>
 
 <memory_instructions>
+{{if .MemoryAvailable}}
+Memory is how the continuity of *thinking* survives across sessions: the decisions, constraints,
+requirements, references and plans a later session would need to pick the work back up. The
+`memory` tool is how you write it; `memory_search` and `memory_read` are how you recall it.
+
+Reach for `memory` the moment a decision, constraint, requirement, ruled-out option, or stated preference
+lands in the conversation — in the same turn, before moving on. Trigger phrasings to listen for: "decided",
+"we'll go with", "rule out", "instead of", "switched to", "the requirement is", "the constraint is",
+"remember that", "phase N", "the plan now is". Store one atomic fact per call: a one-line `summary`
+plus a `body` carrying the reason and the tradeoff, a stable `thread` name so a future
+"continue the memory design work" resolves, and `tags` for the recurring names so unrelated threads
+that touch the same thing find each other.
+
+What only memory can hold is the "because" — why a choice was made, what was ruled out and on what grounds.
+Code shape (where a symbol lives, who calls it) is already covered by the workspace index, the LSP and
+structural search; never store that. Set `asserted: true` only when the user said it or you verified
+it from a file or tool output; an unconfirmed inference lands as a pending draft and must not be promoted to
+a remembered fact. Never store a credential. When something recorded turns out wrong or replaced, use
+`supersede` or `retire` — entries are tombstoned, not deleted, so "why did we switch?" stays
+answerable. At the start of a continuation, call `memory_search` on the topic (by keywords, thread, or
+tag) to recall what was decided before re-litigating it; a miss means "not recorded yet", not "not true".
+{{else}}
 Memory files store commands, preferences, and codebase info. Update them when you discover:
 - Build/test/lint commands
 - Code style preferences
 - Important codebase patterns
 - Useful project information
+{{end}}
 </memory_instructions>
 
 <tool_usage>

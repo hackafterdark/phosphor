@@ -80,3 +80,40 @@ func RunIDFromContext(ctx context.Context) string {
 	}
 	return ""
 }
+
+// reflectionTurnsContextKey is the unexported context key that carries how
+// many self-critique re-runs the current user turn has already consumed.
+// sessionAgent.Run re-runs a turn by recursing into itself, so a plain local
+// counter resets to zero on every level and the maxReflectionTurns guard could
+// never see the running total the turn had actually spent.
+type reflectionTurnsContextKey struct{}
+
+// defaultMaxReflectionTurns bounds the self-critique re-runs when no cap is
+// configured. Without one, a model that keeps emitting reflection blocks
+// recursed through sessionAgent.Run unbounded, because the guard that was
+// meant to stop it only engaged on a positive configured cap.
+const defaultMaxReflectionTurns = 3
+
+// effectiveMaxReflectionTurns resolves the configured cap, falling back to
+// defaultMaxReflectionTurns when it is unset or non-positive.
+func effectiveMaxReflectionTurns(configured int) int {
+	if configured <= 0 {
+		return defaultMaxReflectionTurns
+	}
+	return configured
+}
+
+// withReflectionTurns returns ctx carrying the number of self-critique re-runs
+// consumed so far, for the recursive call into sessionAgent.Run.
+func withReflectionTurns(ctx context.Context, turns int) context.Context {
+	return context.WithValue(ctx, reflectionTurnsContextKey{}, turns)
+}
+
+// reflectionTurnsFromContext returns the count set by [withReflectionTurns], or
+// zero when the turn has not re-run for a reflection yet.
+func reflectionTurnsFromContext(ctx context.Context) int {
+	if v, ok := ctx.Value(reflectionTurnsContextKey{}).(int); ok {
+		return v
+	}
+	return 0
+}

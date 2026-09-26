@@ -498,3 +498,40 @@ func TestThinkingWindow_BoxHeightTracksWindow(t *testing.T) {
 		"full expansion box height must reflect the full thinking render; got %d",
 		fullHeight)
 }
+
+// TestThinkingWindow_StampedReasoningWithoutFinishPart pins the user-visible
+// half of the stuck-thinking bug: when a run is canceled at the end of the
+// stream the final message update can be lost, leaving a stored message with
+// reasoning, no text, and no Finish part. With the FinishedAt guard that
+// message must render as a finished thinking block with the frozen
+// "Thought for" footer. Before the guard IsThinking() stayed true for it, so
+// the UI kept drawing a live thinking window with a stuck timer and no answer
+// region. The paired control asserts the footer stays absent for a message
+// that is genuinely mid-reasoning.
+func TestThinkingWindow_StampedReasoningWithoutFinishPart(t *testing.T) {
+	t.Parallel()
+
+	sty := styles.CharmtonePantera()
+
+	finished := thinkingMessageWithLines("stamped", 5)
+	finished.Parts[0] = message.ReasoningContent{
+		Thinking:   finished.ReasoningContent().Thinking,
+		StartedAt:  testStartedAt,
+		FinishedAt: testFinishedAt,
+	}
+	require.False(t, finished.IsThinking(),
+		"stamped reasoning without a Finish part must not be live thinking")
+	require.False(t, finished.IsFinished(),
+		"the point of this case is precisely that the Finish part never persisted")
+
+	const width = 105
+	item := NewAssistantMessageItem(&sty, finished).(*AssistantMessageItem)
+	require.Contains(t, ansi.Strip(item.RawRender(width)), "Thought for",
+		"a finished reasoning phase must show the frozen footer, not a live thinking block")
+
+	live := thinkingMessageWithLines("unstamped", 5)
+	require.True(t, live.IsThinking(), "the control message is mid-reasoning")
+	liveItem := NewAssistantMessageItem(&sty, live).(*AssistantMessageItem)
+	require.NotContains(t, ansi.Strip(liveItem.RawRender(width)), "Thought for",
+		"a message still mid-reasoning must not show the footer")
+}

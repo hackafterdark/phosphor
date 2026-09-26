@@ -9,6 +9,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/catwalk/pkg/catwalk"
 	"charm.land/lipgloss/v2"
+	memoryui "github.com/hackafterdark/phosphor/internal/memory/ui"
 	"github.com/hackafterdark/phosphor/internal/ui/anim"
 	"github.com/hackafterdark/phosphor/internal/ui/attachments"
 	"github.com/hackafterdark/phosphor/internal/ui/common"
@@ -377,13 +378,18 @@ func ExtractMessageItems(sty *styles.Styles, msg *message.Message, toolResults m
 		return []MessageItem{NewUserMessageItem(sty, msg, r)}
 	case message.Assistant:
 		var items []MessageItem
+		var assistantItem *AssistantMessageItem
 		if ShouldRenderAssistantMessage(msg) {
-			items = append(items, NewAssistantMessageItem(sty, msg))
+			item := NewAssistantMessageItem(sty, msg)
+			assistantItem, _ = item.(*AssistantMessageItem)
+			items = append(items, item)
 		}
+		var results []message.ToolResult
 		for _, tc := range msg.ToolCalls() {
 			var result *message.ToolResult
 			if tr, ok := toolResults[tc.ID]; ok {
 				result = &tr
+				results = append(results, tr)
 			}
 			items = append(items, NewToolMessageItem(
 				sty,
@@ -392,6 +398,14 @@ func ExtractMessageItems(sty *styles.Styles, msg *message.Message, toolResults m
 				result,
 				msg.FinishReason() == message.FinishReasonCanceled,
 			))
+		}
+		// The turn's memories are attached to the assistant item from the same
+		// stored results the tool items render, so the pill and the tool rows can
+		// not tell two different stories about what the turn recalled or wrote.
+		if assistantItem != nil && len(results) > 0 {
+			if sources := memoryui.SourcesFromResults(results); len(sources) > 0 {
+				assistantItem.SetMemorySources(sources)
+			}
 		}
 		return items
 	}

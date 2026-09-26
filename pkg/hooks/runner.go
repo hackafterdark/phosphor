@@ -172,6 +172,73 @@ func (r *Runner) Run(ctx context.Context, eventName, sessionID, toolName, toolIn
 	return agg, nil
 }
 
+// RunEvent executes the hooks registered for a turn-level event (e.g. Stop or
+// SessionEnd). Those events have no tool, so a hook Matcher has nothing to match
+// against and every hook configured for the event runs; the payload carries the
+// turn itself (see BuildTurnPayload).
+func (r *Runner) RunEvent(ctx context.Context, eventName, sessionID string, payload []byte) (AggregateResult, error) {
+	if len(r.hooks) == 0 {
+		return AggregateResult{Decision: DecisionNone}, nil
+	}
+
+	eventCtx, eventSpan := otel.StartSpan(ctx, "hooks."+strings.ToLower(eventName))
+	eventSpan.SetAttributes(
+		attribute.String("hooks.event", eventName),
+		attribute.String("hooks.session_id", sessionID),
+		attribute.Int("hooks.registered", len(r.hooks)),
+	)
+
+	seen := make(map[string]bool, len(r.hooks))
+	var deduped []config.HookConfig
+	for _, h := range r.hooks {
+		if seen[h.cfg.Command] {
+			continue
+		}
+		seen[h.cfg.Command] = true
+		deduped = append(deduped, h.cfg)
+	}
+
+	envVars := BuildTurnEnv(eventName, sessionID, r.cwd, r.projectDir)
+	results := make([]HookResult, len(deduped))
+	var wg sync.WaitGroup
+	wg.Add(len(deduped))
+	for i, h := range deduped {
+		go func(idx int, hook config.HookConfig) {
+			defer wg.Done()
+			results[idx] = r.runOne(eventCtx, hook, envVars, payload)
+		}(i, h)
+	}
+	wg.Wait()
+
+	agg := aggregate(results, "")
+	agg.Hooks = make([]HookInfo, len(deduped))
+	for i, h := range deduped {
+		agg.Hooks[i] = HookInfo{
+			Name:         h.DisplayName(),
+			Matcher:      h.Matcher,
+			Decision:     results[i].Decision.String(),
+			Halt:         results[i].Halt,
+			Reason:       results[i].Reason,
+			InputRewrite: false,
+		}
+	}
+	if eventSpan != nil {
+		eventSpan.SetAttributes(
+			attribute.String("hooks.decision", agg.Decision.String()),
+			attribute.Bool("hooks.halt", agg.Halt),
+		)
+		eventSpan.End()
+	}
+	slog.Info(
+		"Hook completed",
+		"event", eventName,
+		"session", sessionID,
+		"hooks", len(deduped),
+		"decision", agg.Decision.String(),
+	)
+	return agg, nil
+}
+
 // matchingHooks returns hooks whose matcher matches the tool name (or has
 // no matcher, which matches everything).
 func (r *Runner) matchingHooks(toolName string) []config.HookConfig {

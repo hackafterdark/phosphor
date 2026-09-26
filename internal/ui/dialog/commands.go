@@ -25,7 +25,9 @@ const CommandsID = "commands"
 type CommandType uint
 
 // String returns the string representation of the CommandType.
-func (c CommandType) String() string { return []string{"System", "User", "MCP"}[c] }
+func (c CommandType) String() string {
+	return []string{"System", "User", "MCP", "Memory"}[c]
+}
 
 const (
 	sidebarCompactModeBreakpoint = 120
@@ -35,6 +37,7 @@ const (
 	SystemCommands CommandType = iota
 	UserCommands
 	MCPPrompts
+	MemoryCommands
 )
 
 // Commands represents a dialog that shows available commands.
@@ -60,6 +63,7 @@ type Commands struct {
 	hasQueue   bool
 	goalStatus goal.GoalStatus
 	selected   CommandType
+	hasMemory  bool
 
 	spinner spinner.Model
 	loading bool
@@ -80,7 +84,7 @@ type Commands struct {
 var _ Dialog = (*Commands)(nil)
 
 // NewCommands creates a new commands dialog.
-func NewCommands(com *common.Common, sessionID string, hasSession, hasTodos, hasQueue bool, goalStatus goal.GoalStatus, customCommands []commands.CustomCommand, mcpPrompts []commands.MCPPrompt) (*Commands, error) {
+func NewCommands(com *common.Common, sessionID string, hasSession, hasTodos, hasQueue, hasMemory bool, goalStatus goal.GoalStatus, customCommands []commands.CustomCommand, mcpPrompts []commands.MCPPrompt) (*Commands, error) {
 	c := &Commands{
 		com:            com,
 		selected:       SystemCommands,
@@ -88,6 +92,7 @@ func NewCommands(com *common.Common, sessionID string, hasSession, hasTodos, has
 		hasSession:     hasSession,
 		hasTodos:       hasTodos,
 		hasQueue:       hasQueue,
+		hasMemory:      hasMemory,
 		goalStatus:     goalStatus,
 		customCommands: customCommands,
 		mcpPrompts:     mcpPrompts,
@@ -202,12 +207,12 @@ func (c *Commands) HandleMsg(msg tea.Msg) Action {
 				}
 			}
 		case key.Matches(msg, c.keyMap.Tab):
-			if len(c.customCommands) > 0 || len(c.mcpPrompts) > 0 {
+			if len(c.customCommands) > 0 || len(c.mcpPrompts) > 0 || c.hasMemory {
 				c.selected = c.nextCommandType()
 				c.setCommandItems(c.selected)
 			}
 		case key.Matches(msg, c.keyMap.ShiftTab):
-			if len(c.customCommands) > 0 || len(c.mcpPrompts) > 0 {
+			if len(c.customCommands) > 0 || len(c.mcpPrompts) > 0 || c.hasMemory {
 				c.selected = c.previousCommandType()
 				c.setCommandItems(c.selected)
 			}
@@ -254,8 +259,8 @@ func (c *Commands) Cursor() *tea.Cursor {
 }
 
 // commandsRadioView generates the command type selector radio buttons.
-func commandsRadioView(sty *styles.Styles, selected CommandType, hasUserCmds bool, hasMCPPrompts bool) string {
-	if !hasUserCmds && !hasMCPPrompts {
+func commandsRadioView(sty *styles.Styles, selected CommandType, hasUserCmds bool, hasMCPPrompts bool, hasMemory bool) string {
+	if !hasUserCmds && !hasMCPPrompts && !hasMemory {
 		return ""
 	}
 
@@ -275,6 +280,9 @@ func commandsRadioView(sty *styles.Styles, selected CommandType, hasUserCmds boo
 	}
 	if hasMCPPrompts {
 		parts = append(parts, selectedFn(MCPPrompts))
+	}
+	if hasMemory {
+		parts = append(parts, selectedFn(MemoryCommands))
 	}
 
 	return strings.Join(parts, " ")
@@ -305,7 +313,7 @@ func (c *Commands) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 
 	rc := NewRenderContext(t, width)
 	rc.Title = "Commands"
-	rc.TitleInfo = commandsRadioView(t, c.selected, len(c.customCommands) > 0, len(c.mcpPrompts) > 0)
+	rc.TitleInfo = commandsRadioView(t, c.selected, len(c.customCommands) > 0, len(c.mcpPrompts) > 0, c.hasMemory)
 	inputView := t.Dialog.InputPrompt.Render(c.input.View())
 	rc.AddPart(inputView)
 	listView := t.Dialog.List.Height(c.list.Height()).Render(c.list.Render())
@@ -341,50 +349,43 @@ func (c *Commands) FullHelp() [][]key.Binding {
 	}
 }
 
+// availableCommandTypes returns the command tabs that currently have content,
+// in display order. System is always present; the others appear only when their
+// backing data exists so the tab strip never advertises an empty section.
+func (c *Commands) availableCommandTypes() []CommandType {
+	types := []CommandType{SystemCommands}
+	if len(c.customCommands) > 0 {
+		types = append(types, UserCommands)
+	}
+	if len(c.mcpPrompts) > 0 {
+		types = append(types, MCPPrompts)
+	}
+	if c.hasMemory {
+		types = append(types, MemoryCommands)
+	}
+	return types
+}
+
 // nextCommandType returns the next command type in the cycle.
 func (c *Commands) nextCommandType() CommandType {
-	switch c.selected {
-	case SystemCommands:
-		if len(c.customCommands) > 0 {
-			return UserCommands
+	types := c.availableCommandTypes()
+	for i, t := range types {
+		if t == c.selected {
+			return types[(i+1)%len(types)]
 		}
-		if len(c.mcpPrompts) > 0 {
-			return MCPPrompts
-		}
-		fallthrough
-	case UserCommands:
-		if len(c.mcpPrompts) > 0 {
-			return MCPPrompts
-		}
-		fallthrough
-	case MCPPrompts:
-		return SystemCommands
-	default:
-		return SystemCommands
 	}
+	return SystemCommands
 }
 
 // previousCommandType returns the previous command type in the cycle.
 func (c *Commands) previousCommandType() CommandType {
-	switch c.selected {
-	case SystemCommands:
-		if len(c.mcpPrompts) > 0 {
-			return MCPPrompts
+	types := c.availableCommandTypes()
+	for i, t := range types {
+		if t == c.selected {
+			return types[(i-1+len(types))%len(types)]
 		}
-		if len(c.customCommands) > 0 {
-			return UserCommands
-		}
-		return SystemCommands
-	case UserCommands:
-		return SystemCommands
-	case MCPPrompts:
-		if len(c.customCommands) > 0 {
-			return UserCommands
-		}
-		return SystemCommands
-	default:
-		return SystemCommands
 	}
+	return SystemCommands
 }
 
 // setCommandItems sets the command items based on the specified command type.
@@ -435,6 +436,10 @@ func (c *Commands) setCommandItems(commandType CommandType) {
 				Arguments:   cmd.Arguments,
 			}
 			commandItems = append(commandItems, NewCommandItem(c.com.Styles, "mcp_"+cmd.ID, cmd.PromptID, "", action))
+		}
+	case MemoryCommands:
+		for _, cmd := range c.memoryCommands() {
+			commandItems = append(commandItems, cmd)
 		}
 	}
 
@@ -581,6 +586,32 @@ func (c *Commands) defaultCommands() []*CommandItem {
 	)
 
 	return commands
+}
+
+// memoryCommands returns the command items for the Memory tab. Each one is a
+// thin wrapper over a /memory subcommand: selecting it dispatches the very same
+// slash command the user could type, so the menu never grows a parallel,
+// half-true implementation of what the console already does.
+func (c *Commands) memoryCommands() []*CommandItem {
+	type entry struct {
+		id, title, desc, line string
+	}
+	entries := []entry{
+		{"memory_status", "Memory Status", "Vault tallies, injected window, and active threads", "memory status"},
+		{"memory_review", "Review Memory", "List and decide pending drafts and queued proposals", "memory review"},
+		{"memory_sources", "Memory Sources", "Show where recalled memories came from", "memory sources"},
+		{"memory_fsck", "Check Memory (fsck)", "Resync the index against the vault", "memory fsck"},
+		{"memory_budget", "Memory Budget", "Report the injection byte budget", "memory budget"},
+		{"memory_policy", "Memory Policy", "Inspect the write-gate policy", "memory policy"},
+	}
+	items := make([]*CommandItem, 0, len(entries))
+	for _, e := range entries {
+		items = append(items, NewCommandItem(
+			c.com.Styles, e.id, e.title, "",
+			ActionRunSlashCommand{Line: e.line},
+		).WithDescription(e.desc))
+	}
+	return items
 }
 
 // SetCustomCommands sets the custom commands and refreshes the view if user commands are currently displayed.

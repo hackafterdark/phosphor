@@ -86,6 +86,10 @@ type RenderContext struct {
 	// Subtitle is a secondary line of text displayed below the title with a
 	// lighter color to distinguish it from the primary title.
 	Subtitle string
+	// SubtitleStyle is the style of the subtitle line. It defaults to
+	// Styles.Dialog.SecondaryText; a dialog whose subtitle carries real
+	// weight can swap in a brighter style.
+	SubtitleStyle lipgloss.Style
 	// Parts are the rendered parts of the dialog.
 	Parts []string
 	// Help is the help view content. This will be appended to the content parts
@@ -103,6 +107,7 @@ func NewRenderContext(t *styles.Styles, width int) *RenderContext {
 		Styles:                 t,
 		TitleStyle:             t.Dialog.Title,
 		ViewStyle:              t.Dialog.View,
+		SubtitleStyle:          t.Dialog.SecondaryText,
 		TitleGradientFromColor: t.Dialog.TitleGradFromColor,
 		TitleGradientToColor:   t.Dialog.TitleGradToColor,
 		Width:                  width,
@@ -138,7 +143,7 @@ func (rc *RenderContext) Render() string {
 		}
 		parts = append(parts, titleStyle.Render(title))
 		if len(rc.Subtitle) > 0 {
-			subtitleStyle := rc.Styles.Dialog.SecondaryText.Width(rc.Width - dialogStyle.GetHorizontalFrameSize())
+			subtitleStyle := rc.SubtitleStyle.Width(rc.Width - dialogStyle.GetHorizontalFrameSize())
 			parts = append(parts, subtitleStyle.Render(rc.Subtitle))
 		}
 		if rc.Gap > 0 {

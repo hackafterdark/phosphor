@@ -140,6 +140,9 @@ func NewEditTool(
 				return fantasy.NewTextErrorResponse(fmt.Sprintf("Security violation: path %s is outside workspace", absFilePath)), nil
 			}
 			params.FilePath = absFilePath
+			if resp, blocked := vaultWriteGuard(workingDir, absFilePath); blocked {
+				return resp, nil
+			}
 
 			var response fantasy.ToolResponse
 

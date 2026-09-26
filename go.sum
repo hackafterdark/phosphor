@@ -549,6 +549,8 @@ github.com/tree-sitter/tree-sitter-ruby v0.23.1 h1:T/NKHUA+iVbHM440hFx+lzVOzS4dV
 github.com/tree-sitter/tree-sitter-ruby v0.23.1/go.mod h1:kUS4kCCQloFcdX6sdpr8p6r2rogbM6ZjTox5ZOQy8cA=
 github.com/tree-sitter/tree-sitter-rust v0.24.2 h1:NL4nF67ib21RMzzfvkmXlVwe45vvhW10DVyO+D0z/W0=
 github.com/tree-sitter/tree-sitter-rust v0.24.2/go.mod h1:hfeGWic9BAfgTrc7Xf6FaOAguCFJRo3RBbs7QJ6D7MI=
+github.com/tsawler/prose/v3 v3.0.0-beta2 h1:Kl+K5Zp+PMffpF8armlzXyzVXOp8RVAYIZHVKh5Lr+U=
+github.com/tsawler/prose/v3 v3.0.0-beta2/go.mod h1:sPUW6WuYbZwwTCsp72BsCD4nbJzMprY+hYFhD3KfnRU=
 github.com/u-root/u-root v0.16.0 h1:wY40O83MBVks97+Is0WlFlOPSwKQMIrWP9R1IsrExg8=
 github.com/u-root/u-root v0.16.0/go.mod h1:yL/XdSSW27PdGLgUh4MNRBy54mKM+TBLzpwiB4nwj90=
 github.com/u-root/uio v0.0.0-20240224005618-d2acac8f3701 h1:pyC9PaHYZFgEKFdlp3G8RaCKgVpHZnecvArXvPXcFkM=
@@ -730,6 +732,8 @@ gopkg.in/dnaeon/go-vcr.v4 v4.0.6-0.20251110073552-01de4eb40290 h1:g3ah7zaWmw41Et
 gopkg.in/dnaeon/go-vcr.v4 v4.0.6-0.20251110073552-01de4eb40290/go.mod h1:sbq5oMEcM4PXngbcNbHhzfCP9OdZodLhrbRYoyg09HY=
 gopkg.in/natefinch/lumberjack.v2 v2.2.1 h1:bBRl1b0OH9s/DuPhuXpNl+VtCaJXFZ5/uEFST95x9zc=
 gopkg.in/natefinch/lumberjack.v2 v2.2.1/go.mod h1:YD8tP3GAjkrDg1eZH7EGmyESg/lsYskCTPBJVb9jqSc=
+gopkg.in/neurosnap/sentences.v1 v1.0.7 h1:gpTUYnqthem4+o8kyTLiYIB05W+IvdQFYR29erfe8uU=
+gopkg.in/neurosnap/sentences.v1 v1.0.7/go.mod h1:YlK+SN+fLQZj+kY3r8DkGDhDr91+S3JmTb5LSxFRQo0=
 gopkg.in/tomb.v1 v1.0.0-20141024135613-dd632973f1e7 h1:uRGJdciOHaEIrze2W8Q3AKkepLTh2hOroT7a+7czfdQ=
 gopkg.in/tomb.v1 v1.0.0-20141024135613-dd632973f1e7/go.mod h1:dt/ZhP58zS4L8KSrWDmTeBkI65Dw0HsyUHuEVlX15mw=
 gopkg.in/warnings.v0 v0.1.2 h1:wFXVbFY8DY5/xOe1ECiWdKCzZlxgshcYVNkBHstARME=

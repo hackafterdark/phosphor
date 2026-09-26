@@ -18,6 +18,7 @@ import (
 	"charm.land/fantasy"
 	"github.com/hackafterdark/phosphor/internal/discover"
 	"github.com/hackafterdark/phosphor/internal/log"
+	memorytools "github.com/hackafterdark/phosphor/internal/memory/tools"
 	"github.com/hackafterdark/phosphor/internal/oauth/copilot"
 	"github.com/hackafterdark/phosphor/internal/proto"
 	"github.com/hackafterdark/phosphor/pkg/agent/hyper"
@@ -972,6 +973,14 @@ func (c *coordinator) buildAgent(ctx context.Context, prompt *prompt.Prompt, age
 		RedactOutgoingSecrets: redactOutgoingSecrets,
 		RedactOutgoingPII:     redactOutgoingPII,
 		WireSecretsForced:     wireSecretsForced,
+		WorkingDir:            c.cfg.WorkingDir(),
+		PostTurnHooks:         c.cfg.Config().Hooks[hooks.EventStop],
+		SessionEndHooks:       c.cfg.Config().Hooks[hooks.EventSessionEnd],
+		MemoryEnabled:         memorytools.Enabled(c.cfg),
+		MemoryDistill:         memorytools.DistillEnabled(c.cfg),
+		MemoryRateFloorPct:    memorytools.Policy(c.cfg).RateLimitFloorPct,
+		Permissions:           c.permissions,
+		Config:                c.cfg,
 	})
 
 	c.readyWg.Go(func() error {
@@ -1094,6 +1103,19 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, isSubA
 	vemb := c.cfg.Config().WorkspaceSearch.VectorEmbeddings
 	if vemb != nil && (vemb.Enabled || vemb.AutoIndex) {
 		allTools = append(allTools, tools.NewSemanticSearchTool(*c.cfg.Config(), c.cfg.WorkingDir()))
+	}
+
+	// Add the memory vault tools when the feature is on. Only the primary agent
+	// context may write: a subagent runs with primary=false so its throwaway goal or a
+	// cron-style prompt cannot contaminate the shared vault, while recall still works.
+	if memorytools.Enabled(c.cfg) {
+		policy := memorytools.Policy(c.cfg)
+		allTools = append(
+			allTools,
+			memorytools.NewMemoryTool(c.cfg, c.permissions, c.cfg.WorkingDir(), !isSubAgent, policy),
+			memorytools.NewMemorySearchTool(c.cfg, c.cfg.WorkingDir()),
+			memorytools.NewMemoryReadTool(c.cfg, c.cfg.WorkingDir()),
+		)
 	}
 
 	if len(c.cfg.Config().MCP) > 0 && allowRepoTooling {
@@ -1563,6 +1585,18 @@ func (c *coordinator) rebuildSystemPrompt(ctx context.Context, prompt *prompt.Pr
 			systemPrompt = sb.String()
 		}
 	}
+
+	// Inject the always-injected Tier-A memory window so durable decisions,
+	// constraints and preferences carry into this session. It is a pure function of
+	// the vault plus settings and is frozen for the prompt's lifetime, so it composes
+	// with the provider prefix cache instead of being re-paid per turn. Subagents get
+	// the recall tools but not the standing window, keeping their prompt lean.
+	if !isSubAgent && memorytools.Enabled(c.cfg) {
+		if block := memorytools.SystemBlock(ctx, c.cfg, c.cfg.WorkingDir()); block != "" {
+			systemPrompt += "\n\n" + block
+		}
+	}
+
 	return systemPrompt, nil
 }
 

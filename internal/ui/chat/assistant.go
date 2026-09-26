@@ -10,6 +10,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
+	memoryui "github.com/hackafterdark/phosphor/internal/memory/ui"
 	"github.com/hackafterdark/phosphor/internal/server"
 	"github.com/hackafterdark/phosphor/internal/ui/anim"
 	"github.com/hackafterdark/phosphor/internal/ui/common"
@@ -146,6 +147,15 @@ type AssistantMessageItem struct {
 	// docs/notes/2026-05-12-chat-rendering-perf.md. See
 	// streaming_markdown.go for the full algorithm.
 	streamingContent streamingMarkdown
+
+	// memorySources is the provenance pill's data: the memories this turn's tool
+	// results reported, parsed back out of the stored bytes rather than tracked
+	// live. Empty means the turn touched nothing, and a turn that touched nothing
+	// draws no pill.
+	memorySources  []memoryui.Source
+	memoryExpanded bool
+	memorySec      assistantSection
+	memoryRow      int // first line of the pill in the rendered item; 0 = no pill
 }
 
 var _ Expandable = (*AssistantMessageItem)(nil)
@@ -277,6 +287,7 @@ func (a *AssistantMessageItem) prefixCacheKey(cappedWidth int) uint64 {
 	thinkSrc, thinkExtra := a.thinkingKey()
 	contentSrc, contentExtra := a.contentKey()
 	errSrc, errExtra := a.errorKey()
+	memSrc, memExtra := a.memoryKey()
 	h := fnv.New64a()
 	var buf [8]byte
 	writeU64 := func(v uint64) {
@@ -292,6 +303,8 @@ func (a *AssistantMessageItem) prefixCacheKey(cappedWidth int) uint64 {
 	writeU64(contentExtra)
 	writeU64(errSrc)
 	writeU64(errExtra)
+	writeU64(memSrc)
+	writeU64(memExtra)
 	writeU64(a.compositionKey())
 	fingerprint := h.Sum64()
 	var focusBit uint64
@@ -348,6 +361,17 @@ func (a *AssistantMessageItem) renderMessageContent(width int) (string, int) {
 	}
 
 	out := strings.Join(messageParts, "\n")
+	// The pill rides at the very bottom of the turn: it is metadata about the
+	// turn's tool use, and metadata that interrupts the answer reads as part of
+	// the answer.
+	a.memoryRow = 0
+	if pill := a.cachedMemory(width); pill != "" {
+		if out != "" {
+			out += "\n"
+		}
+		a.memoryRow = lipgloss.Height(out) + 1
+		out += pill
+	}
 	return out, lipgloss.Height(out)
 }
 
@@ -437,6 +461,56 @@ func (a *AssistantMessageItem) cachedError(width int) string {
 	}
 	out := a.renderError(width)
 	a.errorSec.store(width, srcHash, extra, out, 0)
+	return out
+}
+
+// memoryKey returns the (srcHash, extra) cache key components for the
+// provenance pill. The source hash is the ordered id list rather than any
+// prose so that a re-ordering (which changes what the reader sees first)
+// invalidates the cache even when the set itself is unchanged.
+func (a *AssistantMessageItem) memoryKey() (uint64, uint64) {
+	if len(a.memorySources) == 0 {
+		return 0, 0
+	}
+	ids := make([]string, 0, len(a.memorySources))
+	for _, s := range a.memorySources {
+		ids = append(ids, s.ID)
+	}
+	var expanded byte
+	if a.memoryExpanded {
+		expanded = 1
+	}
+	return fnv64(strings.Join(ids, "\n")), fnvFields([]byte{expanded}, nil)
+}
+
+// cachedMemory returns the rendered provenance pill. Collapsed it costs one
+// line, which is what makes standing provenance affordable: the reader pays
+// a count until they ask for the citations, and the ask is the same click or
+// space path the thinking block already taught.
+func (a *AssistantMessageItem) cachedMemory(width int) string {
+	if len(a.memorySources) == 0 {
+		return ""
+	}
+	srcHash, extra := a.memoryKey()
+	if a.memorySec.hit(width, srcHash, extra) {
+		return a.memorySec.out
+	}
+	var sb strings.Builder
+	head := a.sty.Messages.AssistantInfoDuration.Render(
+		fmt.Sprintf("%s %s", styles.MemoryIcon, memoryui.Count(a.memorySources)),
+	)
+	sb.WriteString(head)
+	if !a.memoryExpanded {
+		sb.WriteString(" " + a.sty.Messages.ThinkingTruncationHint.Render("[click or space to expand]"))
+	} else {
+		for _, s := range a.memorySources {
+			for _, line := range strings.Split(strings.TrimSpace(s.Expanded()), "\n") {
+				sb.WriteString("\n  " + line)
+			}
+		}
+	}
+	out := sb.String()
+	a.memorySec.store(width, srcHash, extra, out, 0)
 	return out
 }
 
@@ -593,6 +667,18 @@ func (a *AssistantMessageItem) SetMessage(msg *message.Message) tea.Cmd {
 	return nil
 }
 
+// SetMemorySources attaches the provenance pill's data, derived by the caller
+// from this message's own tool results. It is set rather than inferred here
+// because the results live on sibling items' messages: the extractor that
+// builds the list has both halves in hand, this item only has one.
+func (a *AssistantMessageItem) SetMemorySources(sources []memoryui.Source) {
+	if len(sources) == len(a.memorySources) {
+		return
+	}
+	a.memorySources = sources
+	a.Bump()
+}
+
 // Finished implements list.Item. The assistant message is freezable
 // once the message reports IsFinished() and is no longer spinning
 // (no animation tick remains pending). Streaming tail animation is
@@ -614,6 +700,7 @@ func (a *AssistantMessageItem) clearCache() {
 	a.thinkingSec.reset()
 	a.contentSec.reset()
 	a.errorSec.reset()
+	a.memorySec.reset()
 	a.streamingContent.Reset()
 }
 
@@ -630,8 +717,14 @@ func (a *AssistantMessageItem) clearCache() {
 // there is nothing to expand, and mutating the view mode would
 // thrash the thinking-section cache key for no visible benefit.
 func (a *AssistantMessageItem) ToggleExpanded() bool {
+	if len(a.memorySources) > 0 {
+		a.memoryExpanded = !a.memoryExpanded
+	}
 	if strings.TrimSpace(a.message.ReasoningContent().Thinking) == "" {
-		return a.thinkingViewMode != thinkingCollapsed
+		if len(a.memorySources) > 0 {
+			a.Bump()
+		}
+		return a.thinkingViewMode != thinkingCollapsed || a.memoryExpanded
 	}
 	switch a.thinkingViewMode {
 	case thinkingCollapsed:
@@ -646,7 +739,7 @@ func (a *AssistantMessageItem) ToggleExpanded() bool {
 		a.thinkingViewMode = thinkingCollapsed
 	}
 	a.Bump()
-	return a.thinkingViewMode != thinkingCollapsed
+	return a.thinkingViewMode != thinkingCollapsed || a.memoryExpanded
 }
 
 // tailWindowWouldTruncate reports whether the current thinking text
@@ -680,6 +773,11 @@ func (a *AssistantMessageItem) tailWindowWouldTruncate() bool {
 func (a *AssistantMessageItem) HandleMouseClick(btn ansi.MouseButton, x, y int) bool {
 	if btn != ansi.MouseLeft {
 		return false
+	}
+	// The provenance pill sits at the bottom of the item and is clickable
+	// through the same generic Expandable path as the thinking box.
+	if a.memoryRow > 0 && y >= a.memoryRow {
+		return true
 	}
 	// Only the thinking box is clickable; other regions of the assistant
 	// message should not trigger expansion.

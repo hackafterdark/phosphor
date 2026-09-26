@@ -1,0 +1,275 @@
+{
+  "_comment": [
+    "Golden query set for the MEMORY_SPEC section 11 deterministic gate.",
+    "retrieval: expect_ids is the relevant set for the query; the recall bar is measured at 10 and the",
+    "precision bar at 5 over this set. must_not is a hard veto independent of the bars: an id listed there",
+    "must not appear in the returned window at all. must_not is deliberately restricted to entries that are",
+    "retired, pending, or plainly off-topic, so a failure means retrieval leaked something it must not, not",
+    "that a curator's taste was not matched.",
+    "The FTS index covers the body column only, so query terms are drawn from fixture bodies. Two probes",
+    "with an empty expect_ids record that property on purpose: they assert the summary-only vocabulary does",
+    "NOT come back, which is what keeps a frontmatter word from answering a body query.",
+    "continuation: expect_threads are the threads the names-only hint must nominate for a keyword-less",
+    "continuation prompt to resolve without a model call.",
+    "gate: expect_ask is the warranted decision for the write described, at the shipped DefaultPolicy.",
+    "nudge: expect_nudge is whether the post-turn reminder should fire for the turn text."
+  ],
+
+  "retrieval": [
+    {
+      "id": "md-is-truth",
+      "query": "delete memory.db rescan entries folder rebuild identically",
+      "expect_ids": ["mem-md-truth"],
+      "must_not": ["mem-lru-cache", "mem-prose-swap", "mem-sidebar-plan"]
+    },
+    {
+      "id": "no-embeddings",
+      "query": "retrieval snippets lifecycle deterministic in-process",
+      "expect_ids": ["mem-no-embeddings"],
+      "must_not": ["mem-lru-cache", "mem-prose-swap", "mem-ragas-open"]
+    },
+    {
+      "id": "single-writer",
+      "query": "memory tool writes the vault edit append multiedit refused under guard",
+      "expect_ids": ["mem-single-writer"],
+      "must_not": ["mem-lru-cache", "mem-sidebar-plan", "mem-docs-drift"]
+    },
+    {
+      "id": "tombstones",
+      "query": "tombstones recoverable audit trail survives every overwrite",
+      "expect_ids": ["mem-tombstones"],
+      "must_not": ["mem-lru-cache", "mem-sidebar-plan", "mem-skill-trigger"]
+    },
+    {
+      "id": "fts-ranking",
+      "query": "bm25 rank ascending trust descending snippet excerpt dozen tokens",
+      "expect_ids": ["mem-fts-ranking"],
+      "must_not": ["mem-lru-cache", "mem-sidebar-plan"]
+    },
+    {
+      "id": "hot-score",
+      "query": "recall count recency curve helpfulness bonus trust penalties staleness supersede",
+      "expect_ids": ["mem-hot-score"],
+      "must_not": ["mem-lru-cache", "mem-sidebar-plan"]
+    },
+    {
+      "id": "frozen-snapshot",
+      "query": "mid-session writes reach the disk not the frozen block next session adopts hysteresis",
+      "expect_ids": ["mem-snapshot-frozen"],
+      "must_not": ["mem-lru-cache", "mem-prose-swap"]
+    },
+    {
+      "id": "provider-seam",
+      "query": "name available init systempromptblock recall record lifecycle tools contract nullprovider fail-safe",
+      "expect_ids": ["mem-provider-seam"],
+      "must_not": ["mem-lru-cache", "mem-ragas-open", "mem-sidebar-plan"]
+    },
+    {
+      "id": "wal-one-writer",
+      "query": "single writer connection wal desync serialise file lock parallel session",
+      "expect_ids": ["mem-wal-single"],
+      "must_not": ["mem-lru-cache", "mem-prose-swap"]
+    },
+    {
+      "id": "watcher-rescan",
+      "query": "content hash ledger walk deleted markdown file counts as human delete drops derived rows",
+      "expect_ids": ["mem-watch-rescan"],
+      "must_not": ["mem-lru-cache", "mem-sidebar-plan"]
+    },
+    {
+      "id": "gate-asklog",
+      "query": "adaptive layer reads buckets minimum sample count untunable categories floor to ask",
+      "expect_ids": ["mem-asklog-gate"],
+      "must_not": ["mem-lru-cache", "mem-sidebar-plan", "mem-ragas-open"]
+    },
+    {
+      "id": "hook-aggregate",
+      "query": "runner fans events parallel timeout dedupes identical commands parses stdout shapes",
+      "expect_ids": ["mem-hook-decision"],
+      "must_not": ["mem-lru-cache", "mem-sidebar-plan"]
+    },
+    {
+      "id": "postturn-seam",
+      "query": "finishTurn fires session end events collects additional context queues one system line next request",
+      "expect_ids": ["mem-stop-hook"],
+      "must_not": ["mem-lru-cache", "mem-sidebar-plan"]
+    },
+    {
+      "id": "skill-trigger",
+      "query": "matching the description to a task is not knowing the skill file read before acting scripts folder",
+      "expect_ids": ["mem-skill-trigger"],
+      "must_not": ["mem-lru-cache", "mem-docs-drift", "mem-path-fold"]
+    },
+    {
+      "id": "docs-drift",
+      "query": "generator removes recopies byte identical drift guard allow-listed doc fails the suite",
+      "expect_ids": ["mem-docs-drift"],
+      "must_not": ["mem-lru-cache", "mem-skill-trigger"]
+    },
+    {
+      "id": "windows-path-fold",
+      "query": "compares normalised forward-slash forms backslash cannot dodge the write fence",
+      "expect_ids": ["mem-path-fold"],
+      "must_not": ["mem-lru-cache", "mem-skill-trigger"]
+    },
+    {
+      "id": "schema-repair",
+      "query": "stringified arrays coerce unknown keys dropped case drift canonicalised truncated json sanitised",
+      "expect_ids": ["mem-schema-repair"],
+      "must_not": ["mem-lru-cache", "mem-prose-swap", "mem-ragas-open"]
+    },
+    {
+      "id": "corpus-overview-ranking",
+      "query": "bm25 recall count trust snippet hot score ranking",
+      "expect_ids": ["mem-fts-ranking", "mem-hot-score"],
+      "must_not": ["mem-lru-cache", "mem-sidebar-plan"],
+      "note": "Two entries legitimately answer a ranking-shaped query; both belong in the relevant set so precision is not scored against a deliberately short list."
+    },
+    {
+      "id": "probe-summary-only-terms",
+      "query": "embeddings",
+      "expect_ids": [],
+      "must_not": ["mem-lru-cache", "mem-prose-swap"],
+      "note": "The word appears only in a summary, and the FTS index covers the body column, so this must come back empty."
+    },
+    {
+      "id": "probe-retired-never-returns",
+      "query": "lru cache recall path fronts",
+      "expect_ids": [],
+      "must_not": ["mem-lru-cache"],
+      "note": "The vocabulary matches a retired entry almost exactly; retirement must still beat relevance."
+    },
+    {
+      "id": "probe-pending-never-returns",
+      "query": "tsawler fork candidate backend phase five enrichment draft",
+      "expect_ids": [],
+      "must_not": ["mem-prose-swap"],
+      "note": "An unconfirmed draft is structurally unable to reach retrieval, whatever the query."
+    },
+    {
+      "id": "thread-scoped-search",
+      "query": "buckets asklog gate",
+      "thread": "memory-gate",
+      "expect_ids": ["mem-asklog-gate"],
+      "must_not": ["mem-lru-cache"],
+      "note": "A thread filter has to exclude the same-corpus entries that live in another thread."
+    },
+    {
+      "id": "tag-scoped-search",
+      "query": "hash ledger prunes vanished rows",
+      "tags": ["watcher", "reindex"],
+      "expect_ids": ["mem-watch-rescan"],
+      "must_not": ["mem-lru-cache"]
+    }
+  ],
+
+  "continuation": [
+    {
+      "id": "continue-memory-system",
+      "prompt": "ok so where did we leave off with the index and the always injected window?",
+      "expect_threads": ["memory-system", "hooks-engine", "sqlite-index"],
+      "note": "The prompt names no thread and no keyword any entry shares, so only the names-only hint can resolve it."
+    }
+  ],
+
+  "gate": [
+    {
+      "id": "plain-asserted-fact",
+      "type": "fact",
+      "asserted": true,
+      "pinned": false,
+      "expect_ask": false,
+      "note": "Tier B archive add of a stated fact: reversible, deterministic, small blast radius."
+    },
+    {
+      "id": "asserted-decision",
+      "type": "decision",
+      "asserted": true,
+      "pinned": false,
+      "expect_ask": true,
+      "note": "decisions sits in the untunable floor at every dial position."
+    },
+    {
+      "id": "inferred-active",
+      "type": "fact",
+      "asserted": false,
+      "pinned": false,
+      "expect_ask": true,
+      "note": "An inference may not be promoted unconfirmed."
+    },
+    {
+      "id": "pinned-fact",
+      "type": "fact",
+      "asserted": true,
+      "pinned": true,
+      "expect_ask": true,
+      "note": "A pinned entry is a hot-set write, and a hot byte is read by every future prompt."
+    },
+    {
+      "id": "policy-entry",
+      "type": "policy",
+      "asserted": true,
+      "pinned": false,
+      "expect_ask": true,
+      "note": "Section 5 puts policy memories on the hard override list, so the shipped default must ask."
+    },
+    {
+      "id": "asserted-constraint",
+      "type": "constraint",
+      "asserted": true,
+      "pinned": false,
+      "expect_ask": true,
+      "note": "Constraints are decision-shaped and carry the same blast radius."
+    },
+    {
+      "id": "asserted-reference",
+      "type": "reference",
+      "asserted": true,
+      "pinned": false,
+      "expect_ask": false,
+      "note": "A pointer is the least consequential thing the vault can hold."
+    }
+  ],
+
+  "nudge": [
+    {
+      "id": "explicit-decision",
+      "turn_text": "We decided to keep the corpus deterministic and to rule out embeddings for retrieval.",
+      "expect_nudge": true
+    },
+    {
+      "id": "stated-constraint",
+      "turn_text": "The hard rule is that memory must never be the thing that trips a rate limit.",
+      "expect_nudge": true
+    },
+    {
+      "id": "phase-mention",
+      "turn_text": "Phase 6 is the distillation work, and the plan now is to gate it off by default.",
+      "expect_nudge": true
+    },
+    {
+      "id": "already-wrote",
+      "turn_text": "We decided to keep the corpus deterministic and to rule out embeddings for retrieval.",
+      "wrote_memory": true,
+      "expect_nudge": false,
+      "note": "The agent already did the thing; reminding about it is the noise the design warns about."
+    },
+    {
+      "id": "opted-out",
+      "turn_text": "We decided to keep the corpus deterministic. //ignore-memory-this-turn",
+      "expect_nudge": false
+    },
+    {
+      "id": "not-decision-shaped",
+      "turn_text": "The build is green and I ran the suite twice to be sure the flake was mine.",
+      "expect_nudge": false
+    },
+    {
+      "id": "non-primary",
+      "turn_text": "We decided to keep the corpus deterministic and to rule out embeddings for retrieval.",
+      "primary": false,
+      "expect_nudge": false,
+      "note": "A subagent cannot write anyway, so a reminder there is a dead-end prompt."
+    }
+  ]
+}

@@ -382,6 +382,10 @@ func TestE2E_TwoClientsReceiveSameMessage(t *testing.T) {
 		if ws.SymbolIndex != nil {
 			_ = ws.SymbolIndex.Close()
 		}
+		// The derived memory index holds an open SQLite handle under the
+		// temp workspace; releasing it here is what lets Windows delete
+		// the directory at cleanup.
+		_ = ws.CloseMemory()
 		_ = db.Release(wsDataDir)
 	})
 

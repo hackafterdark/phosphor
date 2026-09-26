@@ -319,7 +319,7 @@ func DefaultLandingConfig() LandingConfig {
 // Components are visible by default; set `hidden` to true to hide.
 type SidebarComponentConfig struct {
 	// ID is the unique identifier for the sidebar component.
-	ID string `json:"id" jsonschema:"required,description=Component ID,enum=logo,enum=session_title,enum=working_dir,enum=active_llm,enum=goal,enum=files,enum=lsps,enum=mcps,enum=skills"`
+	ID string `json:"id" jsonschema:"required,description=Component ID,enum=logo,enum=session_title,enum=working_dir,enum=active_llm,enum=goal,enum=workspace_search,enum=files,enum=lsps,enum=mcps,enum=skills,enum=memory"`
 	// Hidden controls whether the component is hidden in the sidebar.
 	// Defaults to false (visible).
 	Hidden bool `json:"hidden,omitempty" jsonschema:"description=Whether this component is hidden,default=false"`
@@ -352,6 +352,7 @@ func DefaultSidebarConfig() SidebarLayoutConfig {
 			{ID: "lsps"},
 			{ID: "mcps"},
 			{ID: "skills"},
+			{ID: "memory"},
 		},
 	}
 }
@@ -430,9 +431,9 @@ type Options struct {
 	DebugLSP                           bool        `json:"debug_lsp,omitempty" jsonschema:"description=Enable debug logging for LSP servers,default=false"`
 	DisableAutoSummarize               bool        `json:"disable_auto_summarize,omitempty" jsonschema:"description=Disable automatic conversation summarization,default=false"`
 	SummarizeThreshold                 float64     `json:"summarize_threshold,omitempty" jsonschema:"description=Fraction of context window at which to trigger auto-summarization (0-1, default=0.8),default=0.8"`
-	SummarizeModel                     string      `json:'summarize_model,omitempty' jsonschema:'description=Model to use for summarization: 'main'/'large' (default) or 'small',default=main'`
-	SummarizeToolOutputChars           int         `json:'summarize_tool_output_chars,omitempty' jsonschema:'description=Max chars to keep per tool output during compaction pruning,default=200'`
-	SummarizeToolOutputAggressiveChars int         `json:'summarize_tool_output_aggressive_chars,omitempty' jsonschema:'description=Max chars per tool output for overflow recovery pruning,default=50'`
+	SummarizeModel                     string      `json:"summarize_model,omitempty" jsonschema:"description=Summarization model, one of main, large (default), or small,enum=main,enum=large,enum=small,default=main"`
+	SummarizeToolOutputChars           int         `json:"summarize_tool_output_chars,omitempty" jsonschema:"description=Max chars to keep per tool output during compaction pruning,default=200"`
+	SummarizeToolOutputAggressiveChars int         `json:"summarize_tool_output_aggressive_chars,omitempty" jsonschema:"description=Max chars per tool output for overflow recovery pruning,default=50"`
 	// DataDirectory is where Phosphor keeps per-project state such as
 	// the SQLite database and workspace overrides. Relative paths are
 	// resolved against the working directory; absolute paths are used
@@ -981,6 +982,11 @@ type Config struct {
 	// (FTS5 full-text + vector embeddings).
 	WorkspaceSearch *WorkspaceSearch `json:"workspace_search,omitempty" jsonschema:"description=Unified workspace search configuration"`
 
+	// Memory holds settings for the first-party memory vault: the agent-facing
+	// writer, the FTS5 recall tool, the always-injected Tier-A window, and the
+	// write-approval gate.
+	Memory *Memory `json:"memory,omitempty" jsonschema:"description=First-party memory vault configuration"`
+
 	Agents map[string]Agent `json:"-"`
 }
 
@@ -1331,6 +1337,164 @@ type VectorEmbeddingIndex struct {
 	EmbeddingDims int      `json:"embedding_dims,omitempty" jsonschema:"description=Embedding dimensionality,default=384"`
 }
 
+// Memory holds the settings for the first-party memory vault. It is the human-
+// edited intent layer (the dial plus a closed named menu); the learned, per-bucket
+// gate state lives in the derived memory.db and is never hand-edited here.
+type Memory struct {
+	// Enabled is tri-state: nil means on-by-default, so the feature ships enabled
+	// and only an explicit false turns it off.
+	Enabled *bool `json:"enabled,omitempty" jsonschema:"description=Turn the memory vault on or off; defaults to on"`
+	// Provider selects the active backend. Only "builtin" ships; "off" disables.
+	Provider string `json:"provider,omitempty" jsonschema:"description=Active memory backend,default=builtin"`
+	// AutoIndex is tri-state; when nil it follows Enabled so the derived index
+	// stays fresh whenever the feature is on.
+	AutoIndex *bool `json:"auto_index,omitempty" jsonschema:"description=Refresh the memory index on vault changes; defaults to the Enabled value when unset"`
+
+	// Ask is the one dial most people ever touch: the write-approval posture.
+	Ask string `json:"ask,omitempty" jsonschema:"description=Write-approval posture: ask | balanced | auto,default=balanced"`
+	// Adaptive lets the learned per-bucket layer shape around the dial.
+	Adaptive *bool `json:"adaptive,omitempty" jsonschema:"description=Let learned per-bucket thresholds shape around the ask dial,default=true"`
+	// MinSamples is the cold-start floor: a bucket stays conservative until it has
+	// this many feedback events.
+	MinSamples int `json:"min_samples,omitempty" jsonschema:"description=Feedback events a bucket needs before the adaptive layer may act on it,default=5"`
+	// MaxAsksPerTurn caps how many confirmations a single turn may raise so a
+	// cautious agent cannot become a parrot that blocks the task.
+	MaxAsksPerTurn int `json:"max_asks_per_turn,omitempty" jsonschema:"description=Maximum write confirmations per turn,default=1"`
+
+	// Confirm/Ignore/Untunable name categories from a CLOSED menu (memory.Categories).
+	// A value off the menu is a load-time validation error with a "did you mean",
+	// never a silent no-op, so a typo cannot leave a user believing they are protected.
+	Confirm   []string `json:"confirm,omitempty" jsonschema:"description=Named categories that must always be confirmed"`
+	Ignore    []string `json:"ignore,omitempty" jsonschema:"description=Named categories that never need confirming"`
+	Untunable []string `json:"untunable,omitempty" jsonschema:"description=Categories the gate may never silence, regardless of the dial"`
+
+	// ProactiveRecall decides whether a session start also pays a small names-only
+	// active-threads hint so a keyword-less "continue where I left off" resolves.
+	ProactiveRecall string `json:"proactive_recall,omitempty" jsonschema:"description=Session-start recall posture: off | hint | on,default=hint"`
+	// ThreadHintLines caps the names-only hint; nil keeps the built-in default.
+	ThreadHintLines *int `json:"thread_hint_lines,omitempty" jsonschema:"description=Maximum lines in the session-start thread hint"`
+	// CrossSession decides whether recall may pull labelled distillates from other
+	// sessions. The working set (todos/goal/plan) is a hard fence regardless.
+	CrossSession string `json:"cross_session,omitempty" jsonschema:"description=Cross-session recall: isolated | related | transcript,default=related"`
+	// RelatedMinConfidence is the relevance floor below which a cross-session hit is
+	// mentioned rather than auto-pulled.
+	RelatedMinConfidence float64 `json:"related_min_confidence,omitempty" jsonschema:"description=Minimum confidence to auto-pull a cross-session distillate,default=0.55"`
+	// HumanEdits decides whether a human edit to an entry body overrides the agent's.
+	HumanEdits string `json:"human_edits,omitempty" jsonschema:"description=authoritative | advisory,default=authoritative"`
+
+	// AllowNonPrimaryWrites is the only loosening of the primary-context write fence;
+	// off by default so a subagent or cron run cannot contaminate the shared vault.
+	AllowNonPrimaryWrites *bool `json:"allow_non_primary_writes,omitempty" jsonschema:"description=Let non-primary agent contexts write memories; off by default"`
+
+	// Prose is the kill switch for the write-time keyword/tag enrichment behind the
+	// phosphor_prose build gate. Only meaningful in a build made with
+	// -tags phosphor_prose; the default build runs the deterministic stand-in
+	// regardless, so nil simply means "on if this binary linked the runtime".
+	Prose *bool `json:"prose,omitempty" jsonschema:"description=Enable prose-based keyword and tag enrichment; only meaningful in a phosphor_prose build"`
+
+	// Distill is the off-by-default tri-state for end-of-session distillation: when
+	// the summarizer runs, it may additionally emit candidate Tier-B memories as a
+	// side product so decisions survive window compaction. Off unless set true, so
+	// the shipped build spends no model token on it and proposes nothing. When on,
+	// it proposes pending drafts only and is skipped below RateLimitFloorPct.
+	Distill *bool `json:"distill,omitempty" jsonschema:"description=Ride the summarizer to propose pending candidate memories so decisions survive compaction; off by default"`
+
+	// Token/lean caps: the always-injected block is byte-capped so memory can never
+	// out-grow its share of the window regardless of corpus size.
+	MaxInjectBytes   int     `json:"max_inject_bytes,omitempty" jsonschema:"description=Hard byte ceiling on the whole injected memory block; values above 32768 are clamped to that ceiling,default=8192"`
+	MaxUnusedDays    int     `json:"max_unused_days,omitempty" jsonschema:"description=Entries unused this long age to cold,default=90"`
+	PromoteThreshold float64 `json:"promote_threshold,omitempty" jsonschema:"description=hot_score an entry must reach to be considered for Tier A,default=1.0"`
+	// AutoPromote is the tri-state gate on the hot_score path into the injected
+	// window. On when unset, because promotion is index arithmetic and spends no
+	// model call. Set it false and Tier A becomes pins-only, which is the posture
+	// to pull into while hand-tuning a vault or when you do not want the recall
+	// signal steering the standing window.
+	AutoPromote *bool `json:"auto_promote,omitempty" jsonschema:"description=Let high-scoring entries promote themselves into the always-injected window; false means pins only,default=true"`
+	// AutoPromoteMinTrust is the trust floor the automatic path must clear no matter
+	// how hot a non-pinned entry runs. Only user confirmation raises trust to 0.8
+	// above the unreviewed 0.5 default, so the shipped floor means unreviewed
+	// content structurally cannot self-inject into every prompt. 0 means unset.
+	AutoPromoteMinTrust float64 `json:"auto_promote_min_trust,omitempty" jsonschema:"description=Trust a non-pinned entry needs to auto-promote; only confirmed entries reach 0.8,default=0.75"`
+	// AutoPromoteSharePct caps the percent of max_inject_bytes the automatic
+	// (non-pinned) entries may claim between them, leaving the rest to pins, so a
+	// recall-flood can never evict the curated pinned window no matter how high it
+	// scores. 0 means unset; values at or above 100 remove the cap.
+	AutoPromoteSharePct int `json:"auto_promote_share_pct,omitempty" jsonschema:"description=Percent of the injected byte budget the automatic (non-pinned) path may claim at most,default=50"`
+	// Integrity seals each memory entry with a keyed digest so the index can refuse
+	// to inject or recall a row whose machine-authored content was changed outside a
+	// system write. It is on by default: the tamper-evidence it gives the SQLite
+	// copy is what makes the derived index safe to trust beside the markdown, and
+	// the derived index lives in the workspace where anything that can write the
+	// project can write it. Turning it on mints a signing key whose safekeeping is
+	// the operator's (export it with /memory key and store it like any other
+	// secret, since losing it oracles the seal); the first creation is announced so
+	// the recovery phrase gets taken. Existing entries are sealed once, the first
+	// time their bank is opened under the seal. Set it false to opt out.
+	Integrity         *bool          `json:"integrity,omitempty" jsonschema:"description=Seal memory entries with a keyed digest so tampered content is refused; on by default"`
+	RateLimitFloorPct float64        `json:"rate_limit_floor_pct,omitempty" jsonschema:"description=Skip model-spending memory work below this remaining-budget percent,default=10"`
+	Budgets           map[string]int `json:"budgets,omitempty" jsonschema:"description=Per-slot character budgets keyed by slot name"`
+	// WriteRetries is how often a contended memory write is replayed after the
+	// index reports the lock held elsewhere, with backoff between attempts. Raise
+	// it on a shared or slow disk where several Phosphor instances index the same
+	// workspace; lower it to fail a contended write fast.
+	WriteRetries int `json:"write_retries,omitempty" jsonschema:"description=Times a contended memory write is replayed against another instance holding the index lock,default=24"`
+}
+
+// EnabledOrAuto reports whether the memory feature is on. An unset Enabled is on,
+// and the provider name "off"/"none" forces it off.
+func (m *Memory) EnabledOrAuto() bool {
+	if m == nil {
+		return true
+	}
+	switch strings.ToLower(m.Provider) {
+	case "off", "none":
+		return false
+	}
+	if m.Enabled != nil {
+		return *m.Enabled
+	}
+	return true
+}
+
+// AutoIndexEnabled resolves the tri-state AutoIndex against EnabledOrAuto so the
+// derived index stays fresh whenever the feature is on. An absent block follows the
+// shipped-on default, unlike the code index which ships off.
+func (m *Memory) AutoIndexEnabled() bool {
+	if m == nil {
+		return true
+	}
+	if m.AutoIndex != nil {
+		return *m.AutoIndex
+	}
+	return m.EnabledOrAuto()
+}
+
+// ThreadHintLinesOr returns the configured thread-hint cap, or def when unset.
+func (m *Memory) ThreadHintLinesOr(def int) int {
+	if m == nil || m.ThreadHintLines == nil {
+		return def
+	}
+	return *m.ThreadHintLines
+}
+
+// DistillEnabled is the tri-state gate on end-of-session distillation. Unlike the
+// rest of the feature it is off when unset, because it is the one memory path that
+// is permitted to spend a model call; a feature that has to be explicitly asked to
+// pay inference ships with the ask unanswered.
+func (m *Memory) DistillEnabled() bool {
+	return m != nil && m.EnabledOrAuto() && m.Distill != nil && *m.Distill
+}
+
+// IntegrityEnabled is the tri-state gate on the memory tamper seal. It is on when
+// unset, like the feature itself: the sealed index is the posture the memory system
+// is built to run under, and the key-custody duty that once argued for the ask is
+// answered by announcing the key's first creation instead of withholding the seal
+// until someone thinks to ask. The gate still rides the feature switch, and an
+// explicit false is a real opt-out.
+func (m *Memory) IntegrityEnabled() bool {
+	return m != nil && m.EnabledOrAuto() && (m.Integrity == nil || *m.Integrity)
+}
+
 func (c *Config) EnabledProviders() []ProviderConfig {
 	var enabled []ProviderConfig
 	for p := range c.Providers.Seq() {
@@ -1420,6 +1584,9 @@ func allToolNames() []string {
 		"sourcegraph",
 		"semantic_search",
 		"workspace_search",
+		"memory",
+		"memory_search",
+		"memory_read",
 		"todos",
 		"view",
 		"write",
@@ -1438,7 +1605,7 @@ func resolveAllowedTools(allTools []string, disabledTools []string) []string {
 }
 
 func resolveReadOnlyTools(tools []string) []string {
-	readOnlyTools := []string{"glob", "grep", "ls", "sourcegraph", "view", "structural_search"}
+	readOnlyTools := []string{"glob", "grep", "ls", "sourcegraph", "view", "structural_search", "memory_search", "memory_read"}
 	// filter to only include tools that are in allowedtools (include mode)
 	return filterSlice(tools, readOnlyTools, true)
 }

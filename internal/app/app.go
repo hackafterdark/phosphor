@@ -26,6 +26,8 @@ import (
 	"github.com/hackafterdark/phosphor/internal/format"
 	"github.com/hackafterdark/phosphor/internal/lock"
 	"github.com/hackafterdark/phosphor/internal/log"
+	"github.com/hackafterdark/phosphor/internal/memory"
+	memorytools "github.com/hackafterdark/phosphor/internal/memory/tools"
 	"github.com/hackafterdark/phosphor/internal/ui/anim"
 	"github.com/hackafterdark/phosphor/internal/ui/styles"
 	"github.com/hackafterdark/phosphor/internal/update"
@@ -75,6 +77,14 @@ type App struct {
 	SymbolIndex   *workspaceindex.Store
 	SymbolWatcher *workspaceindex.Watcher
 	indexBuildWG  sync.WaitGroup // tracks background workspace index build
+
+	// MemoryIndex is the long-lived handle over the derived memory index, kept open
+	// so the vault watcher can keep it current while the app runs. Every read path
+	// also re-checks staleness, so it is an accelerator and not a correctness
+	// dependency. MemoryWatcher is the debounced fsnotify watcher over the vaults.
+	MemoryIndex   *memory.Store
+	MemoryWatcher *memory.Watcher
+	memoryOnce    sync.Once // guards the one-time release of the handles above
 
 	config *config.ConfigStore
 
@@ -198,6 +208,48 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore, skillsMgr
 	}
 
 	app.setupEvents()
+
+	// Bring the memory vault up beside the code index. The markdown is the source of
+	// truth and memory.db is derived from it, so this block only warms the index and
+	// keeps it current while a human may be editing the same files in Obsidian. Any
+	// failure here degrades to "memory reads rescan on demand", never to a broken
+	// session, which is why none of it is allowed to abort startup.
+	if memorytools.Enabled(store) {
+		if err := memory.EnsureVault(store.WorkingDir()); err != nil {
+			slog.Warn("Failed to create the memory vault; memory is off this session", "error", err)
+		} else if memStore, err := memory.Open(memory.OpenOptions{
+			WorkspaceDir: store.WorkingDir(),
+			Settings:     memorytools.Settings(store),
+			Shared:       true,
+		}); err != nil {
+			slog.Warn("Failed to open the memory index; reads will rescan when used", "error", err)
+		} else {
+			app.MemoryIndex = memStore
+			app.cleanupFuncs = append(app.cleanupFuncs, func(context.Context) error { return app.CloseMemory() })
+			// Seed the project vocabulary once per process, off the startup path. It
+			// used to ride memory.Open, but the memory tools open a store per call and
+			// seeding takes a write transaction on the file the watcher indexes, which
+			// put a contended SQLite lock in front of every memory read. Bounded by a
+			// timeout so a busy index can never hold the app up.
+			go func() {
+				seedCtx, cancelSeed := context.WithTimeout(context.Background(), 15*time.Second)
+				defer cancelSeed()
+				if _, err := memStore.SeedVocabulary(seedCtx, store.WorkingDir()); err != nil {
+					slog.Warn("Failed to seed the project memory vocabulary", "error", err)
+				}
+			}()
+			if cfg.Memory.AutoIndexEnabled() {
+				if watcher, err := memory.NewWatcher(memStore); err != nil {
+					slog.Debug("Memory vault watcher unavailable; reads still rescan", "error", err)
+				} else if err := watcher.Start(ctx); err != nil {
+					slog.Warn("Failed to start the memory vault watcher", "error", err)
+					_ = watcher.Stop()
+				} else {
+					app.MemoryWatcher = watcher
+				}
+			}
+		}
+	}
 
 	// Initialize clipboard support. This is best-effort; if it fails
 	// (e.g., headless environment), clipboard operations will return nil.
@@ -746,6 +798,29 @@ func (app *App) Subscribe(program *tea.Program) {
 }
 
 // Shutdown performs a graceful shutdown of the application.
+// CloseMemory releases the derived memory index and its vault watcher. It is
+// idempotent so both the shutdown path and tests that replace the full
+// shutdown callback can drop the same handles without leaking the SQLite
+// file, which Windows refuses to delete while a handle stays open.
+func (app *App) CloseMemory() error {
+	var err error
+	app.memoryOnce.Do(func() {
+		if app.MemoryWatcher != nil {
+			if werr := app.MemoryWatcher.Stop(); werr != nil {
+				err = werr
+			}
+			app.MemoryWatcher = nil
+		}
+		if app.MemoryIndex != nil {
+			if cerr := app.MemoryIndex.Close(); cerr != nil && err == nil {
+				err = cerr
+			}
+			app.MemoryIndex = nil
+		}
+	})
+	return err
+}
+
 func (app *App) Shutdown() {
 	start := time.Now()
 	defer func() { slog.Debug("Shutdown took " + time.Since(start).String()) }()

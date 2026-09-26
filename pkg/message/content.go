@@ -227,8 +227,14 @@ func (m *Message) FinishReason() FinishReason {
 	return ""
 }
 
+// IsThinking reports whether the assistant message is mid reasoning so the UI
+// keeps showing the live thinking window. A non-zero FinishedAt is proof the
+// reasoning phase ended (FinishThinking stamps it from the first text delta,
+// tool call, reasoning-end event, or step finish), so a message can never be
+// presented as thinking indefinitely, even if a Finish part failed to persist.
 func (m *Message) IsThinking() bool {
-	if m.ReasoningContent().Thinking != "" && m.Content().Text == "" && !m.IsFinished() {
+	reasoning := m.ReasoningContent()
+	if reasoning.Thinking != "" && reasoning.FinishedAt == 0 && m.Content().Text == "" && !m.IsFinished() {
 		return true
 	}
 	return false
@@ -245,6 +251,20 @@ func (m *Message) AppendContent(delta string) {
 	if !found {
 		m.Parts = append(m.Parts, TextContent{Text: delta})
 	}
+}
+
+// SetContent replaces the message's text part outright, keeping any other parts
+// (reasoning, tool calls, finish) in place. It is the counterpart to AppendContent
+// for the case where text is rewritten rather than grown — for example, dropping a
+// side-channel block that was emitted only to be parsed back out again.
+func (m *Message) SetContent(text string) {
+	for i, part := range m.Parts {
+		if _, ok := part.(TextContent); ok {
+			m.Parts[i] = TextContent{Text: text}
+			return
+		}
+	}
+	m.Parts = append(m.Parts, TextContent{Text: text})
 }
 
 func (m *Message) AppendReasoningContent(delta string) {

@@ -70,6 +70,7 @@ type PromptDat struct {
 	StructuralSearchAvailable bool
 	SemanticSearchAvailable   bool
 	WorkspaceSearchAvailable  bool
+	MemoryAvailable           bool
 	CriticalRules             string
 	CommunicationStyle        string
 	Workflow                  string
@@ -483,6 +484,7 @@ func (p *Prompt) promptData(ctx context.Context, provider, model string, store *
 		StructuralSearchAvailable: p.structuralSearchAvailable,
 		SemanticSearchAvailable:   p.semanticSearchAvailable,
 		WorkspaceSearchAvailable:  cfg.WorkspaceSearch != nil && cfg.WorkspaceSearch.FullText != nil && cfg.WorkspaceSearch.FullText.Enabled,
+		MemoryAvailable:           cfg.Memory.EnabledOrAuto(),
 	}
 	if isGit {
 		var err error

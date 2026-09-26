@@ -308,9 +308,13 @@ func (m *Message) FinishReason() FinishReason {
 	return ""
 }
 
-// IsThinking returns true if the message is currently in a thinking state.
+// IsThinking returns true if the message is currently in a thinking state. A
+// non-zero FinishedAt proves the reasoning phase ended (see FinishThinking), so
+// the client-side mirror of the message model never reports a finished message
+// as still thinking.
 func (m *Message) IsThinking() bool {
-	return m.ReasoningContent().Thinking != "" && m.Content().Text == "" && !m.IsFinished()
+	reasoning := m.ReasoningContent()
+	return reasoning.Thinking != "" && reasoning.FinishedAt == 0 && m.Content().Text == "" && !m.IsFinished()
 }
 
 // AppendContent appends text to the text content part.

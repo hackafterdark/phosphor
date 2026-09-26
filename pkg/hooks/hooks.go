@@ -13,6 +13,15 @@ import (
 // Hook event name constants.
 const (
 	EventPreToolUse = "PreToolUse"
+	// EventStop fires once a turn's run has completed successfully. It is the
+	// post-turn seam: the payload carries the turn's assistant text and the list
+	// of tools it called, so a user hook (or the memory nudge) can look at what
+	// the turn actually said without the agent paying for another model call.
+	EventStop = "Stop"
+	// EventSessionEnd fires when a session's run is finished for good, which is
+	// the finalize signal the distillation path rides. It is distinct from Stop:
+	// Stop ends a turn, SessionEnd ends the session.
+	EventSessionEnd = "SessionEnd"
 )
 
 // HaltExitCode is the exit code that halts the whole turn. 2 blocks the

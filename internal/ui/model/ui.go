@@ -38,6 +38,7 @@ import (
 	"github.com/hackafterdark/phosphor/internal/fsext"
 	"github.com/hackafterdark/phosphor/internal/home"
 	"github.com/hackafterdark/phosphor/internal/lock"
+	memoryui "github.com/hackafterdark/phosphor/internal/memory/ui"
 	"github.com/hackafterdark/phosphor/internal/stringext"
 	"github.com/hackafterdark/phosphor/internal/ui/anim"
 	"github.com/hackafterdark/phosphor/internal/ui/attachments"
@@ -219,6 +220,23 @@ type UI struct {
 	// Cached workspace search progress (refreshed periodically, not every draw).
 	indexProgress     *workspaceindex.IndexProgress
 	indexProgressTime time.Time
+
+	// Cached memory sources for the sidebar panel, keyed to the session they were
+	// read for and refreshed on a throttle rather than per draw, mirroring the
+	// workspace search progress cache directly above.
+	memorySidebar        []memoryui.Source
+	memorySidebarAt      time.Time
+	memorySidebarSession string
+
+	// Throttled cache of the store tallies the Memory panel renders, sharing the
+	// refresh interval of the recalled-sources cache above so a single draw tick
+	// reads the vault at most once.
+	memoryPanel memoryPanelSnapshot
+
+	// Memoized on-demand shared store the TUI opens when the app's startup index is
+	// absent, so a one-shot startup open failure does not leave every memory surface
+	// reporting "off" for the whole session (see (*UI).memoryStore).
+	memFallback memoryFallbackState
 
 	// Cached layout inputs to skip layout recalculation.
 	cachedWidth, cachedHeight int
@@ -2325,6 +2343,26 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			}
 		})
 		m.dialog.CloseFrontDialog()
+	case dialog.ActionRunSlashCommand:
+		m.dialog.CloseFrontDialog()
+		line := strings.TrimSpace(msg.Line)
+		if line == "" {
+			break
+		}
+		if !strings.HasPrefix(line, "/") {
+			line = "/" + line
+		}
+		if cmd := m.handleSlashCommand(line); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+
+	// Memory review dialog messages. The dialog stays presentational: it
+	// names what the reviewer decided, and the vault work rides a command
+	// that re-sends the queue once the store has moved.
+	case dialog.ActionReviewMemory:
+		cmds = append(cmds, m.decideMemoryReview(msg.Item, msg.Decision))
+	case dialog.ActionRefreshMemoryReview:
+		cmds = append(cmds, m.loadMemoryReviewData())
 	default:
 		cmds = append(cmds, util.CmdHandler(msg))
 	}
@@ -2625,13 +2663,15 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 			// Handle completions if open.
 			if m.completionsOpen {
 				isTab := key.Matches(msg, m.keyMap.Tab)
-				// A fully typed, argument-free slash command (for example
-				// '/compact') should run on the first Enter. Without this
-				// bypass the completion popup swallows the keystroke and only
-				// re-inserts the highlighted entry, forcing a second Enter
-				// before the command actually fires.
+				// A fully typed slash command that has somewhere to run should
+				// fire on the first Enter, whether it takes no arguments
+				// ('/compact') or comes with them ('/memory review'). Without
+				// this bypass the completion popup swallows the keystroke and
+				// re-inserts only the highlighted command name, wiping the
+				// arguments the user already typed and forcing a second Enter
+				// that then runs the bare command.
 				if !isTab && key.Matches(msg, m.keyMap.Editor.SendMessage) &&
-					m.slashMode && m.isCompleteSlashCommand(strings.TrimSpace(m.textarea.Value())) {
+					m.slashMode && m.isRunnableSlashCommand(strings.TrimSpace(m.textarea.Value())) {
 					m.closeCompletions()
 				} else {
 					// Accepting a completion must behave identically for Tab and
@@ -4248,6 +4288,7 @@ func (m *UI) registerSlashCommands() {
 		"goal":    m.handleGoalSlashCommand,
 		"name":    m.handleNameSlashCommand,
 		"compact": m.handleCompactSlashCommand,
+		"memory":  m.handleMemorySlashCommand,
 		"pin":     m.handlePinSlashCommand,
 		"stats":   m.handleStatsSlashCommand,
 		"learn":   m.handleLearnSlashCommand,
@@ -4468,6 +4509,41 @@ func (m *UI) isCompleteSlashCommand(value string) bool {
 	return false
 }
 
+// isRunnableSlashCommand reports whether value is a slash command the user has
+// finished typing to the point that Enter should run it now rather than be
+// routed into the completion popup. Two shapes qualify: an argument-free command
+// typed in full (for example '/compact'), and a command that takes arguments
+// with at least one argument token already present (for example
+// '/memory review'). Both resolve to a registered handler, so running them is
+// safe; anything else, including a half-typed name still being completed, is not.
+func (m *UI) isRunnableSlashCommand(value string) bool {
+	if !strings.HasPrefix(value, "/") {
+		return false
+	}
+	parts := strings.Fields(value)
+	if len(parts) == 0 {
+		return false
+	}
+	cmdName := strings.TrimLeft(parts[0], "/")
+	if cmdName == "" {
+		return false
+	}
+	if _, ok := m.slashHandlers[cmdName]; !ok {
+		return false
+	}
+	// More than one field means the user typed past the command name into its
+	// arguments, so the command is as finished as it is going to be.
+	if len(parts) >= 2 {
+		return true
+	}
+	for _, cmd := range commands.GetSlashCommands() {
+		if cmd.Name == cmdName {
+			return len(cmd.Arguments) == 0
+		}
+	}
+	return false
+}
+
 func (m *UI) handleSlashCommand(value string) tea.Cmd {
 	// Check if the value starts with a slash.
 	if !strings.HasPrefix(value, "/") {
@@ -4661,7 +4737,22 @@ func (m *UI) openCommandsDialog() tea.Cmd {
 		goalStatus = m.currentGoal.Status
 	}
 
-	commands, err := dialog.NewCommands(m.com, sessionID, hasSession, hasTodos, hasQueue, goalStatus, m.customCommands, m.mcpPrompts)
+	// Offer the Memory tab whenever the subsystem is reachable. Prefer the live
+	// store the commands themselves use: if it resolved, the tab is unambiguously
+	// useful. Otherwise fall back to config, and when config is unavailable (a nil
+	// or remote workspace) default to the shipped on-by-efault, because a nil config
+	// is not the same thing as an opted-out memory and silently hiding the
+	// diagnostic menu on it is precisely how the section becomes unreachable.
+	hasMemory := m.memoryStore() != nil
+	if !hasMemory {
+		if cfg := m.com.Config(); cfg != nil {
+			hasMemory = cfg.Memory.EnabledOrAuto()
+		} else {
+			hasMemory = true
+		}
+	}
+
+	commands, err := dialog.NewCommands(m.com, sessionID, hasSession, hasTodos, hasQueue, hasMemory, goalStatus, m.customCommands, m.mcpPrompts)
 	if err != nil {
 		return util.ReportError(err)
 	}
