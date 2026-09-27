@@ -83,25 +83,34 @@ func TestWatcherIndexesTouchedFileWithoutAgentWrite(t *testing.T) {
 
 	// The event is the accelerator and the row is the contract, so the row is what
 	// the deadline polls for while the reported paths are accepted along the way.
-	// The assertion stays the promise rather than the OS event scheduler.
+	// The assertion stays the promise rather than the OS event scheduler. Both halves
+	// are waited for: the row reaching the index can happen on the read path's own
+	// SyncIfStale before the debounced rescan has reported the file, so returning the
+	// instant the row is visible would race the report it is meant to assert.
 	deadline := time.Now().Add(20 * time.Second)
 	var saw []string
+	reported := func() bool {
+		return strings.Contains(strings.ToLower(strings.Join(saw, "\n")), strings.ToLower(Slug(id)))
+	}
+	rowSeen := false
 	for time.Now().Before(deadline) {
+		if !rowSeen {
+			list, err := s.Get(context.Background(), id)
+			require.NoError(t, err)
+			rowSeen = len(list) > 0
+		}
+		if rowSeen && reported() {
+			return
+		}
+		// Block briefly on the report rather than only peeking, so a report that lands
+		// just after the row was observed is still collected instead of raced past.
 		select {
 		case cs := <-fired:
 			saw = append(saw, cs...)
-		default:
+		case <-time.After(100 * time.Millisecond):
 		}
-		list, err := s.Get(context.Background(), id)
-		require.NoError(t, err)
-		if len(list) > 0 {
-			require.Contains(t, strings.ToLower(strings.Join(saw, "\n")), strings.ToLower(Slug(id)),
-				"the debounced rescan has to report the file it adopted")
-			return
-		}
-		time.Sleep(100 * time.Millisecond)
 	}
-	t.Fatal("the watcher never adopted a file touched on disk within the deadline")
+	t.Fatal("the watcher never both adopted a file touched on disk and reported it within the deadline")
 }
 
 // TestReindexNeverTrustsHandEditedSystemFields is the field-ownership rule from

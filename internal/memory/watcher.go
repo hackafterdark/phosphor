@@ -159,12 +159,17 @@ func (w *Watcher) flushLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			w.pendingMu.Lock()
+			type dueItem struct {
+				path string
+				seen time.Time
+			}
 			var ready []string
+			var batch []dueItem
+			w.pendingMu.Lock()
 			for path, seen := range w.pending {
 				if time.Since(seen) >= w.debounce {
 					ready = append(ready, path)
-					delete(w.pending, path)
+					batch = append(batch, dueItem{path, seen})
 				}
 			}
 			w.pendingMu.Unlock()
@@ -175,12 +180,30 @@ func (w *Watcher) flushLoop(ctx context.Context) {
 			if err := w.store.Sync(syncCtx); err != nil {
 				otel.RecordError(span, err)
 				span.End()
-				slog.Warn("Memory rescan failed after a vault change", "error", err, "files", len(ready))
+				// A failed rescan is not a correctness loss — the read paths re-check
+				// through SyncIfStale — but it would be a notification loss if the paths
+				// were already dropped from the pending set: the report for a change this
+				// pass never finished adopting would be swallowed forever, since nothing
+				// would re-schedule it. Leave them pending so the next tick retries the
+				// sync and still delivers the report. (A shutdown cancel surfaces here too;
+				// the outer ctx.Done branch ends the loop before the retry fires.)
+				slog.Warn("Memory rescan failed after a vault change; retrying next tick", "error", err, "files", len(ready))
 				continue
 			}
 			span.SetAttributes(attribute.Int("phosphor.memory.files", len(ready)))
 			span.End()
 			slog.Debug("Memory index refreshed after vault edits", "files", len(ready))
+			// Adopted: retire them from the pending set now, and only the files this pass
+			// was for at the stamp it saw them under. A note re-touched during the sync
+			// keeps its fresh stamp, so a stale completion does not silently clear a
+			// change that arrived after this rescan started.
+			w.pendingMu.Lock()
+			for _, d := range batch {
+				if now, ok := w.pending[d.path]; ok && now.Equal(d.seen) {
+					delete(w.pending, d.path)
+				}
+			}
+			w.pendingMu.Unlock()
 			w.notifyMu.Lock()
 			handlers := append([]func([]string){}, w.notify...)
 			w.notifyMu.Unlock()
