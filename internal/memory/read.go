@@ -448,8 +448,12 @@ func (s *Store) rewrite(ctx context.Context, b *bank, id string, fn func(*Entry)
 	return s.Put(ctx, e)
 }
 
-// ThreadSummary is a names-only line for the continuation hint: names and
-// recency, never facts, so the standing t0 cost stays a few dozen tokens.
+// ThreadSummary is one row of the active-thread listing. The names-only
+// continuation hint prints only Thread, Entries, and Touched — never Headline,
+// so the standing t0 cost stays a few dozen tokens and no corpus body rides the
+// every-prompt block. Headline (the thread's hottest summary) is carried for the
+// operator-facing surfaces (/memory status, /memory budget) that opt into the
+// richer line; the hint section must not read it.
 type ThreadSummary struct {
 	Thread   string `db:"thread" json:"thread"`
 	Entries  int64  `db:"n" json:"entries"`

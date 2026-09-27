@@ -266,12 +266,8 @@ func (s *Store) threadHint(ctx context.Context) (string, error) {
 	var sb strings.Builder
 	sb.WriteString("active threads (names only, call memory_search to recall):\n")
 	for _, t := range threads {
-		headline := t.Headline
-		if len(headline) > 60 {
-			headline = headline[:60] + "…"
-		}
-		fmt.Fprintf(&sb, "- %s · %d entries · touched %s · %q\n",
-			t.Thread, t.Entries, humanAge(t.Touched, s.now()), sanitize(oneLine(headline)))
+		fmt.Fprintf(&sb, "- %s \u00b7 %d entries \u00b7 touched %s\n",
+			t.Thread, t.Entries, humanAge(t.Touched, s.now()))
 	}
 	return strings.TrimRight(sb.String(), "\n"), nil
 }
