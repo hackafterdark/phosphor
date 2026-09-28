@@ -16,6 +16,45 @@ Some goals and areas of focus include:
 2. **Structural Awareness:** Integration of tree-sitter to enable AST-aware editing and structural search, allowing agents to understand the shape of the code they modify.
 3. **Observability:** Native OpenTelemetry instrumentation to turn autonomous agent behavior from a black box into an auditable flight recorder.
 
+## Getting Started
+
+First run needs exactly one thing: a model to talk to.
+
+- **Cloud providers** work out of the box. Export the key (`OPENAI_API_KEY`,
+  `ANTHROPIC_API_KEY`, ...) and Phosphor picks the provider up automatically,
+  or authenticate a subscription with `phosphor login` (hyper, copilot).
+- **Local models** (llama.cpp, vLLM, Ollama, LM Studio, anything
+  OpenAI-compatible) are one provider block away:
+
+  ```json
+  {
+    "providers": {
+      "local": {
+        "base_url": "http://localhost:11434/v1",
+        "type": "openai-compat",
+        "api_key": "not-needed",
+        "discover_models": true
+      }
+    },
+    "models": {
+      "large": { "model": "qwen3-32b", "provider": "local" },
+      "small": { "model": "qwen3-32b", "provider": "local" }
+    }
+  }
+  ```
+
+Drop that into your global config — `~/.config/phosphor/phosphor.json` on
+Linux/macOS, `%USERPROFILE%\.config\phosphor\phosphor.json` on Windows — or
+start from the full annotated example at
+[`examples/phosphor.example.json`](examples/phosphor.example.json). Run
+`phosphor dirs` to print the exact paths in use, and `Ctrl+L` inside the TUI to
+switch models.
+
+The [Getting Started & Configuration guide](docs/CONFIGURATION.md) walks
+through config precedence, every configurable section (providers, MCP, LSP,
+permissions, tools, hooks, security, observability, and more) with snippets,
+and troubleshooting.
+
 ## Documentation
 
 The full documentation index lives at [docs/INDEX.md](docs/INDEX.md), covering

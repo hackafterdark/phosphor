@@ -8,6 +8,7 @@ Search it with the `phosphor_docs` tool, or open a file below with the
 
 - [Codebase Indexing](phosphor://docs/CODEBASE_INDEXING.md)
 - [Context Window Compaction (Auto-Summarization)](phosphor://docs/COMPACTION.md)
+- [Getting Started & Configuration](phosphor://docs/CONFIGURATION.md)
 - [Agent Context Chain](phosphor://docs/CONTEXT_CHAIN.md)
 - [Phosphor Core Philosophy](phosphor://docs/CORE_PHILOSOPHY.md)
 - [Chat History Pagination and Performance Configuration](phosphor://docs/HISTORY_LIMIT.md)

@@ -37,7 +37,7 @@ You can configure models either by editing the `phosphor.json` file (global or w
 
 When you use the model selection dialog (opened with `/` → "Switch Model" or `Ctrl+L`), the selected model is saved to the **workspace‑local** configuration file (`<project>/.phosphor/phosphor.json`) under the `models.large` or `models.small` key.
 
-The global configuration (`%APPDATA%\phosphor\phosphor.json` or `$XDG_CONFIG_HOME/phosphor/phosphor.json`) can still be edited manually and provides defaults for workspaces that do not have a local override.
+The global configuration (`$XDG_CONFIG_HOME/phosphor/phosphor.json`, falling back to `~/.config/phosphor/phosphor.json` — on Windows, `%USERPROFILE%\.config\phosphor\phosphor.json`) can still be edited manually and provides defaults for workspaces that do not have a local override.
 
 Workspace‑scoped settings take precedence over global settings.
 
@@ -65,6 +65,63 @@ The `providers` section defines each LLM provider you want to use. Each provider
 | `flat_rate` | bool | No | Skip cost tracking for subscription/flat-rate billing |
 | `discover_models` | bool | No | Auto-discover models from `/v1/models` endpoint (default: `true`) |
 | `models` | array | No | Explicit list of available models (if empty and `discover_models` is true, Phosphor auto-discovers) |
+
+### Model Entry Fields (`models[]`)
+
+Each entry in a provider's `models` array may only carry the keys below —
+they are the JSON tags of `catwalk.Model` / `catwalk.ModelOptions`, and any
+other key is silently ignored. Manage them interactively with `/` →
+**Manage Custom Providers**.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Model id sent to the server |
+| `name` | string | Display name |
+| `cost_per_1m_in` / `cost_per_1m_out` | number | USD per 1M input/output tokens |
+| `cost_per_1m_in_cached` / `cost_per_1m_out_cached` | number | USD per 1M cached tokens |
+| `context_window` | integer | Total context length in tokens |
+| `default_max_tokens` | integer | Default max output tokens |
+| `can_reason` | bool | Model supports thinking/reasoning |
+| `reasoning_levels` | string array | Reasoning effort levels offered by the model |
+| `default_reasoning_effort` | string | Default reasoning effort |
+| `supports_attachments` | bool | Model accepts image/file attachments (this is the correct key — not `supports_images`) |
+| `options.temperature` | number | Default sampling temperature |
+| `options.top_p` / `options.top_k` | number | Nucleus / top-k sampling |
+| `options.frequency_penalty` / `options.presence_penalty` | number | Repetition penalties |
+| `options.provider_options` | object | Passed through to the provider (e.g. `stop`, `repetition_penalty`, vendor extensions) |
+
+**Worked example** (a self-hosted vLLM server on a dedicated box):
+
+```json
+{
+  "providers": {
+    "gx10-vllm": {
+      "name": "GB10-vllm",
+      "type": "openai-compat",
+      "base_url": "http://gx10-f4d4:8888/v1",
+      "api_key": "$GX10_API_KEY",
+      "models": [
+        {
+          "id": "qwen3.8-flash-next",
+          "name": "qwen3.8-flash-next",
+          "context_window": 262144,
+          "supports_attachments": true,
+          "options": {
+            "provider_options": {
+              "repetition_penalty": 1.05
+            }
+          }
+        }
+      ]
+    }
+  }
+}
+```
+
+The nesting above is exactly right: sampling knobs and server-specific
+fields like stop sequences (`provider_options.stop`) belong under
+`options`, while `context_window` and `supports_attachments` sit at the top
+level of the model entry.
 
 ### Provider Types
 

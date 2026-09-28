@@ -76,6 +76,11 @@ type RenderContext struct {
 	Width int
 	// Gap is the gap between content parts. Zero means no gap.
 	Gap int
+	// TitleGap is the number of blank rows inserted between the dialog
+	// title and the subtitle (or the first content part when there is no
+	// subtitle). Dialogs that want a breathier header set this; it stays
+	// opt-in so existing fixed-size dialogs are unaffected.
+	TitleGap int
 	// Title is the title of the dialog. This will be styled using the default
 	// dialog title style and prepended to the content parts slice.
 	Title string
@@ -142,6 +147,9 @@ func (rc *RenderContext) Render() string {
 			title += rc.TitleInfo
 		}
 		parts = append(parts, titleStyle.Render(title))
+		if rc.TitleGap > 0 {
+			parts = append(parts, make([]string, rc.TitleGap)...)
+		}
 		if len(rc.Subtitle) > 0 {
 			subtitleStyle := rc.SubtitleStyle.Width(rc.Width - dialogStyle.GetHorizontalFrameSize())
 			parts = append(parts, subtitleStyle.Render(rc.Subtitle))

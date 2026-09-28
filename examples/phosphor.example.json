@@ -1,0 +1,125 @@
+{
+  "$schema": "https://raw.githubusercontent.com/hackafterdark/phosphor/main/schema.json",
+
+  "providers": {
+    "openai": {
+      "api_key": "$OPENAI_API_KEY",
+      "models": [{ "id": "gpt-4o", "name": "GPT-4o" }]
+    },
+    "anthropic": {
+      "api_key": "$ANTHROPIC_API_KEY",
+      "type": "anthropic",
+      "models": [
+        { "id": "claude-sonnet-4-20250514", "name": "Claude Sonnet 4" },
+        { "id": "claude-haiku-4-5-20251001", "name": "Claude Haiku 4.5" }
+      ]
+    },
+    "local": {
+      "name": "Local Server (Ollama / llama.cpp / vLLM / LM Studio)",
+      "base_url": "http://localhost:11434/v1",
+      "type": "openai-compat",
+      "api_key": "not-needed",
+      "discover_models": true
+    }
+  },
+
+  "models": {
+    "large": {
+      "model": "qwen3-32b",
+      "provider": "local",
+      "temperature": 0.7
+    },
+    "small": {
+      "model": "qwen3-32b",
+      "provider": "local"
+    }
+  },
+
+  "mcp": {
+    "context7": {
+      "command": "npx",
+      "args": ["-y", "@upstash/context7-mcp"],
+      "type": "stdio",
+      "env": {},
+      "timeout": 30
+    }
+  },
+
+  "lsp": {
+    "gopls": {
+      "command": "gopls",
+      "filetypes": ["go", "mod"],
+      "root_markers": ["go.mod"],
+      "timeout": 30
+    }
+  },
+
+  "options": {
+    "context_paths": ["AGENTS.md", "PHOSPHOR.md"],
+    "data_directory": ".phosphor",
+    "summarize_threshold": 0.8,
+    "notification_style": "auto",
+    "disabled_tools": [],
+    "tui": {
+      "theme": "pantera",
+      "diff_mode": "unified",
+      "history_limit": 100
+    },
+    "agent": {
+      "enable_reflection": false,
+      "max_turns": 0
+    }
+  },
+
+  "permissions": {
+    "allowed_tools": ["view", "grep", "glob", "ls", "structural_search"]
+  },
+
+  "tools": {
+    "bash": {
+      "allow_inline_execution": false,
+      "banned_commands": []
+    },
+    "web_fetch": {
+      "ip_allow_list": [],
+      "allow_raw_ips": false
+    },
+    "ls": { "max_depth": 10, "max_items": 1000 },
+    "grep": { "timeout": 5000000000 }
+  },
+
+  "hooks": {},
+
+  "logging": {
+    "enabled": false,
+    "level": "info",
+    "max_size_mb": 10,
+    "max_age_days": 30,
+    "max_backups": 0,
+    "compress": false
+  },
+
+  "services": {
+    "cron": { "enabled": false, "jobs_directory": ".phosphor/jobs" }
+  },
+
+  "workspace_search": {
+    "fulltext": {
+      "enabled": true,
+      "auto_index": true,
+      "exclude_patterns": ["node_modules/**", "dist/**"],
+      "max_file_size": 1048576
+    },
+    "vector_embeddings": {
+      "enabled": false,
+      "auto_index": false
+    }
+  },
+
+  "memory": {
+    "enabled": true,
+    "ask": "balanced",
+    "proactive_recall": "hint",
+    "max_inject_bytes": 8192
+  }
+}

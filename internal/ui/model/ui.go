@@ -1927,6 +1927,14 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			cmds = append(cmds, cmd)
 		}
 		m.dialog.CloseDialog(dialog.CommandsID)
+	case dialog.ActionSetupProvider:
+		cmds = append(cmds, m.setupProvider(msg))
+	case dialog.ActionDeleteProvider:
+		cmds = append(cmds, m.deleteCustomProvider(msg))
+	case dialog.ActionUpdateProviderField:
+		cmds = append(cmds, m.updateProviderField(msg))
+	case dialog.ActionUpdateProviderModels:
+		cmds = append(cmds, m.updateProviderModels(msg))
 	case dialog.ActionSummarize:
 		if m.isAgentBusy() {
 			cmds = append(cmds, util.ReportWarn("Agent is busy, please wait before summarizing session..."))
@@ -4660,6 +4668,14 @@ func (m *UI) openDialog(id string) tea.Cmd {
 		if cmd := m.openWorkspaceIndexDialog(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
+	case dialog.ProviderWizardID:
+		if cmd := m.openProviderWizardDialog(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	case dialog.ProviderManagerID:
+		if cmd := m.openProviderManagerDialog(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 	default:
 		// Unknown dialog
 		break
@@ -4713,6 +4729,141 @@ func (m *UI) openModelsDialog() tea.Cmd {
 
 	m.dialog.OpenDialog(modelsDialog)
 
+	return nil
+}
+
+// openProviderWizardDialog opens the custom provider setup wizard.
+func (m *UI) openProviderWizardDialog() tea.Cmd {
+	if m.dialog.ContainsDialog(dialog.ProviderWizardID) {
+		// Bring to front
+		m.dialog.BringToFront(dialog.ProviderWizardID)
+		return nil
+	}
+
+	m.dialog.OpenDialog(dialog.NewProviderWizard(m.com))
+
+	return nil
+}
+
+// setupProvider persists a wizard-collected custom provider to the global
+// config. Each write auto-reloads the store, so the provider is available
+// in the switch-model dialog as soon as the last field lands.
+func (m *UI) setupProvider(msg dialog.ActionSetupProvider) tea.Cmd {
+	ws := m.com.Workspace
+	if ws == nil {
+		return util.ReportError(fmt.Errorf("no workspace available to save the provider"))
+	}
+
+	models := make([]map[string]any, 0, len(msg.Models))
+	for _, id := range msg.Models {
+		models = append(models, map[string]any{"id": id, "name": id})
+	}
+
+	type configField struct {
+		key   string
+		value any
+	}
+	fields := []configField{
+		{fmt.Sprintf("providers.%s.name", msg.ProviderID), msg.ProviderID},
+		{fmt.Sprintf("providers.%s.type", msg.ProviderID), "openai-compat"},
+		{fmt.Sprintf("providers.%s.base_url", msg.ProviderID), msg.BaseURL},
+		{fmt.Sprintf("providers.%s.models", msg.ProviderID), models},
+	}
+	if msg.APIKey != "" {
+		fields = append(fields, configField{
+			fmt.Sprintf("providers.%s.api_key", msg.ProviderID), msg.APIKey,
+		})
+	}
+
+	for _, f := range fields {
+		if err := ws.SetConfigField(config.ScopeGlobal, f.key, f.value); err != nil {
+			return util.ReportError(fmt.Errorf("failed to save provider %q: %w", msg.ProviderID, err))
+		}
+	}
+
+	m.dialog.CloseDialog(dialog.ProviderWizardID)
+	return util.ReportInfo(fmt.Sprintf(
+		"Provider %q (%s) added to the global config. Press Ctrl+L to switch models.",
+		msg.ProviderID, msg.BaseURL,
+	))
+}
+
+// openProviderManagerDialog opens the custom provider management dialog.
+func (m *UI) openProviderManagerDialog() tea.Cmd {
+	if m.dialog.ContainsDialog(dialog.ProviderManagerID) {
+		// Bring to front
+		m.dialog.BringToFront(dialog.ProviderManagerID)
+		return nil
+	}
+
+	m.dialog.OpenDialog(dialog.NewProviderManager(m.com))
+
+	return nil
+}
+
+// deleteCustomProvider removes a custom provider from every config file
+// the app can write. If the entry also lives in the hand-edited global
+// config file (which the app never writes), the user is told to remove it
+// there as well.
+func (m *UI) deleteCustomProvider(msg dialog.ActionDeleteProvider) tea.Cmd {
+	ws := m.com.Workspace
+	if ws == nil {
+		return util.ReportError(fmt.Errorf("no workspace available to remove the provider"))
+	}
+
+	key := "providers." + msg.ProviderID
+	if err := ws.RemoveConfigField(config.ScopeGlobal, key); err != nil {
+		return util.ReportError(fmt.Errorf("failed to remove provider %q: %w", msg.ProviderID, err))
+	}
+	if msg.Scope == config.ScopeWorkspace {
+		if err := ws.RemoveConfigField(config.ScopeWorkspace, key); err != nil {
+			return util.ReportError(fmt.Errorf("failed to remove provider %q: %w", msg.ProviderID, err))
+		}
+	}
+
+	if slices.Contains(msg.Sources, config.GlobalConfig()) {
+		return util.ReportWarn(fmt.Sprintf(
+			"Provider %q removed from the app config, but it is still defined in %s - remove it there to delete it completely.",
+			msg.ProviderID, config.GlobalConfig(),
+		))
+	}
+	return util.ReportInfo(fmt.Sprintf("Provider %q removed.", msg.ProviderID))
+}
+
+// updateProviderField writes a single provider-level field collected by
+// the provider manager. A nil Value removes the field.
+func (m *UI) updateProviderField(msg dialog.ActionUpdateProviderField) tea.Cmd {
+	ws := m.com.Workspace
+	if ws == nil {
+		return util.ReportError(fmt.Errorf("no workspace available to save the provider"))
+	}
+
+	key := fmt.Sprintf("providers.%s.%s", msg.ProviderID, msg.Key)
+	var err error
+	if msg.Value == nil {
+		err = ws.RemoveConfigField(msg.Scope, key)
+	} else {
+		err = ws.SetConfigField(msg.Scope, key, msg.Value)
+	}
+	if err != nil {
+		return util.ReportError(fmt.Errorf("failed to update provider %q: %w", msg.ProviderID, err))
+	}
+	return nil
+}
+
+// updateProviderModels replaces the whole models array of a provider. The
+// manager preserves unknown keys, so this round-trips user-authored model
+// entries without loss.
+func (m *UI) updateProviderModels(msg dialog.ActionUpdateProviderModels) tea.Cmd {
+	ws := m.com.Workspace
+	if ws == nil {
+		return util.ReportError(fmt.Errorf("no workspace available to save the models"))
+	}
+
+	key := fmt.Sprintf("providers.%s.models", msg.ProviderID)
+	if err := ws.SetConfigField(msg.Scope, key, msg.Models); err != nil {
+		return util.ReportError(fmt.Errorf("failed to update models for provider %q: %w", msg.ProviderID, err))
+	}
 	return nil
 }
 
