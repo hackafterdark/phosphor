@@ -658,3 +658,127 @@ func TestDeduplicateReasoning(t *testing.T) {
 		}
 	})
 }
+
+func TestStripContinuationChainReasoning(t *testing.T) {
+	t.Run("single trailing assistant message returns unchanged", func(t *testing.T) {
+		msgs := []fantasy.Message{
+			{Role: fantasy.MessageRoleUser, Content: []fantasy.MessagePart{fantasy.TextPart{Text: "hello"}}},
+			{
+				Role:    fantasy.MessageRoleAssistant,
+				Content: []fantasy.MessagePart{fantasy.ReasoningPart{Text: "thinking..."}, fantasy.TextPart{Text: "partial"}},
+			},
+		}
+		result := stripContinuationChainReasoning(msgs)
+		if len(result[1].Content) != 2 {
+			t.Errorf("expected the lone trailing assistant message to keep its reasoning, got %d parts", len(result[1].Content))
+		}
+	})
+
+	t.Run("multiple trailing assistant messages have reasoning stripped, text and tool calls kept", func(t *testing.T) {
+		msgs := []fantasy.Message{
+			{Role: fantasy.MessageRoleUser, Content: []fantasy.MessagePart{fantasy.TextPart{Text: "build the thing"}}},
+			{
+				Role: fantasy.MessageRoleAssistant,
+				Content: []fantasy.MessagePart{
+					fantasy.ReasoningPart{Text: "let me plan this out at length..."},
+					fantasy.ToolCallPart{ToolCallID: "call-1", ToolName: "write"},
+				},
+			},
+			{
+				Role: fantasy.MessageRoleAssistant,
+				Content: []fantasy.MessagePart{
+					fantasy.ReasoningPart{Text: "let me re-plan this out at length again..."},
+					fantasy.TextPart{Text: "continuing the file"},
+				},
+			},
+		}
+		result := stripContinuationChainReasoning(msgs)
+		if len(result[1].Content) != 1 {
+			t.Fatalf("expected first attempt to keep only its tool call, got %d parts", len(result[1].Content))
+		}
+		if _, ok := fantasy.AsMessagePart[fantasy.ToolCallPart](result[1].Content[0]); !ok {
+			t.Error("expected first attempt's surviving part to be the tool call")
+		}
+		if len(result[2].Content) != 1 {
+			t.Fatalf("expected second attempt to keep only its text, got %d parts", len(result[2].Content))
+		}
+		if _, ok := fantasy.AsMessagePart[fantasy.TextPart](result[2].Content[0]); !ok {
+			t.Error("expected second attempt's surviving part to be the text")
+		}
+		// The user message before the chain must be untouched.
+		if len(result[0].Content) != 1 {
+			t.Error("expected the user message to be untouched")
+		}
+	})
+
+	t.Run("an all-reasoning attempt is never stripped down to nothing", func(t *testing.T) {
+		// Regression test: this is the confirmed live failure. An attempt
+		// that spent its whole budget thinking and produced no other
+		// content must not end up with zero parts, or the model concludes
+		// no attempt happened and restarts identically forever.
+		msgs := []fantasy.Message{
+			{Role: fantasy.MessageRoleUser, Content: []fantasy.MessagePart{fantasy.TextPart{Text: "build the thing"}}},
+			{
+				Role:    fantasy.MessageRoleAssistant,
+				Content: []fantasy.MessagePart{fantasy.ReasoningPart{Text: "thinking, thinking, still thinking..."}},
+			},
+			{
+				Role:    fantasy.MessageRoleAssistant,
+				Content: []fantasy.MessagePart{fantasy.ReasoningPart{Text: "thinking some more..."}},
+			},
+		}
+		result := stripContinuationChainReasoning(msgs)
+		for i := 1; i <= 2; i++ {
+			if len(result[i].Content) == 0 {
+				t.Fatalf("attempt %d must not be stripped down to zero content parts", i)
+			}
+			if _, ok := fantasy.AsMessagePart[fantasy.ReasoningPart](result[i].Content[0]); ok {
+				t.Errorf("attempt %d: expected the reasoning part to be replaced, not left as-is", i)
+			}
+			text, ok := fantasy.AsMessagePart[fantasy.TextPart](result[i].Content[0])
+			if !ok {
+				t.Fatalf("attempt %d: expected a marker text part, got %T", i, result[i].Content[0])
+			}
+			if text.Text == "" {
+				t.Errorf("attempt %d: expected a non-empty marker", i)
+			}
+		}
+	})
+
+	t.Run("a tool message in between breaks the chain and is not touched", func(t *testing.T) {
+		msgs := []fantasy.Message{
+			{Role: fantasy.MessageRoleUser, Content: []fantasy.MessagePart{fantasy.TextPart{Text: "build the thing"}}},
+			{
+				Role:    fantasy.MessageRoleAssistant,
+				Content: []fantasy.MessagePart{fantasy.ReasoningPart{Text: "normal turn reasoning"}, fantasy.ToolCallPart{ToolCallID: "call-1"}},
+			},
+			{
+				Role: fantasy.MessageRoleTool,
+				Content: []fantasy.MessagePart{fantasy.ToolResultPart{
+					ToolCallID: "call-1",
+					Output:     fantasy.ToolResultOutputContentText{Text: "ok"},
+				}},
+			},
+			{
+				Role:    fantasy.MessageRoleAssistant,
+				Content: []fantasy.MessagePart{fantasy.ReasoningPart{Text: "thinking about the final answer"}, fantasy.TextPart{Text: "done"}},
+			},
+		}
+		result := stripContinuationChainReasoning(msgs)
+		// Only one trailing assistant message (after the tool message), so
+		// nothing in this ordinary tool-call turn should be stripped.
+		if len(result[1].Content) != 2 {
+			t.Errorf("expected the pre-tool-call assistant message untouched, got %d parts", len(result[1].Content))
+		}
+		if len(result[3].Content) != 2 {
+			t.Errorf("expected the final assistant message untouched, got %d parts", len(result[3].Content))
+		}
+	})
+
+	t.Run("no messages returns unchanged", func(t *testing.T) {
+		result := stripContinuationChainReasoning(nil)
+		if len(result) != 0 {
+			t.Error("expected empty input to return empty")
+		}
+	})
+}

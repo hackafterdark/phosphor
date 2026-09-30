@@ -335,6 +335,7 @@ The catch-all for app behavior. Highlights:
       "active_profile": "default",
       "enable_reflection": true,
       "max_turns": 60,
+      "max_tokens_continuations": 2,
       "structural_search_languages": ["go", "typescript"]
     }
   }
@@ -350,6 +351,13 @@ The catch-all for app behavior. Highlights:
   auto-compaction ([details](COMPACTION.md)).
 - `agent.max_turns` — hard cap on tool-use turns per prompt, a guardrail against
   runaway loops.
+- `agent.max_tokens_continuations` — how many times the agent automatically
+  resumes a turn that got cut off because it ran out of its output/thinking
+  token budget (`0` = default of 2, negative = unlimited). Each continuation
+  is a full extra model call, so raise this if long single-response tasks
+  (e.g. generating one large file) keep truncating, or lower/disable it if
+  you rely on a low `max_tokens` for cost control and would rather see the
+  truncation than pay for a retry.
 
 `options.tui` handles look-and-feel:
 

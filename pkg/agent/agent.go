@@ -155,6 +155,7 @@ type SessionAgent interface {
 	SetTools(tools []fantasy.AgentTool)
 	SetSystemPrompt(systemPrompt string)
 	SetReflection(enabled bool, maxTurns int)
+	SetMaxTokensContinuations(maxContinuations int)
 	Cancel(sessionID string)
 	CancelAll()
 	IsSessionBusy(sessionID string) bool
@@ -225,6 +226,11 @@ type sessionAgent struct {
 	reflectionEnabled  *csync.Value[bool]
 	maxReflectionTurns *csync.Value[int]
 
+	// maxTokensContinuations bounds the automatic continuations after a step
+	// ends with FinishReasonMaxTokens (see runid.go). Independent of the
+	// reflection budget above and the forced-stop budget in Run.
+	maxTokensContinuations *csync.Value[int]
+
 	messageQueue   *csync.Map[string, []SessionAgentCall]
 	activeRequests *csync.Map[string, context.CancelFunc]
 
@@ -267,25 +273,26 @@ type sessionAgent struct {
 }
 
 type SessionAgentOptions struct {
-	LargeModel            Model
-	SmallModel            Model
-	SystemPromptPrefix    string
-	SystemPrompt          string
-	IsSubAgent            bool
-	DisableAutoSummarize  bool
-	SummarizeThreshold    float64
-	IsYolo                bool
-	RedactOutgoingSecrets bool
-	RedactOutgoingPII     bool
-	WireSecretsForced     bool
-	Sessions              session.Service
-	Messages              message.Service
-	GoalService           goal.Service
-	Tools                 []fantasy.AgentTool
-	Notify                pubsub.Publisher[notify.Notification]
-	RunComplete           pubsub.Publisher[notify.RunComplete]
-	ReflectionEnabled     bool
-	MaxReflectionTurns    int
+	LargeModel             Model
+	SmallModel             Model
+	SystemPromptPrefix     string
+	SystemPrompt           string
+	IsSubAgent             bool
+	DisableAutoSummarize   bool
+	SummarizeThreshold     float64
+	IsYolo                 bool
+	RedactOutgoingSecrets  bool
+	RedactOutgoingPII      bool
+	WireSecretsForced      bool
+	Sessions               session.Service
+	Messages               message.Service
+	GoalService            goal.Service
+	Tools                  []fantasy.AgentTool
+	Notify                 pubsub.Publisher[notify.Notification]
+	RunComplete            pubsub.Publisher[notify.RunComplete]
+	ReflectionEnabled      bool
+	MaxReflectionTurns     int
+	MaxTokensContinuations int
 	// WorkingDir is the workspace the post-turn hooks and the memory vault run from.
 	WorkingDir string
 	// PostTurnHooks are the hooks registered for the Stop event; nil or empty means
@@ -311,37 +318,38 @@ func NewSessionAgent(
 	opts SessionAgentOptions,
 ) SessionAgent {
 	result := &sessionAgent{
-		largeModel:            csync.NewValue(opts.LargeModel),
-		smallModel:            csync.NewValue(opts.SmallModel),
-		systemPromptPrefix:    csync.NewValue(opts.SystemPromptPrefix),
-		systemPrompt:          csync.NewValue(opts.SystemPrompt),
-		isSubAgent:            opts.IsSubAgent,
-		sessions:              opts.Sessions,
-		messages:              opts.Messages,
-		goalService:           opts.GoalService,
-		disableAutoSummarize:  opts.DisableAutoSummarize,
-		summarizeThreshold:    opts.SummarizeThreshold,
-		tools:                 csync.NewSliceFrom(opts.Tools),
-		isYolo:                opts.IsYolo,
-		redactOutgoingSecrets: opts.RedactOutgoingSecrets,
-		redactOutgoingPII:     opts.RedactOutgoingPII,
-		wireSecretsForced:     opts.WireSecretsForced,
-		notify:                opts.Notify,
-		runComplete:           opts.RunComplete,
-		reflectionEnabled:     csync.NewValue(opts.ReflectionEnabled),
-		maxReflectionTurns:    csync.NewValue(opts.MaxReflectionTurns),
-		workingDir:            opts.WorkingDir,
-		memoryEnabled:         opts.MemoryEnabled,
-		memoryDistill:         opts.MemoryDistill,
-		memoryRateFloorPct:    opts.MemoryRateFloorPct,
-		permissions:           opts.Permissions,
-		cfg:                   opts.Config,
-		pendingNotes:          csync.NewMap[string, string](),
-		messageQueue:          csync.NewMap[string, []SessionAgentCall](),
-		activeRequests:        csync.NewMap[string, context.CancelFunc](),
-		dispatchMu:            csync.NewMap[string, *sync.Mutex](),
-		acceptedRuns:          csync.NewMap[string, int](),
-		cancelMark:            csync.NewMap[string, uint64](),
+		largeModel:             csync.NewValue(opts.LargeModel),
+		smallModel:             csync.NewValue(opts.SmallModel),
+		systemPromptPrefix:     csync.NewValue(opts.SystemPromptPrefix),
+		systemPrompt:           csync.NewValue(opts.SystemPrompt),
+		isSubAgent:             opts.IsSubAgent,
+		sessions:               opts.Sessions,
+		messages:               opts.Messages,
+		goalService:            opts.GoalService,
+		disableAutoSummarize:   opts.DisableAutoSummarize,
+		summarizeThreshold:     opts.SummarizeThreshold,
+		tools:                  csync.NewSliceFrom(opts.Tools),
+		isYolo:                 opts.IsYolo,
+		redactOutgoingSecrets:  opts.RedactOutgoingSecrets,
+		redactOutgoingPII:      opts.RedactOutgoingPII,
+		wireSecretsForced:      opts.WireSecretsForced,
+		notify:                 opts.Notify,
+		runComplete:            opts.RunComplete,
+		reflectionEnabled:      csync.NewValue(opts.ReflectionEnabled),
+		maxReflectionTurns:     csync.NewValue(opts.MaxReflectionTurns),
+		maxTokensContinuations: csync.NewValue(opts.MaxTokensContinuations),
+		workingDir:             opts.WorkingDir,
+		memoryEnabled:          opts.MemoryEnabled,
+		memoryDistill:          opts.MemoryDistill,
+		memoryRateFloorPct:     opts.MemoryRateFloorPct,
+		permissions:            opts.Permissions,
+		cfg:                    opts.Config,
+		pendingNotes:           csync.NewMap[string, string](),
+		messageQueue:           csync.NewMap[string, []SessionAgentCall](),
+		activeRequests:         csync.NewMap[string, context.CancelFunc](),
+		dispatchMu:             csync.NewMap[string, *sync.Mutex](),
+		acceptedRuns:           csync.NewMap[string, int](),
+		cancelMark:             csync.NewMap[string, uint64](),
 	}
 	// The post-turn events only cost anything when a user configured a hook for them,
 	// so the runners stay nil otherwise and an unused event pays nothing.
@@ -684,6 +692,10 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 	// continuations this turn has already spent recovering from a step the
 	// inference engine cut off mid-generation (see sawRawControlToken below).
 	forcedStopContinuationsUsed := forcedStopContinuationsFromContext(ctx)
+	// maxTokensContinuationsUsed is the sibling budget for a step that ended
+	// on FinishReasonMaxTokens (ran out of token/thinking budget) instead of
+	// a forced ChatML stop. Kept as an independent counter/cap (see runid.go).
+	maxTokensContinuationsUsed := maxTokensContinuationsFromContext(ctx)
 	slog.Info("SessionAgent.Run called", "session_id", call.SessionID, "temp", call.Temperature, "rep_pen", call.RepetitionPenalty)
 	if err := ValidateCall(call); err != nil {
 		return nil, err
@@ -743,7 +755,14 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 		userMsgCreated   bool
 	)
 
-	if call.Accepted != nil {
+	// An internal recursive continuation (reflection, forced-stop recovery, or
+	// a token-budget continuation) must skip the accepted/busy dispatch gate
+	// entirely: the outer Run invocation about to recurse into this one is
+	// still, as far as that gate is concerned, the active run for this
+	// session (its own deferred cleanup has not run yet), so the busy check
+	// would otherwise silently re-queue this call forever. See
+	// isInternalContinuation's doc comment in runid.go.
+	if call.Accepted != nil && !isInternalContinuation(ctx) {
 		// Serialize the accepted -> (cancel-on-entry | queued |
 		// active) transition against a concurrent Cancel. Cancel takes
 		// the same per-session lock, so every cancel observes at least
@@ -805,7 +824,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 
 		defer cancel()
 		defer a.activeRequests.Del(call.SessionID)
-	} else if a.IsSessionBusy(call.SessionID) {
+	} else if !isInternalContinuation(ctx) && a.IsSessionBusy(call.SessionID) {
 		// Queue the message if busy. Strip OnComplete: the caller that
 		// supplied the hook (typically coordinator.Run) has its own
 		// retry/coalesce scope that ends when it returns, so by the time
@@ -1587,7 +1606,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 			slog.Warn("Step ended on a raw ChatML control token mid-generation, queueing an automatic continuation",
 				"session_id", call.SessionID, "attempt", forcedStopContinuationsUsed+1, "max", defaultMaxForcedStopContinuations)
 			if !call.IsStateless {
-				a.queueNote(call.SessionID, "Your previous response was cut off mid-generation because the inference engine treated a control token you produced as its end-of-turn signal. Continue exactly where you left off - do not repeat or restate anything you already said. Do not attempt to reconstruct, spell out, or discuss the raw token that caused this, even to explain what happened; refer to it only by its bracket form if you must mention it at all.")
+				a.queueNote(call.SessionID, "Your previous response was cut off mid-generation because the inference engine treated a control token you produced as its end-of-turn signal. Continue exactly where you left off - do not repeat or restate anything you already said, and do not re-explain or re-derive your approach from scratch. Do not attempt to reconstruct, spell out, or discuss the raw token that caused this, even to explain what happened; refer to it only by its bracket form if you must mention it at all.")
 			}
 			// Re-run with the nudge riding its system block, and with the spent
 			// budget visible to the nested call so the cap holds for the turn.
@@ -1595,6 +1614,30 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 		}
 		slog.Warn("Forced-stop continuation budget exhausted, completing the turn as cut off",
 			"used", forcedStopContinuationsUsed, "max", defaultMaxForcedStopContinuations)
+	}
+
+	// After Stream returns, check whether the step that ended the run ran out
+	// of its token/thinking budget (FinishReasonMaxTokens) rather than a raw
+	// control token forcing an early stop. Unlike sawRawControlToken above,
+	// this is an unambiguous signal fantasy already surfaces directly — no
+	// fingerprint needed — but running out of a configured token budget can
+	// be a deliberate operator constraint (cost control), so its retry budget
+	// is independently configured (AgentConfig.MaxTokensContinuations) rather
+	// than borrowing the forced-stop cap.
+	if err == nil && currentAssistant != nil && currentAssistant.FinishReason() == message.FinishReasonMaxTokens {
+		continuationCap := effectiveMaxTokensContinuations(a.maxTokensContinuations.Get())
+		if continuationCap < 0 || maxTokensContinuationsUsed < continuationCap {
+			slog.Warn("Step ended on its token/thinking budget, queueing an automatic continuation",
+				"session_id", call.SessionID, "attempt", maxTokensContinuationsUsed+1, "max", continuationCap)
+			if !call.IsStateless {
+				a.queueNote(call.SessionID, "Your previous response was cut off because it reached its token budget mid-generation. Continue exactly where you left off - do not repeat or restate anything you already said. Do not re-explain, re-plan, or re-derive your approach from scratch: you already worked that out above, and it is still visible to you. Do not open a new extended reasoning section that goes back over the same ground. Go straight to producing the remaining output.")
+			}
+			// Re-run with the nudge riding its system block, and with the spent
+			// budget visible to the nested call so the cap holds for the turn.
+			return a.Run(withMaxTokensContinuations(ctx, maxTokensContinuationsUsed+1), call)
+		}
+		slog.Warn("Max-tokens continuation budget exhausted, completing the turn as cut off",
+			"used", maxTokensContinuationsUsed, "max", continuationCap)
 	}
 
 	if err == nil && !call.IsStateless {
@@ -2248,6 +2291,14 @@ func (a *sessionAgent) preparePrompt(ctx context.Context, msgs []message.Message
 	// duplicates from subsequent messages.
 	history = a.deduplicateReasoning(history)
 
+	// Recovering from an interrupted step (forced-stop or token-budget
+	// continuation) stacks several assistant messages with no message
+	// between them, one per attempt. Strip their reasoning before it is
+	// resent — see stripContinuationChainReasoning's doc comment.
+	if isInternalContinuation(ctx) {
+		history = stripContinuationChainReasoning(history)
+	}
+
 	var files []fantasy.FilePart
 	var textAttachments []string
 	slog.Info("preparePrompt: processing attachments",
@@ -2331,6 +2382,71 @@ func (a *sessionAgent) deduplicateReasoning(messages []fantasy.Message) []fantas
 		messages[i].Content = kept
 	}
 
+	return messages
+}
+
+// stripContinuationChainReasoning drops reasoning content from the trailing
+// run of consecutive assistant messages that have no intervening user or
+// tool message between them. That shape only occurs mid-recovery:
+// sessionAgent.Run creates a brand new assistant message for every
+// continuation attempt (forced-stop or token-budget recovery — see
+// isInternalContinuation), so a turn that needed several attempts looks like
+// multiple assistant messages stacked directly on top of each other with
+// nothing in between.
+//
+// Resending every attempt's full reasoning primes the model to re-derive a
+// similar plan instead of continuing past it — observed live as near-
+// identical reasoning across attempts on a task big enough to need several
+// continuations — and compounds context usage further on every subsequent
+// continuation, since each one resends every earlier attempt's reasoning too.
+// Only the reasoning parts are dropped; each attempt's actual text and tool
+// calls are preserved untouched, since that is the real forward progress a
+// continuation is meant to build on.
+//
+// An attempt that spent its entire budget thinking and produced no other
+// content is never stripped down to nothing: doing so once produced a
+// confirmed live infinite loop. With every prior attempt reduced to a
+// completely empty message, the model could no longer tell any attempt had
+// happened at all and concluded the user must have resent the original
+// prompt from scratch — verified directly from stored message content,
+// where four consecutive continuations all opened with "The user resent the
+// same task..." and hit the same token wall at a near-identical byte length,
+// forever. Such an attempt keeps a short synthetic marker instead, so the
+// model can tell an attempt happened and ran out of room without resending
+// the full block.
+func stripContinuationChainReasoning(messages []fantasy.Message) []fantasy.Message {
+	start := len(messages)
+	for start > 0 && messages[start-1].Role == fantasy.MessageRoleAssistant {
+		start--
+	}
+	if len(messages)-start < 2 {
+		// Zero or one trailing assistant message: no prior attempt in this
+		// chain to strip reasoning from.
+		return messages
+	}
+	for i := start; i < len(messages); i++ {
+		var kept []fantasy.MessagePart
+		var strippedReasoning string
+		for _, part := range messages[i].Content {
+			if rp, ok := fantasy.AsMessagePart[fantasy.ReasoningPart](part); ok {
+				if rp.Text != "" {
+					strippedReasoning = rp.Text
+				}
+				continue
+			}
+			kept = append(kept, part)
+		}
+		if len(kept) == 0 && strippedReasoning != "" {
+			snippet := strippedReasoning
+			if len(snippet) > 400 {
+				snippet = snippet[len(snippet)-400:]
+			}
+			kept = []fantasy.MessagePart{fantasy.TextPart{
+				Text: "[This attempt used its entire token budget thinking and was cut off before producing any other output. Last words before the cutoff: \"" + snippet + "\"]",
+			}}
+		}
+		messages[i].Content = kept
+	}
 	return messages
 }
 
@@ -2864,6 +2980,10 @@ func (a *sessionAgent) SetSystemPrompt(systemPrompt string) {
 func (a *sessionAgent) SetReflection(enabled bool, maxTurns int) {
 	a.reflectionEnabled.Set(enabled)
 	a.maxReflectionTurns.Set(maxTurns)
+}
+
+func (a *sessionAgent) SetMaxTokensContinuations(maxContinuations int) {
+	a.maxTokensContinuations.Set(maxContinuations)
 }
 
 func (a *sessionAgent) Model() Model {

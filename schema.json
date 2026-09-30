@@ -20,6 +20,11 @@
           "description": "Maximum number of tool-use turns per prompt (0 = unlimited)",
           "default": 0
         },
+        "max_tokens_continuations": {
+          "type": "integer",
+          "description": "Maximum automatic continuations after a step hits its token/thinking budget mid-generation (0 = default 2, negative = unlimited)",
+          "default": 0
+        },
         "max_continuations": {
           "type": "integer",
           "description": "Maximum number of goal continuation turns before the goal is auto-paused for review (0 = default 25",

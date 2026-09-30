@@ -908,8 +908,9 @@ func (c *coordinator) buildAgent(ctx context.Context, prompt *prompt.Prompt, age
 
 	largeProviderCfg, _ := c.cfg.Config().Providers.Get(large.ModelCfg.Provider)
 	var (
-		reflectionEnabled  bool
-		maxReflectionTurns int
+		reflectionEnabled      bool
+		maxReflectionTurns     int
+		maxTokensContinuations int
 	)
 	if c.cfg.ActiveProfile() == "fiduciary" {
 		reflectionEnabled = true
@@ -918,6 +919,7 @@ func (c *coordinator) buildAgent(ctx context.Context, prompt *prompt.Prompt, age
 	}
 	if c.cfg.Config().Options.Agent != nil {
 		maxReflectionTurns = c.cfg.Config().Options.Agent.MaxTurns
+		maxTokensContinuations = c.cfg.Config().Options.Agent.MaxTokensContinuations
 	}
 
 	sec := c.cfg.Config().Security
@@ -984,33 +986,34 @@ func (c *coordinator) buildAgent(ctx context.Context, prompt *prompt.Prompt, age
 	}
 
 	result := NewSessionAgent(SessionAgentOptions{
-		LargeModel:            large,
-		SmallModel:            small,
-		SystemPromptPrefix:    largeProviderCfg.SystemPromptPrefix,
-		SystemPrompt:          "",
-		IsSubAgent:            isSubAgent,
-		DisableAutoSummarize:  c.cfg.Config().Options.DisableAutoSummarize,
-		SummarizeThreshold:    c.cfg.Config().Options.SummarizeThreshold,
-		IsYolo:                c.permissions.SkipRequests(),
-		Sessions:              c.sessions,
-		Messages:              c.messages,
-		GoalService:           c.goalService,
-		Tools:                 nil,
-		Notify:                c.notify,
-		RunComplete:           c.runComplete,
-		ReflectionEnabled:     reflectionEnabled,
-		MaxReflectionTurns:    maxReflectionTurns,
-		RedactOutgoingSecrets: redactOutgoingSecrets,
-		RedactOutgoingPII:     redactOutgoingPII,
-		WireSecretsForced:     wireSecretsForced,
-		WorkingDir:            c.cfg.WorkingDir(),
-		PostTurnHooks:         c.cfg.Config().Hooks[hooks.EventStop],
-		SessionEndHooks:       c.cfg.Config().Hooks[hooks.EventSessionEnd],
-		MemoryEnabled:         memorytools.Enabled(c.cfg),
-		MemoryDistill:         memorytools.DistillEnabled(c.cfg),
-		MemoryRateFloorPct:    memorytools.Policy(c.cfg).RateLimitFloorPct,
-		Permissions:           c.permissions,
-		Config:                c.cfg,
+		LargeModel:             large,
+		SmallModel:             small,
+		SystemPromptPrefix:     largeProviderCfg.SystemPromptPrefix,
+		SystemPrompt:           "",
+		IsSubAgent:             isSubAgent,
+		DisableAutoSummarize:   c.cfg.Config().Options.DisableAutoSummarize,
+		SummarizeThreshold:     c.cfg.Config().Options.SummarizeThreshold,
+		IsYolo:                 c.permissions.SkipRequests(),
+		Sessions:               c.sessions,
+		Messages:               c.messages,
+		GoalService:            c.goalService,
+		Tools:                  nil,
+		Notify:                 c.notify,
+		RunComplete:            c.runComplete,
+		ReflectionEnabled:      reflectionEnabled,
+		MaxReflectionTurns:     maxReflectionTurns,
+		MaxTokensContinuations: maxTokensContinuations,
+		RedactOutgoingSecrets:  redactOutgoingSecrets,
+		RedactOutgoingPII:      redactOutgoingPII,
+		WireSecretsForced:      wireSecretsForced,
+		WorkingDir:             c.cfg.WorkingDir(),
+		PostTurnHooks:          c.cfg.Config().Hooks[hooks.EventStop],
+		SessionEndHooks:        c.cfg.Config().Hooks[hooks.EventSessionEnd],
+		MemoryEnabled:          memorytools.Enabled(c.cfg),
+		MemoryDistill:          memorytools.DistillEnabled(c.cfg),
+		MemoryRateFloorPct:     memorytools.Policy(c.cfg).RateLimitFloorPct,
+		Permissions:            c.permissions,
+		Config:                 c.cfg,
 	})
 
 	c.readyWg.Go(func() error {
@@ -1709,8 +1712,9 @@ func (c *coordinator) UpdateModels(ctx context.Context) error {
 	c.currentAgent.SetSystemPrompt(systemPrompt)
 
 	var (
-		reflectionEnabled  bool
-		maxReflectionTurns int
+		reflectionEnabled      bool
+		maxReflectionTurns     int
+		maxTokensContinuations int
 	)
 	if c.cfg.ActiveProfile() == "fiduciary" {
 		reflectionEnabled = true
@@ -1719,8 +1723,10 @@ func (c *coordinator) UpdateModels(ctx context.Context) error {
 	}
 	if c.cfg.Config().Options.Agent != nil {
 		maxReflectionTurns = c.cfg.Config().Options.Agent.MaxTurns
+		maxTokensContinuations = c.cfg.Config().Options.Agent.MaxTokensContinuations
 	}
 	c.currentAgent.SetReflection(reflectionEnabled, maxReflectionTurns)
+	c.currentAgent.SetMaxTokensContinuations(maxTokensContinuations)
 
 	return nil
 }

@@ -32,11 +32,12 @@ func (m *mockSessionAgent) BeginAccepted(sessionID string) *AcceptedRun {
 	return &AcceptedRun{sessionID: sessionID}
 }
 
-func (m *mockSessionAgent) Model() Model                             { return m.model }
-func (m *mockSessionAgent) SetModels(large, small Model)             {}
-func (m *mockSessionAgent) SetTools(tools []fantasy.AgentTool)       {}
-func (m *mockSessionAgent) SetSystemPrompt(systemPrompt string)      {}
-func (m *mockSessionAgent) SetReflection(enabled bool, maxTurns int) {}
+func (m *mockSessionAgent) Model() Model                                   { return m.model }
+func (m *mockSessionAgent) SetModels(large, small Model)                   {}
+func (m *mockSessionAgent) SetTools(tools []fantasy.AgentTool)             {}
+func (m *mockSessionAgent) SetSystemPrompt(systemPrompt string)            {}
+func (m *mockSessionAgent) SetReflection(enabled bool, maxTurns int)       {}
+func (m *mockSessionAgent) SetMaxTokensContinuations(maxContinuations int) {}
 func (m *mockSessionAgent) Cancel(sessionID string) {
 	m.cancelled = append(m.cancelled, sessionID)
 }
@@ -778,14 +779,19 @@ func TestGetProviderOptionsOpenAICompatEffortPassThrough(t *testing.T) {
 
 type testMockAgent struct {
 	mockSessionAgent
-	reflectionEnabled  bool
-	maxReflectionTurns int
-	systemPrompt       string
+	reflectionEnabled      bool
+	maxReflectionTurns     int
+	maxTokensContinuations int
+	systemPrompt           string
 }
 
 func (t *testMockAgent) SetReflection(enabled bool, maxTurns int) {
 	t.reflectionEnabled = enabled
 	t.maxReflectionTurns = maxTurns
+}
+
+func (t *testMockAgent) SetMaxTokensContinuations(maxContinuations int) {
+	t.maxTokensContinuations = maxContinuations
 }
 
 func (t *testMockAgent) SetSystemPrompt(prompt string) {
@@ -825,8 +831,9 @@ func TestCoordinator_UpdateModels_UpdatesSystemPromptAndReflection(t *testing.T)
 	})
 	cfg.Config().Options = &config.Options{
 		Agent: &config.AgentConfig{
-			EnableReflection: false,
-			MaxTurns:         5,
+			EnableReflection:       false,
+			MaxTurns:               5,
+			MaxTokensContinuations: 3,
 		},
 	}
 
@@ -859,10 +866,12 @@ func TestCoordinator_UpdateModels_UpdatesSystemPromptAndReflection(t *testing.T)
 
 	assert.False(t, mockAgent.reflectionEnabled)
 	assert.Equal(t, 5, mockAgent.maxReflectionTurns)
+	assert.Equal(t, 3, mockAgent.maxTokensContinuations)
 
 	// Now toggle EnableReflection in config
 	cfg.Config().Options.Agent.EnableReflection = true
 	cfg.Config().Options.Agent.MaxTurns = 10
+	cfg.Config().Options.Agent.MaxTokensContinuations = 7
 
 	// Call UpdateModels again
 	err = c.UpdateModels(t.Context())
@@ -870,6 +879,7 @@ func TestCoordinator_UpdateModels_UpdatesSystemPromptAndReflection(t *testing.T)
 
 	assert.True(t, mockAgent.reflectionEnabled)
 	assert.Equal(t, 10, mockAgent.maxReflectionTurns)
+	assert.Equal(t, 7, mockAgent.maxTokensContinuations)
 }
 
 // recordingSummarizer wraps mockSessionAgent so the Summarize call can be

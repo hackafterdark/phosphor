@@ -148,3 +148,71 @@ func forcedStopContinuationsFromContext(ctx context.Context) int {
 	}
 	return 0
 }
+
+// maxTokensContinuationsContextKey is the unexported context key that
+// carries how many automatic continuations this turn has already spent
+// recovering from a step that ended on FinishReasonMaxTokens: the model ran
+// out of its output/thinking token budget mid-generation, not a raw control
+// token forcing an early stop. Kept as its own key, separate from
+// forcedStopContinuationsContextKey, because running out of a configured
+// token budget can be a deliberate operator constraint (cost control), so
+// its retry budget is independently configurable rather than inheriting the
+// forced-stop cap. sessionAgent.Run recovers by recursing into itself, so a
+// plain local counter would reset to zero on every level.
+type maxTokensContinuationsContextKey struct{}
+
+// defaultMaxTokensContinuations bounds those automatic continuations when
+// config.AgentConfig.MaxTokensContinuations is unset (zero).
+const defaultMaxTokensContinuations = 2
+
+// effectiveMaxTokensContinuations resolves the configured cap: zero falls
+// back to defaultMaxTokensContinuations, a positive value is honoured
+// exactly, and a negative value disables the cap (unlimited continuations) —
+// callers must check for a negative result themselves rather than treat it
+// as a literal turn count.
+func effectiveMaxTokensContinuations(configured int) int {
+	if configured == 0 {
+		return defaultMaxTokensContinuations
+	}
+	return configured
+}
+
+// withMaxTokensContinuations returns ctx carrying the number of automatic
+// continuations consumed so far, for the recursive call into
+// sessionAgent.Run.
+func withMaxTokensContinuations(ctx context.Context, n int) context.Context {
+	return context.WithValue(ctx, maxTokensContinuationsContextKey{}, n)
+}
+
+// maxTokensContinuationsFromContext returns the count set by
+// [withMaxTokensContinuations], or zero when the turn has not yet recovered
+// from hitting its token budget.
+func maxTokensContinuationsFromContext(ctx context.Context) int {
+	if v, ok := ctx.Value(maxTokensContinuationsContextKey{}).(int); ok {
+		return v
+	}
+	return 0
+}
+
+// isInternalContinuation reports whether ctx marks this sessionAgent.Run call
+// as an internal recursive continuation of an already-active turn — the
+// self-critique reflection retry, the forced-stop recovery, or a token-budget
+// continuation — rather than a freshly, independently dispatched request.
+//
+// This matters because the outer Run invocation that is about to
+// `return a.Run(ctx, call)` is still, from the accepted-dispatch gate's point
+// of view, the active run for this session: its `defer a.activeRequests.Del`
+// has not fired yet, since that defer is waiting on this very call to return.
+// If the recursive call is treated as a normal new dispatch, the busy check
+// sees this session as busy and silently re-queues the call instead of
+// running it — and nothing ever drains that queue, because draining only
+// happens from inside a live step's PrepareStep, and the step that would have
+// driven it has already finished streaming. The turn then dies with no error
+// and no further content: exactly the "it just gets stuck" symptom, this time
+// caused by the recursion mechanism itself rather than by any model output.
+// sessionAgent.Run must skip the busy/queue gate entirely for such a call.
+func isInternalContinuation(ctx context.Context) bool {
+	return reflectionTurnsFromContext(ctx) > 0 ||
+		forcedStopContinuationsFromContext(ctx) > 0 ||
+		maxTokensContinuationsFromContext(ctx) > 0
+}

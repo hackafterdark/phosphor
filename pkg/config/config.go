@@ -475,6 +475,18 @@ type AgentConfig struct {
 	// means no limit. This prevents runaway agent loops on complex tasks.
 	MaxTurns int `json:"max_turns,omitempty" jsonschema:"description=Maximum number of tool-use turns per prompt (0 = unlimited),default=0"`
 
+	// MaxTokensContinuations caps the number of automatic continuation turns
+	// the agent may start after a step ends with FinishReasonMaxTokens - the
+	// model ran out of its output/thinking token budget mid-generation
+	// rather than choosing to end its turn. Each continuation costs a full
+	// model round trip, so this is a separate, independently tunable budget
+	// from the unrelated forced-stop continuation (see pkg/agent/runid.go),
+	// which recovers from a different condition (a raw ChatML control token
+	// forcing generation to stop). A value of 0 means use the built-in
+	// default (2); a negative value disables the budget entirely (unlimited
+	// continuations).
+	MaxTokensContinuations int `json:"max_tokens_continuations,omitempty" jsonschema:"description=Maximum automatic continuations after a step hits its token/thinking budget mid-generation (0 = default 2\\, negative = unlimited),default=0"`
+
 	// MaxContinuations caps the number of synthetic continuation turns the
 	// goal runtime may start for a single active goal before the goal is
 	// auto-paused and the user is asked to review progress and resume. A
