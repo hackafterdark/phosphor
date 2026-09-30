@@ -850,6 +850,21 @@ func getProviderOptions(model Model, providerCfg config.ProviderConfig) fantasy.
 			extraBody["stop"] = stopVal
 		}
 
+		// Ask vLLM to include the matched stop string in the returned content
+		// instead of silently swallowing it (its default). Without this, a
+		// step the engine truncates mid-generation by sampling the real
+		// ChatML end-of-turn token (see coordinator comment above and
+		// pkg/security/externalcontent/tokens.go) looks byte-for-byte
+		// identical to a normal completion: the response just ends, with no
+		// trace of what cut it off. With it, the token reaches Phosphor's
+		// existing defang pipeline (pkg/agent/sanitization.go), which both
+		// neutralizes it before storage and flags the step for the
+		// forced-stop continuation in sessionAgent.Run. A user-supplied value
+		// under models.large.options is left untouched.
+		if _, ok := extraBody["include_stop_str_in_output"]; !ok {
+			extraBody["include_stop_str_in_output"] = true
+		}
+
 		mergedOptions["extra_body"] = extraBody
 
 		parsed, err := openaicompat.ParseOptions(mergedOptions)
@@ -1265,16 +1280,16 @@ func (c *coordinator) buildAgentModels(ctx context.Context, isSubAgent bool) (Mo
 		}
 
 		return Model{
-			Model:      largeModel,
-			CatwalkCfg: *largeCatwalkModel,
-			ModelCfg:   largeModelCfg,
-			FlatRate:   largeProviderCfg.FlatRate,
-		}, Model{
-			Model:      smallModel,
-			CatwalkCfg: *smallCatwalkModel,
-			ModelCfg:   smallModelCfg,
-			FlatRate:   smallProviderCfg.FlatRate,
-		}, nil
+				Model:      largeModel,
+				CatwalkCfg: *largeCatwalkModel,
+				ModelCfg:   largeModelCfg,
+				FlatRate:   largeProviderCfg.FlatRate,
+			}, Model{
+				Model:      smallModel,
+				CatwalkCfg: *smallCatwalkModel,
+				ModelCfg:   smallModelCfg,
+				FlatRate:   smallProviderCfg.FlatRate,
+			}, nil
 	}
 
 	// Small model not configured — large model will be used for title generation.

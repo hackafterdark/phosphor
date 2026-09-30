@@ -117,3 +117,34 @@ func reflectionTurnsFromContext(ctx context.Context) int {
 	}
 	return 0
 }
+
+// forcedStopContinuationsContextKey is the unexported context key that
+// carries how many automatic continuations this turn has already spent
+// recovering from a step the inference engine cut off mid-generation by
+// sampling a raw ChatML control token (see defangReasoningText and
+// defangAssistantText). sessionAgent.Run recovers by recursing into itself,
+// so a plain local counter would reset to zero on every level and the cap
+// below could never see the running total the turn had actually spent.
+type forcedStopContinuationsContextKey struct{}
+
+// defaultMaxForcedStopContinuations bounds those automatic continuations.
+// Without a cap, a model that keeps colliding with the same control token on
+// every retry would recurse through sessionAgent.Run unbounded.
+const defaultMaxForcedStopContinuations = 2
+
+// withForcedStopContinuations returns ctx carrying the number of automatic
+// continuations consumed so far, for the recursive call into
+// sessionAgent.Run.
+func withForcedStopContinuations(ctx context.Context, n int) context.Context {
+	return context.WithValue(ctx, forcedStopContinuationsContextKey{}, n)
+}
+
+// forcedStopContinuationsFromContext returns the count set by
+// [withForcedStopContinuations], or zero when the turn has not yet recovered
+// from a forced stop.
+func forcedStopContinuationsFromContext(ctx context.Context) int {
+	if v, ok := ctx.Value(forcedStopContinuationsContextKey{}).(int); ok {
+		return v
+	}
+	return 0
+}

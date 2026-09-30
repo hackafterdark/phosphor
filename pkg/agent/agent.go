@@ -680,6 +680,10 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 	// this particular run.
 	reflectionsUsed := reflectionTurnsFromContext(ctx)
 	var reflectionDetected int
+	// forcedStopContinuationsUsed mirrors reflectionsUsed: how many automatic
+	// continuations this turn has already spent recovering from a step the
+	// inference engine cut off mid-generation (see sawRawControlToken below).
+	forcedStopContinuationsUsed := forcedStopContinuationsFromContext(ctx)
 	slog.Info("SessionAgent.Run called", "session_id", call.SessionID, "temp", call.Temperature, "rep_pen", call.RepetitionPenalty)
 	if err := ValidateCall(call); err != nil {
 		return nil, err
@@ -700,6 +704,17 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 	// for each streaming step. The final assistant message of the turn is
 	// the value reachable through this pointer when the defer runs.
 	var currentAssistant *message.Message
+	// sawRawControlToken flags that the current step's reasoning or text
+	// stream contained a raw ChatML control token (i.e. defangReasoningText or
+	// defangAssistantText had to mutate a delta). PrepareStep resets it at the
+	// start of every step, so by the time Stream returns it reflects only the
+	// step that ended the run. A raw token can only reach a delta by the
+	// inference engine actually sampling the real token ID — the moment that
+	// happens the provider truncates the stream right there (see
+	// pkg/security/externalcontent/tokens.go) — so seeing one on the step that
+	// ended the turn with a plain "stop" is the signature of a mid-generation
+	// cutoff, not a normal completion, and is handled after Stream returns.
+	var sawRawControlToken bool
 	defer func() {
 		// Optionally record the final assistant response as the root span's
 		// output.value attribute so observability backends can populate the
@@ -1079,6 +1094,10 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 		TopK:             call.TopK,
 		FrequencyPenalty: call.FrequencyPenalty,
 		PrepareStep: func(callContext context.Context, options fantasy.PrepareStepFunctionOptions) (_ context.Context, prepared fantasy.PrepareStepResult, err error) {
+			// Reset per-step: only the step that actually ends the run (checked
+			// after Stream returns below) should be able to trigger a forced-stop
+			// continuation.
+			sawRawControlToken = false
 			// Create an LLM call span as a child of the agent turn span.
 			// This span represents a single model API call (chat completion).
 			if agentSpan, ok := callContext.Value(otel.AgentTurnSpan).(trace.Span); ok && agentSpan != nil {
@@ -1273,11 +1292,17 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 		// cancel racing the end of the stream must not drop the part that ends the
 		// turn or the UI keeps rendering the message as live thinking.
 		OnReasoningStart: func(id string, reasoning fantasy.ReasoningContent) error {
-			currentAssistant.AppendReasoningContent(reasoning.Text)
+			if tools.DefangSpecialTokens(reasoning.Text) != reasoning.Text {
+				sawRawControlToken = true
+			}
+			currentAssistant.AppendReasoningContent(defangReasoningText(reasoning.Text))
 			return a.messages.Update(genCtx, *currentAssistant)
 		},
 		OnReasoningDelta: func(id string, text string) error {
-			currentAssistant.AppendReasoningContent(text)
+			if tools.DefangSpecialTokens(text) != text {
+				sawRawControlToken = true
+			}
+			currentAssistant.AppendReasoningContent(defangReasoningText(text))
 			return a.messages.Update(genCtx, *currentAssistant)
 		},
 		OnReasoningEnd: func(id string, reasoning fantasy.ReasoningContent) error {
@@ -1318,6 +1343,9 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 			// idempotent, so for providers that do send OnReasoningEnd this is
 			// a no-op.
 			currentAssistant.FinishThinking()
+			if tools.DefangSpecialTokens(text) != text {
+				sawRawControlToken = true
+			}
 			currentAssistant.AppendContent(defangAssistantText(text))
 			return a.messages.Update(genCtx, *currentAssistant)
 		},
@@ -1541,6 +1569,32 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 			return a.Run(withReflectionTurns(ctx, reflectionsUsed+1), call)
 		}
 		slog.Debug("Reflection budget exhausted, completing the turn unreflected", "used", reflectionsUsed, "max", maxTurns)
+	}
+
+	// After Stream returns, check whether the step that ended the run was cut
+	// off mid-generation rather than genuinely finished. sawRawControlToken is
+	// reset by PrepareStep at the start of every step, so by this point it
+	// reflects only the step that produced the final EndTurn — pairing it with
+	// a plain "stop" finish is the signature of the inference engine sampling
+	// the real ChatML end-of-turn token instead of the model choosing to end
+	// its turn (see pkg/security/externalcontent/tokens.go and the
+	// <content_safety> system prompt rule). There is no text to fix after the
+	// fact: the rest of the generation was never produced, so the only
+	// recovery is asking the model to continue.
+	if err == nil && sawRawControlToken && currentAssistant != nil &&
+		currentAssistant.FinishReason() == message.FinishReasonEndTurn {
+		if forcedStopContinuationsUsed < defaultMaxForcedStopContinuations {
+			slog.Warn("Step ended on a raw ChatML control token mid-generation, queueing an automatic continuation",
+				"session_id", call.SessionID, "attempt", forcedStopContinuationsUsed+1, "max", defaultMaxForcedStopContinuations)
+			if !call.IsStateless {
+				a.queueNote(call.SessionID, "Your previous response was cut off mid-generation because the inference engine treated a control token you produced as its end-of-turn signal. Continue exactly where you left off - do not repeat or restate anything you already said. Do not attempt to reconstruct, spell out, or discuss the raw token that caused this, even to explain what happened; refer to it only by its bracket form if you must mention it at all.")
+			}
+			// Re-run with the nudge riding its system block, and with the spent
+			// budget visible to the nested call so the cap holds for the turn.
+			return a.Run(withForcedStopContinuations(ctx, forcedStopContinuationsUsed+1), call)
+		}
+		slog.Warn("Forced-stop continuation budget exhausted, completing the turn as cut off",
+			"used", forcedStopContinuationsUsed, "max", defaultMaxForcedStopContinuations)
 	}
 
 	if err == nil && !call.IsStateless {
@@ -1914,7 +1968,7 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 			return callContext, prepared, nil
 		},
 		OnReasoningDelta: func(id string, text string) error {
-			summaryMessage.AppendReasoningContent(text)
+			summaryMessage.AppendReasoningContent(defangReasoningText(text))
 			return a.messages.Update(genCtx, summaryMessage)
 		},
 		OnReasoningEnd: func(id string, reasoning fantasy.ReasoningContent) error {
@@ -1928,7 +1982,7 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 			return a.messages.Update(genCtx, summaryMessage)
 		},
 		OnTextDelta: func(id, text string) error {
-			summaryMessage.AppendContent(text)
+			summaryMessage.AppendContent(defangAssistantText(text))
 			return a.messages.Update(genCtx, summaryMessage)
 		},
 	})

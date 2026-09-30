@@ -115,6 +115,20 @@ func TestDefangAssistantText_LogsOnlyWhenMutated(t *testing.T) {
 	require.Contains(t, buf.String(), "Defanged inference control tokens in streamed assistant text")
 }
 
+func TestDefangReasoningText_LogsOnlyWhenMutated(t *testing.T) {
+	buf, restore := captureLogs(t)
+	defer restore()
+
+	clean := defangReasoningText("plain chain-of-thought")
+	require.Equal(t, "plain chain-of-thought", clean)
+	require.Empty(t, buf.String())
+
+	mutated := defangReasoningText("thinking about " + specialToken("im_end") + " here")
+	require.Contains(t, mutated, bracketToken("im_end"))
+	require.NotContains(t, mutated, specialToken("im_end"))
+	require.Contains(t, buf.String(), "Defanged inference control tokens in streamed reasoning text")
+}
+
 func TestDefangUserPrompt_LogsOnlyWhenMutated(t *testing.T) {
 	buf, restore := captureLogs(t)
 	defer restore()

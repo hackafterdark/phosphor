@@ -107,6 +107,20 @@ func defangOutgoingMessages(msgs []fantasy.Message) []fantasy.Message {
 					}
 				}
 				parts[j] = p
+			case fantasy.ReasoningPart:
+				// Reasoning is defanged at write time (see defangReasoningText in
+				// sanitization.go), so a healthy session never needs this. This
+				// case exists for residual raw tokens in session history written
+				// before that fix existed: fantasy resends stored reasoning text
+				// verbatim on every subsequent request (ToPromptFunc), so without
+				// this a pre-fix session would keep replaying a raw token into
+				// every future prompt indefinitely.
+				next := tools.DefangSpecialTokens(p.Text)
+				if next != p.Text {
+					p.Text = next
+					changed = true
+				}
+				parts[j] = p
 			default:
 				parts[j] = part
 			}

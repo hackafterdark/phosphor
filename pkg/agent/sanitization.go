@@ -50,6 +50,24 @@ func defangAssistantText(text string) string {
 	return defanged
 }
 
+// defangReasoningText neutralizes inference control tokens in a streamed
+// reasoning/thinking delta and logs when it mutates the text. Reasoning
+// content is stored and later replayed back to the model as prior-turn
+// context (see Message.ToAIMessage), so a raw token left here reaches the
+// model's context on every subsequent turn just as surely as one left in the
+// final answer text — it must go through the same defanger as OnTextDelta.
+func defangReasoningText(text string) string {
+	defanged := tools.DefangSpecialTokens(text)
+	if defanged != text {
+		slog.Info(
+			"Defanged inference control tokens in streamed reasoning text",
+			"original_len", len(text),
+			"defanged_len", len(defanged),
+		)
+	}
+	return defanged
+}
+
 // defangUserPrompt neutralizes inference control tokens in a user prompt
 // before it is stored and logs when it mutates the text.
 func defangUserPrompt(prompt string) string {

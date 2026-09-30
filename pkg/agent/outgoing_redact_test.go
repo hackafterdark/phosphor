@@ -256,6 +256,67 @@ func TestSessionAgent_OutgoingRedactionEnabled(t *testing.T) {
 	}
 }
 
+func TestDefangOutgoingMessages_ReasoningPartIsCovered(t *testing.T) {
+	t.Parallel()
+
+	// Reasoning is defanged at write time (defangReasoningText), so this
+	// exercises the residual case: a raw token already sitting in stored
+	// reasoning from before that fix existed. Without a ReasoningPart case in
+	// defangOutgoingMessages, fantasy's ToPromptFunc resends this verbatim on
+	// every subsequent request forever.
+	raw := specialToken("im_end")
+	msg := fantasy.Message{
+		Role:    fantasy.MessageRoleAssistant,
+		Content: []fantasy.MessagePart{fantasy.ReasoningPart{Text: "pondering " + raw + " here"}},
+	}
+	out := defangOutgoingMessages([]fantasy.Message{msg})
+	reasoning := out[0].Content[0].(fantasy.ReasoningPart)
+	require.NotContains(t, reasoning.Text, raw)
+	require.Contains(t, reasoning.Text, bracketToken("im_end"))
+
+	// The input message must not have been mutated (fantasy owns them).
+	original := msg.Content[0].(fantasy.ReasoningPart)
+	require.Contains(t, original.Text, raw, "input mutated")
+}
+
+func TestDefangOutgoingMessages_TextAndToolResultAreCovered(t *testing.T) {
+	t.Parallel()
+
+	raw := specialToken("im_start")
+	msg := fantasy.Message{
+		Role: fantasy.MessageRoleAssistant,
+		Content: []fantasy.MessagePart{
+			fantasy.TextPart{Text: "see " + raw + " here"},
+			fantasy.ToolResultPart{
+				ToolCallID: "call-1",
+				Output:     fantasy.ToolResultOutputContentText{Text: "output " + raw + " here"},
+			},
+		},
+	}
+	out := defangOutgoingMessages([]fantasy.Message{msg})
+
+	text := out[0].Content[0].(fantasy.TextPart)
+	require.NotContains(t, text.Text, raw)
+	require.Contains(t, text.Text, bracketToken("im_start"))
+
+	toolResult := out[0].Content[1].(fantasy.ToolResultPart)
+	resultText, ok := fantasy.AsToolResultOutputType[fantasy.ToolResultOutputContentText](toolResult.Output)
+	require.True(t, ok)
+	require.NotContains(t, resultText.Text, raw)
+	require.Contains(t, resultText.Text, bracketToken("im_start"))
+}
+
+func TestDefangOutgoingMessages_CleanPassesThroughUnchanged(t *testing.T) {
+	t.Parallel()
+
+	msg := fantasy.Message{
+		Role:    fantasy.MessageRoleAssistant,
+		Content: []fantasy.MessagePart{fantasy.TextPart{Text: "nothing dangerous here"}},
+	}
+	out := defangOutgoingMessages([]fantasy.Message{msg})
+	require.Equal(t, msg, out[0])
+}
+
 func TestSessionAgent_OutgoingRedaction_ForceOnlyMasksThroughCallSite(t *testing.T) {
 	t.Parallel()
 
