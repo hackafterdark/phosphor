@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"charm.land/catwalk/pkg/catwalk"
 	"charm.land/fantasy"
@@ -217,6 +218,15 @@ func NewCoordinator(
 			return a.MaxContinuations
 		}
 		return 0
+	}, func() goal.RuntimeLimits {
+		var a config.AgentConfig
+		if opts := cfg.Config().Options.Agent; opts != nil {
+			a = *opts
+		}
+		return goal.RuntimeLimits{
+			WatchdogInterval:     time.Duration(a.GoalWatchdogIntervalSeconds) * time.Second,
+			MaxConsecutiveErrors: a.MaxConsecutiveErrors,
+		}
 	})
 
 	// Wire the TUI allow-prompt callback. The tool (e.g. web_fetch) invokes
@@ -499,8 +509,13 @@ func (c *coordinator) run(ctx context.Context, accept *AcceptedRun, sessionID st
 				c.goalRuntime.OnTurnFinished(context.Background(), sessionID)
 			}()
 		}
-	} else {
-		slog.Warn("Goal continuation skipped due to agent error; use /goal resume to continue", "session_id", sessionID, "error", originalErr)
+	} else if c.goalRuntime != nil {
+		// The goal runtime classifies the failure and decides: transient
+		// errors get a backed-off automatic continuation, permanent ones
+		// and cancellations pause the goal with an explanation. Without
+		// this an errored turn silently strands an active goal until a
+		// human notices and runs /goal resume.
+		c.goalRuntime.OnTurnError(context.Background(), sessionID, originalErr)
 	}
 
 	if hasLatest && c.runComplete != nil {
@@ -1250,16 +1265,16 @@ func (c *coordinator) buildAgentModels(ctx context.Context, isSubAgent bool) (Mo
 		}
 
 		return Model{
-				Model:      largeModel,
-				CatwalkCfg: *largeCatwalkModel,
-				ModelCfg:   largeModelCfg,
-				FlatRate:   largeProviderCfg.FlatRate,
-			}, Model{
-				Model:      smallModel,
-				CatwalkCfg: *smallCatwalkModel,
-				ModelCfg:   smallModelCfg,
-				FlatRate:   smallProviderCfg.FlatRate,
-			}, nil
+			Model:      largeModel,
+			CatwalkCfg: *largeCatwalkModel,
+			ModelCfg:   largeModelCfg,
+			FlatRate:   largeProviderCfg.FlatRate,
+		}, Model{
+			Model:      smallModel,
+			CatwalkCfg: *smallCatwalkModel,
+			ModelCfg:   smallModelCfg,
+			FlatRate:   smallProviderCfg.FlatRate,
+		}, nil
 	}
 
 	// Small model not configured — large model will be used for title generation.

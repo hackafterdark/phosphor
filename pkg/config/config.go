@@ -483,6 +483,28 @@ type AgentConfig struct {
 	// stops a goal that never calls update_goal from burning tokens forever.
 	MaxContinuations int `json:"max_continuations,omitempty" jsonschema:"description=Maximum number of goal continuation turns before the goal is auto-paused for review (0 = default 25, negative = unlimited),default=0"`
 
+	// GoalWatchdogIntervalSeconds is the delay between goal watchdog
+	// sweeps. The watchdog periodically finds sessions that still hold an
+	// active goal but are running nothing (process restarted, a
+	// continuation goroutine died, an error left the session idle) and
+	// re-arms them. A value of 0 means use the built-in default (30
+	// seconds).
+	GoalWatchdogIntervalSeconds int `json:"goal_watchdog_interval_seconds,omitempty" jsonschema:"description=Seconds between goal watchdog sweeps that revive idle active goals (0 = default 30),default=0"`
+
+	// DisableGoalWatchdog turns the watchdog off entirely, restoring the
+	// old purely edge-triggered goal behavior where a stalled session
+	// waits for a manual /goal resume.
+	DisableGoalWatchdog bool `json:"disable_goal_watchdog,omitempty" jsonschema:"description=Disable the goal watchdog that revives idle active goals,default=false"`
+
+	// MaxConsecutiveErrors is how many continuation turns in a row a goal
+	// may fail before the goal runtime auto-pauses it and asks for
+	// review. Transient failures (rate limits, 5xx, network errors) are
+	// retried with exponential backoff up to this limit; permanent
+	// failures pause immediately. A value of 0 means use the built-in
+	// default (5); a negative value disables the cap (retry transient
+	// errors indefinitely, still bounded by max_continuations).
+	MaxConsecutiveErrors int `json:"max_consecutive_errors,omitempty" jsonschema:"description=Consecutive failed goal continuation turns tolerated before auto-pause (0 = default 5, negative = unlimited),default=0"`
+
 	// StructuralSearchLanguages restricts which languages appear in the
 	// structural_search tool description in the system prompt. When empty,
 	// all supported languages are listed. Setting a non-empty list causes

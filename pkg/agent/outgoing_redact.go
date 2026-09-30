@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"log/slog"
 	"regexp"
 	"strings"
 
@@ -112,6 +113,10 @@ func defangOutgoingMessages(msgs []fantasy.Message) []fantasy.Message {
 		}
 		if changed {
 			out[i].Content = parts
+			slog.Info(
+				"Defanged inference control tokens in outgoing message before provider request (wire defence, intentional)",
+				"role", msg.Role,
+			)
 		}
 	}
 	return out
@@ -144,6 +149,10 @@ func (a *sessionAgent) redactOutgoingMessages(msgs []fantasy.Message) []fantasy.
 		}
 		if changed {
 			out[i].Content = parts
+			slog.Info(
+				"Masked secret or PII in outgoing message before provider request (wire redaction, intentional)",
+				"role", msg.Role,
+			)
 		}
 	}
 	return out

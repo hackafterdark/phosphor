@@ -5,50 +5,68 @@ import (
 	"unicode/utf8"
 )
 
-// defanger is built once at init time. Order matters: the explicit token
-// replacements run first so that e.g. "[im_end]" → "[im_end]" before the
-// fallback "<|​" → "<|​" (ZWS) fires on any remaining unknown sequences.
+// The raw control-token bigram must never appear as source text: this file is
+// itself written through a tool-call pipeline whose sanitizers rewrite that
+// bigram, which once silently turned every key below into an inert
+// bracket-form no-op. Build all token keys from numeric runes instead, and
+// keep the behaviour pinned by TestDefangSpecialTokens_KnownTokensBecomeBracketNotation.
+
+// tokenOpen returns the two-byte introducer every ChatML-family control token
+// starts with.
+func tokenOpen() string { return string([]rune{0x3c, 0x7c}) }
+
+// tokenClose returns the two-byte terminator of a ChatML-family control token.
+func tokenClose() string { return string([]rune{0x7c, 0x3e}) }
+
+// chatMLToken assembles the raw form of the named ChatML-family control token.
+func chatMLToken(name string) string { return tokenOpen() + name + tokenClose() }
+
+// zeroWidthSpace is the parser-inert separator inserted after an introducer
+// that the explicit replacements did not cover.
+func zeroWidthSpace() string { return string([]rune{0x200b}) }
+
+// defanger is built once at init time. strings.NewReplacer matches the
+// longest pattern at each position, so the five-byte explicit tokens win over
+// the two-byte introducer fallback regardless of argument order.
 var defanger = strings.NewReplacer(
 	// Hard-replace the most dangerous ChatML / tool-call tokens with bracket
 	// notation. Square brackets break the tokenizer's association with the
 	// special token IDs (e.g. 151645 for [im_end] in Qwen3) so the model
-	// reads "[im_end]" rather than the control token, and its probability mass
-	// never shifts toward emitting the fatal token when producing its reply.
-	"[im_start]", "[im_start]",
-	"[im_end]", "[im_end]",
-	"[call]", "[call]",
-	"[call_end]", "[call_end]",
-	"[endoftext]", "[endoftext]",
-	// Fallback: insert a zero-width space after "<|​" for any unrecognised
-	// sequences so they are still visually readable but parser-inert.
-	"<|​", "<|​",
+	// reads bracket text rather than the control token, and its probability
+	// mass never shifts toward emitting the fatal token when producing its
+	// reply.
+	chatMLToken("im_start"), "[im_start]",
+	chatMLToken("im_end"), "[im_end]",
+	chatMLToken("call"), "[call]",
+	chatMLToken("call_end"), "[call_end]",
+	chatMLToken("endoftext"), "[endoftext]",
+	// Fallback: insert a zero-width space after any unrecognised introducer
+	// so the sequence stays visually readable but parser-inert.
+	tokenOpen(), tokenOpen()+zeroWidthSpace(),
 )
 
 // DefangSpecialTokens neutralizes inference-engine control tokens in s so they
 // cannot poison the LLM context window or trigger vLLM stop sequences.
 //
-// Known high-risk tokens are replaced with square-bracket notation (e.g.
-// "[im_end]" → "[im_end]"). Unknown "<|​…" sequences get a zero-width space
-// as a fallback. Call this on every string that enters the message history from
-// outside the agent: file reads, bash output, grep results, MCP results, and
-// user prompts.
+// Known high-risk tokens are replaced with square-bracket notation. Unknown
+// introducer sequences get a zero-width space as a fallback. Call this on
+// every string that enters the message history from outside the agent: file
+// reads, bash output, grep results, MCP results, and user prompts.
 //
-// A pre-pass strips any U+200B zero-width spaces that a previous version of
-// this function inserted after "<|​". Without this, text like "[im_end]"
-// (old ZWS form) would not match the bracket-replacement patterns and would
-// reach the model with the ZWS intact — still close enough to the raw token
-// that the model's weights reconstruct the real ID in its reply.
+// A pre-pass strips U+200B zero-width spaces a previous pass inserted, so a
+// token that was only made parser-inert by the fallback can match an explicit
+// replacement on a later pass. Text with no zero-width space is never
+// otherwise modified, so previously defanged output round-trips unchanged.
 func DefangSpecialTokens(s string) string {
 	// Fast path: nothing to do.
-	if !strings.Contains(s, "<|​") && !strings.Contains(s, "") {
+	if !strings.Contains(s, tokenOpen()) {
 		return s
 	}
-	// Strip previously-inserted zero-width spaces so "[im_end]" (old ZWS
-	// form) collapses back to "[im_end]" before the bracket replacer runs.
-	if strings.Contains(s, "") {
-		s = strings.ReplaceAll(s, "", "")
-	}
-	if !strings.Contains(s, "<|​") {
+	// Strip previously-inserted zero-width spaces so a fallback-defanged
+	// token collapses back to its raw form and can match the explicit
+	// replacements below.
+	s = strings.ReplaceAll(s, zeroWidthSpace(), "")
+	if !strings.Contains(s, tokenOpen()) {
 		return s
 	}
 	return defanger.Replace(s)

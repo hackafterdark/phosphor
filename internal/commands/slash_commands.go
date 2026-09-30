@@ -50,8 +50,8 @@ var SlashCommands = []SlashCommand{
 	},
 	{
 		Name:        "memory",
-		Description: "Inspect and manage the memory vault (status, sources, fsck, budget, policy, key)",
-		Arguments:   []string{"[status|sources|fsck|budget|policy|key|pin|unpin|demote|dispute|retire|cite]"},
+		Description: "Inspect and manage the memory vault (bare opens the status dialog; review, sources, fsck, budget, policy, key)",
+		Arguments:   []string{"[review|sources|fsck|budget|policy|key|pin|unpin|demote|dispute|retire|cite]"},
 	},
 }
 

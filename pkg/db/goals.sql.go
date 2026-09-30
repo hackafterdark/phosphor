@@ -101,6 +101,43 @@ func (q *Queries) GetGoalBySessionID(ctx context.Context, sessionID string) (Goa
 	return i, err
 }
 
+const listActiveGoals = `-- name: ListActiveGoals :many
+SELECT session_id, goal_id, objective, status, created_at, updated_at, active_seconds
+FROM goals
+WHERE status = 'active'
+`
+
+func (q *Queries) ListActiveGoals(ctx context.Context) ([]Goal, error) {
+	rows, err := q.query(ctx, q.listActiveGoalsStmt, listActiveGoals)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Goal{}
+	for rows.Next() {
+		var i Goal
+		if err := rows.Scan(
+			&i.SessionID,
+			&i.GoalID,
+			&i.Objective,
+			&i.Status,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.ActiveSeconds,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateGoalStatus = `-- name: UpdateGoalStatus :one
 UPDATE goals
 SET

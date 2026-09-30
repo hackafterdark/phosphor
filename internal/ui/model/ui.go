@@ -4337,6 +4337,25 @@ func (m *UI) handleGoalSlashCommand(args []string) tea.Cmd {
 			m.com.Workspace.GoalClear(context.Background(), m.session.ID)
 			return nil
 		}
+	case "resume":
+		if !m.hasSession() {
+			return util.ReportWarn("Start a session first.")
+		}
+		return func() tea.Msg {
+			g, err := m.com.Workspace.GoalResume(context.Background(), m.session.ID)
+			if err != nil {
+				return util.ReportError(err)()
+			}
+			if g == nil {
+				return util.NewInfoMsg("No active goal to resume.")
+			}
+			// Same event the Commands-menu resume publishes, so the goal
+			// pill and sidebar panel refresh from the resumed status.
+			return pubsub.Event[goal.Goal]{
+				Type:    pubsub.UpdatedEvent,
+				Payload: *g,
+			}
+		}
 	default:
 		if !m.hasSession() {
 			return util.ReportWarn("Start a session first.")

@@ -115,3 +115,54 @@ func TestStripDeviceControls_RawC1ByteDoesNotSurvive(t *testing.T) {
 	// Idempotent: the replacement character is plain printable text.
 	require.Equal(t, out, StripDeviceControls(out))
 }
+
+// TestDefangSpecialTokens_KnownTokensBecomeBracketNotation pins the core
+// security behaviour: every known ChatML-family control token, built from
+// numeric runes so the raw bigram never appears in this file's source bytes,
+// must be rewritten to bracket notation. If the defanger keys are ever
+// mangled again (the sanitizer's own keys were once silently rewritten to
+// bracket-form no-ops by the tool-call pipeline that writes this file), this
+// test fails immediately.
+func TestDefangSpecialTokens_KnownTokensBecomeBracketNotation(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{"im_start", "im_end", "call", "call_end", "endoftext"} {
+		raw := chatMLToken(name)
+		in := "a" + raw + "b"
+		out := DefangSpecialTokens(in)
+		require.NotContains(t, out, raw, name)
+		require.Contains(t, out, "["+name+"]", name)
+	}
+}
+
+// TestDefangSpecialTokens_UnknownIntroducerGetsZeroWidthSpace pins the
+// fallback: an unrecognised introducer sequence must be made parser-inert
+// with a zero-width space rather than passing through untouched.
+func TestDefangSpecialTokens_UnknownIntroducerGetsZeroWidthSpace(t *testing.T) {
+	t.Parallel()
+
+	in := "x " + chatMLToken("unknown_tok") + " y"
+	out := DefangSpecialTokens(in)
+	require.NotContains(t, out, chatMLToken("unknown_tok"))
+	require.Contains(t, out, tokenOpen()+zeroWidthSpace())
+}
+
+// TestDefangSpecialTokens_CleanPassesAndIdempotence pins that ordinary text
+// is untouched, that defanged output round-trips unchanged, and that a
+// fallback-inerted unknown token re-defangs to bracket notation on a second
+// pass once the zero-width space is stripped.
+func TestDefangSpecialTokens_CleanPassesAndIdempotence(t *testing.T) {
+	t.Parallel()
+
+	clean := "plain text with {braces} and a lone angle bracket < alone"
+	require.Equal(t, clean, DefangSpecialTokens(clean))
+
+	once := DefangSpecialTokens(chatMLToken("im_end"))
+	require.Equal(t, "[im_end]", once)
+	require.Equal(t, once, DefangSpecialTokens(once))
+
+	fallback := DefangSpecialTokens(chatMLToken("whatever"))
+	require.NotEqual(t, chatMLToken("whatever"), fallback)
+	require.NotContains(t, fallback, chatMLToken("whatever"))
+	require.Equal(t, fallback, DefangSpecialTokens(fallback))
+}

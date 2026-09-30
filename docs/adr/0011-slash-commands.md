@@ -52,7 +52,7 @@ The completions system was extended to support slash commands, similar to `@` fo
 **5. Command execution**
 
 `handleSlashCommand()` processes slash commands:
-- `/goal` — manages session goal (show status, set, clear)
+- `/goal` — manages session goal (show status, set, clear, resume)
 - `/menu` — opens the command menu
 - `/stats` — opens the usage statistics dialog
 - `/quit` — quits the application

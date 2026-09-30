@@ -232,14 +232,14 @@ session it is created. `auto_promote` also defaults on (it is free), and its
 
 ## Managing it from the TUI
 
-The `/memory` slash family inspects and steers a vault. There is no `/memory
-status`/`list`/`search` keyword — bare `/memory` is status, and `/memory sources
-<query>` is the corpus search. Every command runs under an 8s timeout
+The `/memory` slash family inspects and steers a vault. Bare `/memory`
+opens the status dialog; `/memory sources <query>` is
+the corpus search. Every command runs under an 8s timeout
 (`ui/model/memory.go:23`).
 
 | Command | What it does |
 |---------|--------------|
-| `/memory` | status: corpus counts, injected/cap bytes, vault path, active threads |
+| `/memory` | opens the status dialog: corpus counts, injected/cap bytes, vault path, tamper seal, active threads — color-headed sections in a scrolling reading pane (`↑/↓`); `r` jumps to the review queue, `f` to fsck, `esc` closes |
 | `/memory sources [query]` | with a query: a corpus search card; without: this session's provenance |
 | `/memory fsck` | full rescan, reconciles the index from the markdown |
 | `/memory budget` | injected bytes/% of cap, corpus + tag counts, by-type breakdown |
@@ -303,6 +303,19 @@ The two decision doors are:
    makes it `cold` (searchable forever, never injected), retiring tombstones
    it. Proposals decided this way commit their queued bytes on a confirm and
    feed the gate's per-bucket risk learning on a decline.
+
+   The three verdicts split by what the review found. `confirm` means *it is
+   so*: the draft joins the active corpus at confirmed trust and may claim
+   injection eligibility. `ignore` means *true but not worth surfacing* —
+   shelved, not rejected: a cold entry stays searchable (reachable through
+   `memory_search` with `status=cold`), never injects, and a later
+   `memory(op=confirm, id=…)` brings it back to `active`. There is no
+   automatic resurrection: the aging pass only demotes (`lifecycle.go`), so
+   recovery from cold is always a human act. `retire` means *wrong or
+   replaced*: the row leaves default search, recall, and injection entirely,
+   kept as an audit tombstone — and when the replacing entry records
+   `supersedes`, the chain is what keeps "why did we switch?" answerable a
+   year later, since nothing is ever hard-deleted.
 2. **Through the agent** — the same lane via `memory(op=confirm, id=…)`, which
    rides the ordinary tool-permission prompt, so the human is still the one
    signing even when the agent drives.

@@ -761,6 +761,24 @@ func (app *App) InitSystemAgent(ctx context.Context) error {
 		return err
 	}
 	app.GoalRuntime = app.AgentCoordinator.GoalRuntime()
+	// Start the goal watchdog: a level-triggered sweep that revives
+	// sessions holding an active goal but running nothing (process
+	// restarted, continuation goroutine died, error left the session
+	// idle). Opt out with options.agent.disable_goal_watchdog.
+	if app.GoalRuntime != nil {
+		var agentCfg config.AgentConfig
+		if a := app.config.Config().Options.Agent; a != nil {
+			agentCfg = *a
+		}
+		if !agentCfg.DisableGoalWatchdog {
+			interval := time.Duration(agentCfg.GoalWatchdogIntervalSeconds) * time.Second
+			app.GoalRuntime.StartWatchdog(interval)
+			app.cleanupFuncs = append(app.cleanupFuncs, func(context.Context) error {
+				app.GoalRuntime.StopWatchdog()
+				return nil
+			})
+		}
+	}
 	return nil
 }
 
@@ -827,6 +845,13 @@ func (app *App) Shutdown() {
 
 	// First, cancel all agents and wait for them to finish. This must complete
 	// before closing the DB so agents can finish writing their state.
+	// Quiesce the goal runtime before cancelling anything: the shutdown
+	// cancellations must not be classified as user cancels, or every
+	// in-flight goal gets paused on the way out and the watchdog could not
+	// revive it after a restart.
+	if app.GoalRuntime != nil {
+		app.GoalRuntime.Quiesce()
+	}
 	if app.AgentCoordinator != nil {
 		app.AgentCoordinator.CancelAll()
 	}

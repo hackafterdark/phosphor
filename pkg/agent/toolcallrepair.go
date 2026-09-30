@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 
@@ -66,6 +67,13 @@ func repairToolCall(_ context.Context, opts fantasy.ToolCallRepairOptions) (*fan
 		fixed.Input = string(out)
 		fixed.Invalid = false
 		fixed.ValidationError = nil
+		slog.Info(
+			"Repaired tool call input to match tool schema (deterministic schema-driven repair, intentional)",
+			"tool", call.ToolName,
+			"tool_call_id", call.ToolCallID,
+			"original_len", len(input),
+			"repaired_len", len(out),
+		)
 		return &fixed, nil
 	}
 	return nil, nil

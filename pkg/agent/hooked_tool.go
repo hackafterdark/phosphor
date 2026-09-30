@@ -135,6 +135,13 @@ func (h *hookedTool) Run(ctx context.Context, call fantasy.ToolCall) (fantasy.To
 	}
 
 	if result.UpdatedInput != "" {
+		slog.Info(
+			"Tool call input rewritten by PreToolUse hook (operator-defined behaviour, intentional)",
+			"tool", call.Name,
+			"tool_call_id", call.ID,
+			"original_len", len(call.Input),
+			"updated_len", len(result.UpdatedInput),
+		)
 		call.Input = result.UpdatedInput
 	}
 

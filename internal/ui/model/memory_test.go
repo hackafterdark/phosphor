@@ -37,18 +37,26 @@ func TestUI_HandleMemorySlashCommand_UnknownSubcommandWarns(t *testing.T) {
 	require.Contains(t, info.Msg, "Unknown /memory subcommand")
 }
 
-func TestUI_HandleMemorySlashCommand_StatusReportsOffWithoutAStore(t *testing.T) {
+func TestUI_HandleMemorySlashCommand_BareOpensTheStatusDialog(t *testing.T) {
 	t.Parallel()
 
 	ui := newMemoryTestUI(t)
 
 	// A non-AppWorkspace (the test workspace) resolves no in-process memory index,
-	// which is exactly the state a memory-off build is in; the status command has to
-	// say so rather than print an empty corpus as if the vault were merely quiet.
-	msg := ui.handleMemorySlashCommand(nil)()
-	info, ok := msg.(util.InfoMsg)
+	// which is exactly the state a memory-off build is in; the bare command opens
+	// the status dialog, which has to say so rather than print an empty corpus as
+	// if the vault were merely quiet.
+	cmd := ui.handleMemorySlashCommand(nil)
+	require.NotNil(t, cmd)
+	require.True(t, ui.dialog.ContainsDialog(dialog.MemoryStatusID))
+
+	msg, ok := cmd().(dialog.MemoryStatusLoadedMsg)
 	require.True(t, ok)
-	require.Contains(t, info.Msg, "Memory is off")
+	require.Contains(t, msg.Note, "Memory is off")
+
+	// Re-opening brings it to front and re-arms the load rather than
+	// stacking a second copy.
+	require.NotNil(t, ui.handleMemorySlashCommand(nil))
 }
 
 func TestUI_HandleMemorySlashCommand_SourcesNeedsASessionOrAQuery(t *testing.T) {
@@ -163,6 +171,20 @@ func TestInjectBar(t *testing.T) {
 			require.Equal(t, tc.want, injectBar(tc.used, tc.limit, tc.width))
 		})
 	}
+}
+
+func TestUI_MemoryStatusSubcommandIsRetired(t *testing.T) {
+	t.Parallel()
+
+	ui := newMemoryTestUI(t)
+
+	// The old /memory status alias is gone: the bare command owns the
+	// dialog now, and the retired keyword warns like any unknown subcommand.
+	msg := ui.handleMemorySlashCommand([]string{"status"})()
+	info, ok := msg.(util.InfoMsg)
+	require.True(t, ok)
+	require.Equal(t, util.InfoTypeWarn, info.Type)
+	require.Contains(t, info.Msg, "Unknown /memory subcommand")
 }
 
 func TestUI_MemoryReviewCommandOpensTheDialogAndReportsOffWithoutAStore(t *testing.T) {
@@ -280,9 +302,9 @@ func TestUI_MemoryReviewCommandGuardsItsSubcommands(t *testing.T) {
 // TestUI_SlashDispatchRoutesMemoryReviewToTheDialog proves the parse path a
 // user actually drives: they type "/memory review" into the editor and the
 // dispatcher has to hand "review" to the handler, not the empty subcommand.
-// The dialog opening is what distinguishes the review path from the bare
-// "/memory" status report, so the two being different types is what pins the
-// argument through.
+// The review dialog opening is what distinguishes the review path from the
+// bare "/memory" status dialog, so the two dialogs being different IDs is
+// what pins the argument through.
 func TestUI_SlashDispatchRoutesMemoryReviewToTheDialog(t *testing.T) {
 	t.Parallel()
 
@@ -298,12 +320,10 @@ func TestUI_SlashDispatchRoutesMemoryReviewToTheDialog(t *testing.T) {
 	// line.
 	require.Contains(t, msg.Note, "Memory is off")
 
-	// The bare form must still be the status report, so the two are not the
-	// same path.
-	bare := ui.handleSlashCommand("/memory")()
-	bareInfo, ok := bare.(util.InfoMsg)
-	require.True(t, ok)
-	require.Contains(t, bareInfo.Msg, "no vault is open")
+	// The bare form opens the status dialog, so the two are not the same
+	// path.
+	require.NotNil(t, ui.handleSlashCommand("/memory"))
+	require.True(t, ui.dialog.ContainsDialog(dialog.MemoryStatusID))
 }
 
 // TestUI_SlashDispatchForwardsMemoryReviewDecisionArgs guards the second half of

@@ -133,7 +133,7 @@ func TestCommands_MemoryTab(t *testing.T) {
 	items := on.list.FilteredItems()
 	require.NotEmpty(t, items)
 
-	var sawReview bool
+	var sawReview, sawStatus bool
 	for _, it := range items {
 		item, ok := it.(*CommandItem)
 		require.True(t, ok)
@@ -142,6 +142,35 @@ func TestCommands_MemoryTab(t *testing.T) {
 		if action.Line == "memory review" {
 			sawReview = true
 		}
+		if action.Line == "memory" {
+			sawStatus = true
+		}
 	}
 	require.True(t, sawReview, "the review decision loop is reachable from the menu")
+	require.True(t, sawStatus, "the status dialog opens straight from the menu")
+
+	// The System tab must also carry Memory Status: the list filter only
+	// searches the selected tab, so typing "memory" with memory on has to find
+	// the entry without tabbing over first. With memory off, nothing appears.
+	off.setCommandItems(SystemCommands)
+	for _, it := range off.list.FilteredItems() {
+		item, ok := it.(*CommandItem)
+		require.True(t, ok)
+		require.NotEqual(t, "memory_status", item.ID(), "memory-off builds must not offer memory status")
+	}
+
+	on.setCommandItems(SystemCommands)
+	var inSystem bool
+	for _, it := range on.list.FilteredItems() {
+		item, ok := it.(*CommandItem)
+		require.True(t, ok)
+		if item.ID() != "memory_status" {
+			continue
+		}
+		inSystem = true
+		action, ok := item.Action().(ActionRunSlashCommand)
+		require.True(t, ok, "the System-tab entry dispatches the same slash command as the tab")
+		require.Equal(t, "memory", action.Line)
+	}
+	require.True(t, inSystem, "typing memory on the System tab finds Memory Status")
 }

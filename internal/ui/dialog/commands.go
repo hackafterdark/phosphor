@@ -506,6 +506,17 @@ func (c *Commands) defaultCommands() []*CommandItem {
 		DialogID: WorkspaceIndexID,
 	}))
 
+	// Memory Status is reachable from the Memory tab too, but the list filter
+	// only searches the selected tab, so without a System-tab entry there is no
+	// way to type your way to the memory status dialog. Same slash command the
+	// tab dispatches, so both entries share one implementation.
+	if c.hasMemory {
+		commands = append(commands, NewCommandItem(
+			c.com.Styles, "memory_status", "Memory Status", "",
+			ActionRunSlashCommand{Line: "memory"},
+		))
+	}
+
 	// Add model settings command for tuning sampling and reasoning params.
 	commands = append(commands, NewCommandItem(c.com.Styles, "model_settings", "Model Settings", "", ActionOpenDialog{
 		DialogID: ModelSettingsID,
@@ -596,22 +607,22 @@ func (c *Commands) defaultCommands() []*CommandItem {
 // half-true implementation of what the console already does.
 func (c *Commands) memoryCommands() []*CommandItem {
 	type entry struct {
-		id, title, desc, line string
+		id, title, line string
 	}
 	entries := []entry{
-		{"memory_status", "Memory Status", "Vault tallies, injected window, and active threads", "memory status"},
-		{"memory_review", "Review Memory", "List and decide pending drafts and queued proposals", "memory review"},
-		{"memory_sources", "Memory Sources", "Show where recalled memories came from", "memory sources"},
-		{"memory_fsck", "Check Memory (fsck)", "Resync the index against the vault", "memory fsck"},
-		{"memory_budget", "Memory Budget", "Report the injection byte budget", "memory budget"},
-		{"memory_policy", "Memory Policy", "Inspect the write-gate policy", "memory policy"},
+		{"memory_status", "Memory Status", "memory"},
+		{"memory_review", "Review Memory", "memory review"},
+		{"memory_sources", "Memory Sources", "memory sources"},
+		{"memory_fsck", "Check Memory (fsck)", "memory fsck"},
+		{"memory_budget", "Memory Budget", "memory budget"},
+		{"memory_policy", "Memory Policy", "memory policy"},
 	}
 	items := make([]*CommandItem, 0, len(entries))
 	for _, e := range entries {
 		items = append(items, NewCommandItem(
 			c.com.Styles, e.id, e.title, "",
 			ActionRunSlashCommand{Line: e.line},
-		).WithDescription(e.desc))
+		))
 	}
 	return items
 }

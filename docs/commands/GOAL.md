@@ -95,8 +95,18 @@ session.` if none).
 ```
 Removes the active goal and stops the loop.
 
-> **Note:** `pause` and `resume` are **not** slash commands. They live in the
-> Commands menu — see below.
+### Resume a paused goal
+```
+/goal resume
+```
+Resumes a paused goal and restarts the autonomous loop, granting a **fresh
+continuation budget** (same behavior as the Commands menu's **Resume Goal**).
+Resuming is always an explicit human decision: a goal paused by Escape, by
+the error cap, or by the continuation budget never un-pauses on its own or
+because you typed a new message.
+
+> **Note:** `pause` is **not** a slash command — it lives in the Commands
+> menu, see below. `resume` is available both ways.
 
 ---
 
@@ -174,6 +184,70 @@ stops at the budget and hands control back to you.
 | negative  | **unlimited** — disable the guardrail (run until completion).    |
 
 Resuming a goal resets its counter, so each resume grants one fresh window.
+
+---
+
+## Error resilience: the runtime rides out failures
+
+An agent turn can die mid-flight — a 429 rate limit, a 5xx from the
+provider, a network blip, a malformed stream. Previously that silently
+stranded the goal: the loop was edge-triggered (it only advanced when a turn
+finished *cleanly*), so an errored turn left the session idle with the goal
+still "active" until you noticed and ran `/goal resume`. The runtime now
+classifies every failed turn and reacts:
+
+| Failure kind | Examples | What the runtime does |
+|------------|----------|-----------------------|
+| Transient  | 429, 408, 5xx, transport errors, malformed streams | Retries the continuation automatically with exponential backoff (5s → 10s → 20s … capped at 5 min). After `max_consecutive_errors` failures in a row, auto-pauses with an explanatory notification. |
+| Permanent  | 400 invalid request, auth failures, context-too-large | Pauses the goal immediately with the error in the notification — retrying can't help, a human must look. |
+| Canceled   | You pressed Escape, host shutdown cancels the run | Pauses the goal instead of fighting the cancel. (A *shutdown* never pauses: the runtime quiesces first so restart resilience survives the next launch.) |
+
+A completed turn — synthetic or yours — clears the consecutive-failure
+streak, so a goal that limps along with occasional blips never drifts toward
+an error-pause. Retried continuations count against the continuation budget,
+which stays the single runaway guardrail.
+
+## The watchdog: no more kicks
+
+The goal loop also gained a **level trigger**. Every 30 seconds (default) the
+watchdog sweeps all sessions that still hold an `active` goal but are running
+nothing, and re-arms them. This closes every "the agent stalled and I had to
+poke it" hole at once:
+
+- the process **restarted** overnight — active goals resume on their own
+  within ~15s of startup, no manual resume;
+- a continuation goroutine **died** with the session left idle;
+- an error path or a crash slipped past the edge trigger.
+
+The sweep respects every existing gate: it never double-starts a session
+(single-flight claims per session), never runs while the session is busy or
+has queued prompts, never fights a scheduled error retry, and never out-runs
+the continuation budget. Paused and completed goals are invisible to it.
+
+### Configuring resilience
+
+All under `options.agent` in `phosphor.json`:
+
+```json
+{
+  "options": {
+    "agent": {
+      "goal_watchdog_interval_seconds": 30,
+      "disable_goal_watchdog": false,
+      "max_consecutive_errors": 5
+    }
+  }
+}
+```
+
+| Value | Behavior |
+|-------|----------|
+| `goal_watchdog_interval_seconds: 0` | (default) sweep every **30** seconds. |
+| `goal_watchdog_interval_seconds: N` | sweep every **N** seconds. |
+| `disable_goal_watchdog: true` | no sweeps; restores the old edge-trigger-only behavior. |
+| `max_consecutive_errors: 0` | (default) pause after **5** consecutive failures. |
+| `max_consecutive_errors: N` | pause after **N** consecutive failures. |
+| `max_consecutive_errors: negative` | no cap — keep retrying transient errors (still bounded by `max_continuations`). |
 
 ---
 

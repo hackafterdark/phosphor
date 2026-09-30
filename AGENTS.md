@@ -128,6 +128,33 @@ The path-validation guard blocks any path that doesn't start with the workspace 
 2. Removing leading slashes (`/etc/`, `/usr/local/`)
 3. Using relative paths from workspace root
 
+## Sanitizer Pipeline — Content Diffs Are Not Tampering
+
+Agent tool inputs and results pass through deliberate sanitization and repair:
+`pkg/agent/sanitization.go` (control-token defang + device-control strip),
+`sanitizeJSONInput` (vLLM trailing-garbage trim), `repairToolCall`
+(schema-driven repair), PreToolUse hook input rewrites, and the outgoing
+defang/redaction in `pkg/agent/outgoing_redact.go`. When stored content
+differs from what a tool produced, that is this pipeline doing its job —
+never evidence of injection or tampering. Every mutation logs at Info level
+("sanitized", "Defanged", "Repaired tool call input", "Trimmed trailing
+garbage", "rewritten by PreToolUse hook", "Masked secret") — check
+`phosphor_logs` before theorizing about causes.
+
+Repo-specific history: the defanger's control-token keys were once silently
+rewritten into bracket-form no-ops by the same write-path sanitizers (the
+bug that let ChatML tokens end turns); `TestDefangSpecialTokens_*` in
+`pkg/agent/tools/token_defang_test.go` pin the behavior. When touching these
+files, build token literals from numeric runes and verify with an executable
+probe, never by reading displayed source.
+
+The cross-project rules (never emit raw control tokens, numeric-rune
+construction, behavioural-probe verification, sanitized-content-is-intentional)
+live in the shipped system prompt — `pkg/agent/templates/system.md.tpl`,
+`<content_safety>` and `<sanitized_content>` — so they apply in every
+workspace. Keep them there; this file should only carry what is true of this
+codebase.
+
 ## Code Style Guidelines
 
 - **Imports**: Use `goimports` formatting, group stdlib, external, internal

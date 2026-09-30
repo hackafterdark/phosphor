@@ -194,6 +194,28 @@ sensitive file (an `.env` round-trip that keeps working while the transcript onl
 ever holds tokens). It is off by default because the static non-reusable sentinels
 are already safe; this is an opt-in convenience for round-tripping values.
 
+## The Sanitizer & Repair Pipeline (intentional content mutation)
+
+Separate from secret redaction, the agent deliberately rewrites some content
+in flight. None of this is tampering or injection; every mutation emits an
+Info-level log line naming the layer responsible, so any difference between
+what a tool produced and what the transcript stores is attributable:
+
+| Mutation | Where | Why |
+| --- | --- | --- |
+| ChatML/control-token defang, VT100 device-control strip | `pkg/agent/sanitization.go` (`DefangSpecialTokens` / `StripDeviceControls`) | Stop sequences and terminal-escape injection from untrusted text |
+| Trailing-garbage trim of tool-call JSON | `sanitizeJSONInput` | vLLM tool-call parser workaround (malformed suffixes cause 400s) |
+| Schema-driven tool-call repair | `repairToolCall` (`pkg/agent/toolcallrepair.go`) | Deterministic type coercion of model-emitted inputs against the tool schema |
+| Hook rewrite of tool input | `hooked_tool.go` | Operator-defined PreToolUse behaviour |
+| Outgoing defang + last-resort secret/PII mask | `outgoing_redact.go` | Second line of defence at the provider wire |
+
+Historical note: the defanger's control-token keys were once silently
+rewritten into inert bracket-form no-ops by the very write-path sanitizers
+that run over tool-call arguments — the bug survived because no test asserted
+the defang *behavior*. `TestDefangSpecialTokens_KnownTokensBecomeBracketNotation`
+now pins it, and token literals are built from numeric runes so no channel can
+mangle them again.
+
 ## Architectural Egress Isolation (opt-in)
 
 Every layer above is a *classifier*: it tries to recognise a secret at the

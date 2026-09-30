@@ -47,7 +47,10 @@ func (m *UI) handleMemorySlashCommand(args []string) tea.Cmd {
 	rest := args[min(len(args), 1):]
 	switch sub {
 	case "":
-		return m.memoryStatusCommand()
+		// The bare command opens the status dialog; the inline stats banner
+		// that used to live here is gone, and with it the old status alias —
+		// there is one way to read the report, and it scrolls.
+		return m.memoryStatusDialogCommand()
 	case "sources":
 		return m.memorySourcesCommand(rest)
 	case "fsck":
@@ -221,8 +224,12 @@ func (m *UI) memoryInfo(width int) string {
 			line += " " + bar
 		}
 		parts = append(parts, t.ModelInfo.Provider.Render(line))
+		// One stat per line, label-aligned: the sidebar is too narrow for a
+		// joined line that wraps mid-count, and a wrapped count reads as
+		// noise. The total/hot/retired accounting lives in the /memory dialog.
 		parts = append(parts, t.ModelInfo.Provider.Render(fmt.Sprintf(
-			"%d active · %d pending · %d recalled", snap.stats.Active, snap.stats.Pending, recalled)))
+			"active    %d\npending   %d\nrecalled  %d",
+			snap.stats.Active, snap.stats.Pending, recalled)))
 	} else if recalled > 0 {
 		parts = append(parts, t.ModelInfo.Provider.Render(fmt.Sprintf("%d recalled", recalled)))
 	}
@@ -392,60 +399,107 @@ func (m *UI) applyMemoryAction(ctx context.Context, store *memory.Store, action 
 	}
 }
 
-func (m *UI) memoryStatusCommand() tea.Cmd {
+// openMemoryStatusDialog puts the full stats report on the screen. Opening
+// is cheap and empty until the load command lands, so the dialog never
+// renders a half-read corpus as if it were the truth.
+func (m *UI) memoryStatusDialogCommand() tea.Cmd {
+	if m.dialog.ContainsDialog(dialog.MemoryStatusID) {
+		m.dialog.BringToFront(dialog.MemoryStatusID)
+		return m.loadMemoryStatusData()
+	}
+	m.dialog.OpenDialog(dialog.NewMemoryStatus(m.com))
+	return m.loadMemoryStatusData()
+}
+
+// loadMemoryStatusData reads the report off the vault and hands the dialog
+// its snapshot. The read rides a tea.Cmd so a contended index can never
+// block the update loop; the dialog only stores what arrives.
+func (m *UI) loadMemoryStatusData() tea.Cmd {
 	return func() tea.Msg {
 		store := m.memoryStore()
 		if store == nil {
-			return util.NewInfoMsg("Memory is off: no vault is open in this session. Set memory.enabled in phosphor.json to turn it on.")
+			return dialog.MemoryStatusLoadedMsg{Note: "Memory is off: no vault is open in this session. Set memory.enabled in phosphor.json to turn it on."}
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), memoryCommandTimeout)
-		defer cancel()
-		stats, err := store.Report(ctx)
+		sections, note, err := memoryStatusReport(store)
 		if err != nil {
-			return util.ReportError(fmt.Errorf("memory status: %w", err))()
+			return dialog.MemoryStatusLoadedMsg{Err: fmt.Errorf("memory status: %w", err)}
 		}
-		var sb strings.Builder
-		sb.WriteString("Memory (builtin provider)\n")
-		fmt.Fprintf(&sb, "Corpus: %d total, %d active, %d hot, %d pending, %d retired, %d quarantined\n",
-			stats.Total, stats.Active, stats.Hot, stats.Pending, stats.Retired, stats.Quarantined)
-		fmt.Fprintf(&sb, "Injected window: %d/%d bytes\n", stats.Injected, stats.InjectLimit)
-		fmt.Fprintf(&sb, "Vault: %s\n", store.VaultDir(memory.ScopeProject))
-		if integ, err := store.ReportIntegrity(ctx); err == nil {
-			if !integ.Enabled {
-				sb.WriteString("Tamper seal: off (memory.integrity=false; the index accepts rows it cannot verify).\n")
-			} else {
-				if integ.KeyPresent {
-					fmt.Fprintf(&sb, "Tamper seal: on; %d/%d entries sealed, key %s\n",
-						integ.Signed, integ.Total, integ.KeyFingerprint)
-				} else {
-					sb.WriteString(fmt.Sprintf("Tamper seal: on; %d/%d entries sealed. Signing key MISSING — every entry fails closed until it is restored (/memory key status shows the recovery path).\n",
-						integ.Signed, integ.Total))
-				}
-				if integ.KeyJustMinted {
-					sb.WriteString("The signing key was created this session — take your backup now: /memory key show, store it offline; losing it locks the corpus out of recall.\n")
-				}
-				if integ.Unsigned > 0 || integ.Quarantined > 0 {
-					fmt.Fprintf(&sb, "Needs attention: %d unsigned, %d quarantined (run /memory fsck to resync).\n",
-						integ.Unsigned, integ.Quarantined)
-				}
-				if integ.DroppedVerify > 0 {
-					fmt.Fprintf(&sb, "%d entries were held out of recall this session because their seal failed at read time \u2014 tampering or a changed key; inspect before trusting what remains.\n",
-						integ.DroppedVerify)
-				}
-			}
-		}
-		if threads, err := store.ActiveThreads(ctx, 6); err == nil && len(threads) > 0 {
-			names := make([]string, 0, len(threads))
-			for _, t := range threads {
-				names = append(names, fmt.Sprintf("%s (%d)", t.Headline, t.Entries))
-			}
-			fmt.Fprintf(&sb, "Active threads: %s\n", strings.Join(names, ", "))
-		}
-		if stats.Quarantined > 0 {
-			sb.WriteString("Quarantined entries are held out of recall; run /memory fsck to resync.")
-		}
-		return util.NewInfoMsg(sb.String())
+		return dialog.MemoryStatusLoadedMsg{Sections: sections, Note: note}
 	}
+}
+
+// memoryStatusReport builds the full stats report the dialog renders: the
+// aligned corpus columns, the inject budget, the vault path, the seal
+// accounting, and the active threads — each as its own headed section so the
+// dialog can style the blocks and scroll them, and so the inline report is
+// the same information flattened. Aligned columns rather than one run-on
+// sentence because the corpus numbers are distinct measures that read as a
+// table or not at all; the quarantine count only earns a line when nonzero,
+// matching the widget's quiet-when-healthy voice. The returned note (the
+// quarantine hint) rides the dialog's subtitle and the inline footer.
+func memoryStatusReport(store *memory.Store) ([]dialog.MemoryStatusSection, string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), memoryCommandTimeout)
+	defer cancel()
+	stats, err := store.Report(ctx)
+	if err != nil {
+		return nil, "", err
+	}
+	corpus := []string{
+		fmt.Sprintf("total        %d", stats.Total),
+		fmt.Sprintf("active       %d", stats.Active),
+		fmt.Sprintf("hot          %d", stats.Hot),
+		fmt.Sprintf("pending      %d", stats.Pending),
+		fmt.Sprintf("retired      %d", stats.Retired),
+	}
+	if stats.Quarantined > 0 {
+		corpus = append(corpus, fmt.Sprintf("quarantined  %d", stats.Quarantined))
+	}
+	sections := []dialog.MemoryStatusSection{
+		{Label: "Corpus", Lines: corpus},
+		{Label: "Injected window", Lines: []string{fmt.Sprintf("%d/%d bytes", stats.Injected, stats.InjectLimit)}},
+		{Label: "Vault", Lines: []string{store.VaultDir(memory.ScopeProject)}},
+	}
+	if integ, err := store.ReportIntegrity(ctx); err == nil {
+		seal := dialog.MemoryStatusSection{Label: "Tamper seal"}
+		if !integ.Enabled {
+			seal.Lines = []string{"off (memory.integrity=false; the index accepts rows it cannot verify)."}
+		} else {
+			if integ.KeyPresent {
+				seal.Lines = []string{fmt.Sprintf("on; %d/%d entries sealed, key %s",
+					integ.Signed, integ.Total, integ.KeyFingerprint)}
+			} else {
+				seal.Lines = []string{fmt.Sprintf("on; %d/%d entries sealed. Signing key MISSING — every entry fails closed until it is restored (/memory key status shows the recovery path).",
+					integ.Signed, integ.Total)}
+			}
+			if integ.KeyJustMinted {
+				seal.Lines = append(seal.Lines, "The signing key was created this session — take your backup now: /memory key show, store it offline; losing it locks the corpus out of recall.")
+			}
+			if integ.DroppedVerify > 0 {
+				seal.Lines = append(seal.Lines, fmt.Sprintf("%d entries were held out of recall this session because their seal failed at read time — tampering or a changed key; inspect before trusting what remains.",
+					integ.DroppedVerify))
+			}
+		}
+		sections = append(sections, seal)
+		if integ.Enabled && (integ.Unsigned > 0 || integ.Quarantined > 0) {
+			sections = append(sections, dialog.MemoryStatusSection{
+				Label: "Needs attention",
+				Lines: []string{fmt.Sprintf("%d unsigned, %d quarantined (run /memory fsck to resync).",
+					integ.Unsigned, integ.Quarantined)},
+			})
+		}
+	}
+	if threads, err := store.ActiveThreads(ctx, 6); err == nil && len(threads) > 0 {
+		lines := make([]string, 0, len(threads))
+		for _, t := range threads {
+			lines = append(lines, fmt.Sprintf("%s (%d)", t.Headline, t.Entries))
+		}
+		sections = append(sections, dialog.MemoryStatusSection{Label: "Active threads", Lines: lines, Bulleted: true})
+	}
+	note := ""
+	if stats.Quarantined > 0 {
+		note = "Quarantined entries are held out of recall; run /memory fsck to resync."
+	}
+	return sections, note, nil
 }
 
 // memorySourcesCommand answers "where did this come from" at two granularities: with a

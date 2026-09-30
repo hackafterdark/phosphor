@@ -38,6 +38,7 @@ type Goal struct {
 type Service interface {
 	pubsub.Subscriber[Goal]
 	Get(ctx context.Context, sessionID string) (*Goal, error)
+	ListActive(ctx context.Context) ([]*Goal, error)
 	Create(ctx context.Context, sessionID string, objective string) (*Goal, error)
 	UpdateStatus(ctx context.Context, sessionID string, goalID string, status GoalStatus) (*Goal, error)
 	Clear(ctx context.Context, sessionID string) (*Goal, error)
@@ -67,6 +68,18 @@ func (s *service) Get(ctx context.Context, sessionID string) (*Goal, error) {
 		return nil, fmt.Errorf("getting goal: %w", err)
 	}
 	return s.fromDBItem(dbGoal), nil
+}
+
+func (s *service) ListActive(ctx context.Context) ([]*Goal, error) {
+	dbGoals, err := s.q.ListActiveGoals(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("listing active goals: %w", err)
+	}
+	goals := make([]*Goal, 0, len(dbGoals))
+	for _, item := range dbGoals {
+		goals = append(goals, s.fromDBItem(item))
+	}
+	return goals, nil
 }
 
 func (s *service) Create(ctx context.Context, sessionID string, objective string) (*Goal, error) {

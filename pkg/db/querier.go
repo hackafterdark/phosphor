@@ -37,6 +37,7 @@ type Querier interface {
 	GetUsageByDayRange(ctx context.Context, strftime interface{}) ([]GetUsageByDayRangeRow, error)
 	GetUsageByHour(ctx context.Context) ([]GetUsageByHourRow, error)
 	GetUsageByModel(ctx context.Context) ([]GetUsageByModelRow, error)
+	ListActiveGoals(ctx context.Context) ([]Goal, error)
 	ListAllUserMessages(ctx context.Context) ([]Message, error)
 	ListFilesByPath(ctx context.Context, path string) ([]File, error)
 	ListFilesBySession(ctx context.Context, sessionID string) ([]File, error)

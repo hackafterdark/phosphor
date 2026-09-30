@@ -25,6 +25,21 @@
           "description": "Maximum number of goal continuation turns before the goal is auto-paused for review (0 = default 25",
           "default": 0
         },
+        "goal_watchdog_interval_seconds": {
+          "type": "integer",
+          "description": "Seconds between goal watchdog sweeps that revive idle active goals (0 = default 30)",
+          "default": 0
+        },
+        "disable_goal_watchdog": {
+          "type": "boolean",
+          "description": "Disable the goal watchdog that revives idle active goals",
+          "default": false
+        },
+        "max_consecutive_errors": {
+          "type": "integer",
+          "description": "Consecutive failed goal continuation turns tolerated before auto-pause (0 = default 5",
+          "default": 0
+        },
         "structural_search_languages": {
           "items": {
             "type": "string"
@@ -198,6 +213,10 @@
         "workspace_search": {
           "$ref": "#/$defs/WorkspaceSearch",
           "description": "Unified workspace search configuration"
+        },
+        "memory": {
+          "$ref": "#/$defs/Memory",
+          "description": "First-party memory vault configuration"
         }
       },
       "additionalProperties": false,
@@ -633,6 +652,153 @@
       },
       "type": "object"
     },
+    "Memory": {
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Turn the memory vault on or off; defaults to on"
+        },
+        "provider": {
+          "type": "string",
+          "description": "Active memory backend",
+          "default": "builtin"
+        },
+        "auto_index": {
+          "type": "boolean",
+          "description": "Refresh the memory index on vault changes; defaults to the Enabled value when unset"
+        },
+        "ask": {
+          "type": "string",
+          "description": "Write-approval posture: ask | balanced | auto",
+          "default": "balanced"
+        },
+        "adaptive": {
+          "type": "boolean",
+          "description": "Let learned per-bucket thresholds shape around the ask dial",
+          "default": true
+        },
+        "min_samples": {
+          "type": "integer",
+          "description": "Feedback events a bucket needs before the adaptive layer may act on it",
+          "default": 5
+        },
+        "max_asks_per_turn": {
+          "type": "integer",
+          "description": "Maximum write confirmations per turn",
+          "default": 1
+        },
+        "confirm": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Named categories that must always be confirmed"
+        },
+        "ignore": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Named categories that never need confirming"
+        },
+        "untunable": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Categories the gate may never silence"
+        },
+        "proactive_recall": {
+          "type": "string",
+          "description": "Session-start recall posture: off | hint | on",
+          "default": "hint"
+        },
+        "thread_hint_lines": {
+          "type": "integer",
+          "description": "Maximum lines in the session-start thread hint"
+        },
+        "cross_session": {
+          "type": "string",
+          "description": "Cross-session recall: isolated | related | transcript",
+          "default": "related"
+        },
+        "related_min_confidence": {
+          "type": "number",
+          "description": "Minimum confidence to auto-pull a cross-session distillate",
+          "default": 0.55
+        },
+        "human_edits": {
+          "type": "string",
+          "description": "authoritative | advisory",
+          "default": "authoritative"
+        },
+        "allow_non_primary_writes": {
+          "type": "boolean",
+          "description": "Let non-primary agent contexts write memories; off by default"
+        },
+        "prose": {
+          "type": "boolean",
+          "description": "Enable prose-based keyword and tag enrichment; only meaningful in a phosphor_prose build"
+        },
+        "distill": {
+          "type": "boolean",
+          "description": "Ride the summarizer to propose pending candidate memories so decisions survive compaction; off by default"
+        },
+        "max_inject_bytes": {
+          "type": "integer",
+          "description": "Hard byte ceiling on the whole injected memory block; values above 32768 are clamped to that ceiling",
+          "default": 8192
+        },
+        "max_unused_days": {
+          "type": "integer",
+          "description": "Entries unused this long age to cold",
+          "default": 90
+        },
+        "promote_threshold": {
+          "type": "number",
+          "description": "hot_score an entry must reach to be considered for Tier A",
+          "default": 1.0
+        },
+        "auto_promote": {
+          "type": "boolean",
+          "description": "Let high-scoring entries promote themselves into the always-injected window; false means pins only",
+          "default": true
+        },
+        "auto_promote_min_trust": {
+          "type": "number",
+          "description": "Trust a non-pinned entry needs to auto-promote; only confirmed entries reach 0.8",
+          "default": 0.75
+        },
+        "auto_promote_share_pct": {
+          "type": "integer",
+          "description": "Percent of the injected byte budget the automatic (non-pinned) path may claim at most",
+          "default": 50
+        },
+        "integrity": {
+          "type": "boolean",
+          "description": "Seal memory entries with a keyed digest so tampered content is refused; on by default"
+        },
+        "rate_limit_floor_pct": {
+          "type": "number",
+          "description": "Skip model-spending memory work below this remaining-budget percent",
+          "default": 10
+        },
+        "budgets": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "type": "object",
+          "description": "Per-slot character budgets keyed by slot name"
+        },
+        "write_retries": {
+          "type": "integer",
+          "description": "Times a contended memory write is replayed against another instance holding the index lock",
+          "default": 24
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
     "Model": {
       "properties": {
         "id": {
@@ -844,14 +1010,25 @@
           "description": "Fraction of context window at which to trigger auto-summarization (0-1",
           "default": 0.8
         },
-        "SummarizeModel": {
-          "type": "string"
+        "summarize_model": {
+          "type": "string",
+          "enum": [
+            "main",
+            "large",
+            "small"
+          ],
+          "description": "Summarization model",
+          "default": "main"
         },
-        "SummarizeToolOutputChars": {
-          "type": "integer"
+        "summarize_tool_output_chars": {
+          "type": "integer",
+          "description": "Max chars to keep per tool output during compaction pruning",
+          "default": 200
         },
-        "SummarizeToolOutputAggressiveChars": {
-          "type": "integer"
+        "summarize_tool_output_aggressive_chars": {
+          "type": "integer",
+          "description": "Max chars per tool output for overflow recovery pruning",
+          "default": 50
         },
         "data_directory": {
           "type": "string",
@@ -944,12 +1121,7 @@
         }
       },
       "additionalProperties": false,
-      "type": "object",
-      "required": [
-        "SummarizeModel",
-        "SummarizeToolOutputChars",
-        "SummarizeToolOutputAggressiveChars"
-      ]
+      "type": "object"
     },
     "Permissions": {
       "properties": {
@@ -1303,10 +1475,12 @@
             "working_dir",
             "active_llm",
             "goal",
+            "workspace_search",
             "files",
             "lsps",
             "mcps",
-            "skills"
+            "skills",
+            "memory"
           ],
           "description": "Component ID"
         },

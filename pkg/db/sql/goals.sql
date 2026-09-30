@@ -41,3 +41,8 @@ WHERE session_id = ? AND status = 'active';
 -- name: DeleteGoal :exec
 DELETE FROM goals
 WHERE session_id = ?;
+
+-- name: ListActiveGoals :many
+SELECT *
+FROM goals
+WHERE status = 'active';

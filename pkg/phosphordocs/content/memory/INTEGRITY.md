@@ -246,7 +246,8 @@ Then drive the key with the `/memory key` family (`memoryKeyCommand`,
 | `/memory key restore <phrase>` | writes the key back from a BIP39 phrase, adopts it into the live handle, and clears the failed-open latch so recall resumes without a restart (`RestoreIntegrityKeyFromMnemonic`, `ReloadIntegrityKey`). Reachable even when the keyless vault will not open normally, via the maintenance handle |
 | `/memory key rotate confirm` | mints a fresh key and re-seals the whole corpus in one action; requires the literal word `confirm` (`RotateIntegrityKey`) |
 
-`/memory status` prints the same integrity picture beside the corpus counts —
+`/memory` opens the status dialog with the same integrity picture beside the
+corpus counts —
 seal state, key fingerprint, the sealed/unsigned/quarantined tallies, a loud
 line the session that first creates the key, and a count of entries held out of
 recall because their seal failed at read time. The Memory sidebar warns on the

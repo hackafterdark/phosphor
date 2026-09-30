@@ -1318,7 +1318,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 			// idempotent, so for providers that do send OnReasoningEnd this is
 			// a no-op.
 			currentAssistant.FinishThinking()
-			currentAssistant.AppendContent(tools.DefangSpecialTokens(text))
+			currentAssistant.AppendContent(defangAssistantText(text))
 			return a.messages.Update(genCtx, *currentAssistant)
 		},
 		OnToolInputStart: func(id string, toolName string) error {
@@ -1344,7 +1344,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 			toolCall := message.ToolCall{
 				ID:               tc.ToolCallID,
 				Name:             tc.ToolName,
-				Input:            sanitizeJSONInput(tc.Input),
+				Input:            sanitizeToolCallInput(tc.ToolName, tc.ToolCallID, tc.Input),
 				ProviderExecuted: false,
 				Finished:         true,
 			}
@@ -2063,7 +2063,7 @@ func (a *sessionAgent) createUserMessage(ctx context.Context, call SessionAgentC
 	// whatever it reads in the user turn; storing the defanged form makes it
 	// far more likely to reproduce the defanged form in its response, which
 	// prevents vLLM from stopping mid-response on tokens like <|im_end|>.
-	prompt = tools.DefangSpecialTokens(prompt)
+	prompt = defangUserPrompt(prompt)
 	parts := []message.ContentPart{message.TextContent{Text: prompt}}
 	var attachmentParts []message.ContentPart
 	for _, attachment := range call.Attachments {
@@ -2827,11 +2827,11 @@ func (a *sessionAgent) convertToToolResult(result fantasy.ToolResultContent) mes
 	switch result.Result.GetType() {
 	case fantasy.ToolResultContentTypeText:
 		if r, ok := fantasy.AsToolResultOutputType[fantasy.ToolResultOutputContentText](result.Result); ok {
-			baseResult.Content = tools.StripDeviceControls(tools.DefangSpecialTokens(r.Text))
+			baseResult.Content = sanitizeToolResultContent(result.ToolName, result.ToolCallID, r.Text)
 		}
 	case fantasy.ToolResultContentTypeError:
 		if r, ok := fantasy.AsToolResultOutputType[fantasy.ToolResultOutputContentError](result.Result); ok {
-			baseResult.Content = tools.StripDeviceControls(tools.DefangSpecialTokens(r.Error.Error()))
+			baseResult.Content = sanitizeToolResultContent(result.ToolName, result.ToolCallID, r.Error.Error())
 			baseResult.IsError = true
 		}
 	case fantasy.ToolResultContentTypeMedia:
@@ -2849,7 +2849,7 @@ func (a *sessionAgent) convertToToolResult(result fantasy.ToolResultContent) mes
 				if content == "" {
 					content = fmt.Sprintf("Loaded %s content", r.MediaType)
 				}
-				baseResult.Content = tools.StripDeviceControls(tools.DefangSpecialTokens(content))
+				baseResult.Content = sanitizeToolResultContent(result.ToolName, result.ToolCallID, content)
 				baseResult.Data = r.Data
 				baseResult.MIMEType = r.MediaType
 			}
