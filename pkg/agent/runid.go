@@ -194,10 +194,46 @@ func maxTokensContinuationsFromContext(ctx context.Context) int {
 	return 0
 }
 
+// unrecognizedToolCallContinuationsContextKey is the unexported context key
+// that carries how many automatic continuations this turn has already spent
+// recovering from a step that ended normally (FinishReasonEndTurn) but whose
+// final text is the inference engine's own native tool-call syntax that its
+// tool-call parser (e.g. vLLM's --tool-call-parser qwen3_xml) failed to
+// recognize and convert into a real structured tool call — see
+// looksLikeUnrecognizedToolCall in agent.go. Kept as its own key: unlike a
+// forced ChatML stop or a token-budget cutoff, nothing here was truncated or
+// cut off, so this budget is unrelated to either of those.
+type unrecognizedToolCallContinuationsContextKey struct{}
+
+// defaultMaxUnrecognizedToolCallContinuations bounds those automatic
+// continuations. Not user-configurable, like the forced-stop budget: this
+// recovers from a known, narrow parser quirk in a provider Phosphor already
+// has other special-cased handling for (sanitizeJSONInput), not a tunable
+// cost/operator tradeoff like the token-budget continuation.
+const defaultMaxUnrecognizedToolCallContinuations = 2
+
+// withUnrecognizedToolCallContinuations returns ctx carrying the number of
+// automatic continuations consumed so far, for the recursive call into
+// sessionAgent.Run.
+func withUnrecognizedToolCallContinuations(ctx context.Context, n int) context.Context {
+	return context.WithValue(ctx, unrecognizedToolCallContinuationsContextKey{}, n)
+}
+
+// unrecognizedToolCallContinuationsFromContext returns the count set by
+// [withUnrecognizedToolCallContinuations], or zero when the turn has not yet
+// recovered from an unrecognized tool call.
+func unrecognizedToolCallContinuationsFromContext(ctx context.Context) int {
+	if v, ok := ctx.Value(unrecognizedToolCallContinuationsContextKey{}).(int); ok {
+		return v
+	}
+	return 0
+}
+
 // isInternalContinuation reports whether ctx marks this sessionAgent.Run call
 // as an internal recursive continuation of an already-active turn — the
-// self-critique reflection retry, the forced-stop recovery, or a token-budget
-// continuation — rather than a freshly, independently dispatched request.
+// self-critique reflection retry, the forced-stop recovery, a token-budget
+// continuation, or an unrecognized-tool-call retry — rather than a freshly,
+// independently dispatched request.
 //
 // This matters because the outer Run invocation that is about to
 // `return a.Run(ctx, call)` is still, from the accepted-dispatch gate's point
@@ -214,5 +250,6 @@ func maxTokensContinuationsFromContext(ctx context.Context) int {
 func isInternalContinuation(ctx context.Context) bool {
 	return reflectionTurnsFromContext(ctx) > 0 ||
 		forcedStopContinuationsFromContext(ctx) > 0 ||
-		maxTokensContinuationsFromContext(ctx) > 0
+		maxTokensContinuationsFromContext(ctx) > 0 ||
+		unrecognizedToolCallContinuationsFromContext(ctx) > 0
 }

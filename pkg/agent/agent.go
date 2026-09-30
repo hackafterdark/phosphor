@@ -696,6 +696,11 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 	// on FinishReasonMaxTokens (ran out of token/thinking budget) instead of
 	// a forced ChatML stop. Kept as an independent counter/cap (see runid.go).
 	maxTokensContinuationsUsed := maxTokensContinuationsFromContext(ctx)
+	// unrecognizedToolCallContinuationsUsed is the sibling budget for a step
+	// that ended normally but whose final text is an unconverted qwen3_xml
+	// tool-call block the provider's own parser failed to recognize (see
+	// looksLikeUnrecognizedToolCall).
+	unrecognizedToolCallContinuationsUsed := unrecognizedToolCallContinuationsFromContext(ctx)
 	slog.Info("SessionAgent.Run called", "session_id", call.SessionID, "temp", call.Temperature, "rep_pen", call.RepetitionPenalty)
 	if err := ValidateCall(call); err != nil {
 		return nil, err
@@ -1099,7 +1104,15 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 	// Don't send MaxOutputTokens if 0 — some providers (e.g. LM Studio) reject it
 	var maxOutputTokens *int64
 	if call.MaxOutputTokens > 0 {
-		maxOutputTokens = &call.MaxOutputTokens
+		clamped := clampMaxOutputTokens(call.MaxOutputTokens, currentSession.CurrentTokens, int64(largeModel.CatwalkCfg.ContextWindow))
+		if clamped != call.MaxOutputTokens {
+			slog.Warn("Clamping requested max output tokens to fit the remaining context window",
+				"session_id", call.SessionID, "configured", call.MaxOutputTokens, "clamped_to", clamped,
+				"current_tokens", currentSession.CurrentTokens, "context_window", largeModel.CatwalkCfg.ContextWindow)
+		}
+		if clamped > 0 {
+			maxOutputTokens = &clamped
+		}
 	}
 	result, err = agent.Stream(genCtx, fantasy.AgentStreamCall{
 		Prompt:           promptWithAttachmentsResult,
@@ -1638,6 +1651,29 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 		}
 		slog.Warn("Max-tokens continuation budget exhausted, completing the turn as cut off",
 			"used", maxTokensContinuationsUsed, "max", continuationCap)
+	}
+
+	// After Stream returns, check whether the step that ended the run
+	// normally (FinishReasonEndTurn — nothing was truncated or cut off) left
+	// an unconverted qwen3_xml tool-call block as its final text: the
+	// provider's own tool-call parser occasionally fails to recognize and
+	// convert its native syntax, so it reaches Phosphor as inert prose
+	// instead of a real tool call. The model believes it already made the
+	// call; asking it to reissue the exact same call (not to change syntax —
+	// this syntax is correct for this provider) gives the parser another
+	// chance rather than leaving the turn dead-ended on tag soup.
+	if err == nil && currentAssistant != nil && currentAssistant.FinishReason() == message.FinishReasonEndTurn &&
+		looksLikeUnrecognizedToolCall(currentAssistant.Content().Text) {
+		if unrecognizedToolCallContinuationsUsed < defaultMaxUnrecognizedToolCallContinuations {
+			slog.Warn("Step ended with an unconverted tool-call block the provider's parser did not recognize, queueing an automatic continuation",
+				"session_id", call.SessionID, "attempt", unrecognizedToolCallContinuationsUsed+1, "max", defaultMaxUnrecognizedToolCallContinuations)
+			if !call.IsStateless {
+				a.queueNote(call.SessionID, "Your previous tool call was not recognized or executed by the tool-calling system, so you received no result for it. Reissue the exact same tool call again.")
+			}
+			return a.Run(withUnrecognizedToolCallContinuations(ctx, unrecognizedToolCallContinuationsUsed+1), call)
+		}
+		slog.Warn("Unrecognized-tool-call continuation budget exhausted, completing the turn as-is",
+			"used", unrecognizedToolCallContinuationsUsed, "max", defaultMaxUnrecognizedToolCallContinuations)
 	}
 
 	if err == nil && !call.IsStateless {
@@ -2448,6 +2484,66 @@ func stripContinuationChainReasoning(messages []fantasy.Message) []fantasy.Messa
 		messages[i].Content = kept
 	}
 	return messages
+}
+
+// unrecognizedToolCallPattern matches the vLLM qwen3_xml tool-call parser's
+// own native tool-call syntax (see sanitizeJSONInput's doc comment) when the
+// parser fails to recognize and convert a generation into a real structured
+// tool call. The whole block then lands as ordinary assistant text instead:
+// the model believes it successfully called a tool and is waiting on a
+// result; Phosphor sees a normal, complete turn (FinishReasonEndTurn) with
+// nothing pending. Confirmed live: a `read` call landed this way mid-session
+// while every other tool call in the same session parsed normally — an
+// intermittent miss in that parser, not a model formatting mistake, which is
+// why the fix is "ask it to reissue the same call" rather than "tell it to
+// stop using this syntax" (that syntax is correct for this provider).
+var unrecognizedToolCallPattern = regexp.MustCompile(`(?s)^\s*<tool_call>\s*<function=`)
+
+// looksLikeUnrecognizedToolCall reports whether text is (the start of) an
+// unconverted qwen3_xml-style tool-call block rather than a genuine final
+// answer.
+func looksLikeUnrecognizedToolCall(text string) bool {
+	return unrecognizedToolCallPattern.MatchString(text)
+}
+
+// contextWindowSafetyMargin reserves headroom beyond clampMaxOutputTokens's
+// arithmetic for tokens added between the session's last known usage and the
+// actual outgoing request — the new user message, tool results, and minor
+// drift between Phosphor's estimate and the provider's own tokenization.
+const contextWindowSafetyMargin = 4096
+
+// clampMaxOutputTokens bounds a configured reply-token budget to what the
+// context window actually has left, given currentTokens already spent and
+// contextWindow the model's total capacity. It returns requested unchanged
+// when contextWindow or currentTokens is unknown (<=0), since there is
+// nothing to clamp against, and returns 0 when there is no usable headroom
+// left at all, so the caller omits the field entirely and the provider's own
+// default governs instead (the same fallback already in place for a model
+// with no configured max_tokens at all, recoverable by the
+// FinishReasonMaxTokens continuation in Run).
+//
+// A fixed max_tokens that fits a fresh session can stop fitting once
+// conversation history grows: the provider must reserve room for up to
+// max_tokens reply tokens on top of the prompt, so prompt_tokens + max_tokens
+// > context_window is a hard rejection before generation even starts —
+// confirmed live with a 262144-token window, ~133k prompt tokens, and a
+// configured max_tokens of 131072 (together they exceed the window at just
+// over half of it used). Neither Phosphor's context-usage display nor the
+// auto-summarize threshold has any reason to catch this: both look only at
+// prompt usage, never at the reply budget the very next request also needs
+// on top of it.
+func clampMaxOutputTokens(requested, currentTokens, contextWindow int64) int64 {
+	if contextWindow <= 0 || currentTokens < 0 {
+		return requested
+	}
+	headroom := contextWindow - currentTokens - contextWindowSafetyMargin
+	if headroom >= requested {
+		return requested
+	}
+	if headroom <= 0 {
+		return 0
+	}
+	return headroom
 }
 
 // filterFileParts removes fantasy.FilePart entries from a slice of message
