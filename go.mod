@@ -4,15 +4,15 @@ go 1.27.0
 
 require (
 	charm.land/bubbles/v2 v2.2.1
-	charm.land/bubbletea/v2 v2.0.9
-	charm.land/catwalk v0.52.49
+	charm.land/bubbletea/v2 v2.0.10
+	charm.land/catwalk v0.52.56
 	charm.land/fang/v2 v2.0.1
 	charm.land/fantasy v0.45.2
 	charm.land/glamour/v2 v2.0.1
 	charm.land/lipgloss/v2 v2.0.6
 	charm.land/log/v2 v2.0.1
 	charm.land/x/vcr v0.1.1
-	github.com/Arize-ai/openinference/go/openinference-semantic-conventions v0.1.8
+	github.com/Arize-ai/openinference/go/openinference-semantic-conventions v0.1.9
 	github.com/JohannesKaufmann/html-to-markdown v1.6.0
 	github.com/Microsoft/go-winio v0.6.2
 	github.com/NimbleMarkets/ntcharts v0.5.1
@@ -29,10 +29,10 @@ require (
 	github.com/charmbracelet/x/ansi v0.11.8
 	github.com/charmbracelet/x/editor v0.2.0
 	github.com/charmbracelet/x/etag v0.2.0
-	github.com/charmbracelet/x/exp/charmtone v0.0.0-20260920004010-53e2afe73ae5
-	github.com/charmbracelet/x/exp/golden v0.0.0-20250806222409-83e3a29d542f
+	github.com/charmbracelet/x/exp/charmtone v0.1.0
+	github.com/charmbracelet/x/exp/golden v0.1.0
 	github.com/charmbracelet/x/exp/ordered v0.1.0
-	github.com/charmbracelet/x/exp/slice v0.0.0-20260920004010-53e2afe73ae5
+	github.com/charmbracelet/x/exp/slice v0.1.0
 	github.com/charmbracelet/x/exp/strings v0.1.0
 	github.com/charmbracelet/x/powernap v0.1.6
 	github.com/charmbracelet/x/term v0.2.2
@@ -49,12 +49,12 @@ require (
 	github.com/itchyny/gojq v0.12.19
 	github.com/joho/godotenv v1.5.1
 	github.com/jordanella/go-ansi-paintbrush v0.0.0-20240728195301-b7ad996ecf3d
-	github.com/labstack/echo/v5 v5.3.1
+	github.com/labstack/echo/v5 v5.4.0
 	github.com/lucasb-eyer/go-colorful v1.4.1
 	github.com/mattn/go-isatty v0.0.24
 	github.com/mbndr/figlet4go v0.0.0-20190224160619-d6cef5b186ea
 	github.com/modelcontextprotocol/go-sdk v1.8.0
-	github.com/ncruces/go-sqlite3 v0.35.5
+	github.com/ncruces/go-sqlite3 v0.35.6
 	github.com/nxadm/tail v1.4.11
 	github.com/pdfcpu/pdfcpu v0.15.0
 	github.com/pelletier/go-toml/v2 v2.4.3
@@ -83,7 +83,7 @@ require (
 	go.opentelemetry.io/otel/sdk v1.46.0
 	go.opentelemetry.io/otel/trace v1.46.0
 	go.uber.org/goleak v1.3.0
-	golang.design/x/clipboard v0.9.0
+	golang.design/x/clipboard v0.11.0
 	golang.org/x/exp v0.0.0-20260908205506-85c1c2202aba
 	golang.org/x/net v0.59.0
 	golang.org/x/sync v0.23.0
@@ -214,7 +214,7 @@ require (
 	github.com/muesli/mango-pflag v0.2.0 // indirect
 	github.com/muesli/roff v0.1.0 // indirect
 	github.com/muesli/termenv v0.16.0 // indirect
-	github.com/ncruces/go-sqlite3-wasm/v6 v6.2.35304 // indirect
+	github.com/ncruces/go-sqlite3-wasm/v6 v6.3.35304 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/ncruces/julianday v1.0.0 // indirect
 	github.com/nfnt/resize v0.0.0-20180221191011-83c6a9932646 // indirect
