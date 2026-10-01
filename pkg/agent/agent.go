@@ -912,7 +912,28 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 		// This prevents context overflow when a large prompt pushes us over the limit.
 		if shouldSummarize(currentSession, largeModel, a.summarizeThreshold, a.disableAutoSummarize) {
 			slog.Debug("Auto-summarizing before request to prevent context overflow", "session_id", call.SessionID)
-			if summaryErr := a.Summarize(ctx, call.SessionID, a.getCacheControlOptions()); summaryErr != nil {
+			// Summarize refuses with ErrSessionBusy if IsSessionBusy is true —
+			// but this very Run invocation is who set it (registered earlier,
+			// above). Without releasing it first, this call always sees
+			// itself as a competing request and always fails, silently,
+			// every time, for every session: confirmed live via
+			// "Failed to auto-summarize before request" /
+			// "session is currently processing another request" in the logs
+			// at 81% context usage with no compaction ever happening.
+			// Release for the duration of the call and restore it after,
+			// since Run has not finished — mirrors the pattern already used
+			// correctly at the shouldSummarize branch near the end of Run,
+			// where Summarize is the last thing that invocation does (so it
+			// never needs to restore the slot afterward).
+			a.activeRequests.Del(call.SessionID)
+			summaryErr := a.Summarize(ctx, call.SessionID, a.getCacheControlOptions())
+			if cancel != nil {
+				// cancel is only set by this point for the accepted dispatch
+				// path (the in-process/test path registers it later, below);
+				// guard so this never restores a nil cancel func into the map.
+				a.activeRequests.Set(call.SessionID, cancel)
+			}
+			if summaryErr != nil {
 				slog.Warn("Failed to auto-summarize before request", "error", summaryErr)
 			}
 			// After summarization, re-fetch the session and messages.
@@ -956,7 +977,16 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 		cw := int64(largeModel.CatwalkCfg.ContextWindow)
 		if cw > 0 && !a.disableAutoSummarize && totalTokens > cw {
 			slog.Warn("Prompt would exceed context window, forcing summarization", "session_id", call.SessionID, "tokens", totalTokens, "window", cw)
-			if summaryErr := a.Summarize(ctx, call.SessionID, a.getCacheControlOptions()); summaryErr != nil {
+			// Same self-busy hazard as the proactive check above: release the
+			// busy slot for the duration of the call so Summarize does not
+			// see this Run invocation as a competing request, then restore
+			// it since Run continues afterward either way.
+			a.activeRequests.Del(call.SessionID)
+			summaryErr := a.Summarize(ctx, call.SessionID, a.getCacheControlOptions())
+			if cancel != nil {
+				a.activeRequests.Set(call.SessionID, cancel)
+			}
+			if summaryErr != nil {
 				slog.Warn("Failed to force-summarize before overflow", "error", summaryErr)
 			} else {
 				currentSession, err = a.sessions.Get(ctx, call.SessionID)
@@ -1286,6 +1316,52 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 			sessionLock.Lock()
 			stepMessages = cloneFantasyMessages(prepared.Messages)
 			sessionLock.Unlock()
+
+			// Re-clamp the reply budget against this step's actual payload.
+			// The clamp computed once before agent.Stream (below) only
+			// reflects prompt size at the start of the turn; a multi-step
+			// tool-calling turn can grow the prompt substantially by a later
+			// step (a large tool result, a folded queue prompt, a
+			// continuation note), while MaxOutputTokens is otherwise fixed
+			// for the whole run. fantasy re-reads call.MaxOutputTokens (the
+			// same *int64 passed to AgentStreamCall) fresh on every step
+			// rather than snapshotting its value up front, so mutating
+			// *maxOutputTokens here takes effect for this and all later
+			// steps. clampMaxOutputTokens always re-clamps from the
+			// original configured ceiling (call.MaxOutputTokens), not from
+			// the previous step's already-clamped value, so headroom that
+			// opens back up after compaction is not left artificially
+			// capped at an earlier, tighter estimate.
+			if maxOutputTokens != nil {
+				if cw := int64(largeModel.CatwalkCfg.ContextWindow); cw > 0 {
+					stepPromptEst := estimateMessageTokens(prepared.Messages)
+					if prepared.System != nil {
+						stepPromptEst += approxTokenCount(*prepared.System)
+					}
+					if reclamped := clampMaxOutputTokens(call.MaxOutputTokens, stepPromptEst, cw); reclamped != *maxOutputTokens {
+						if reclamped > 0 {
+							slog.Warn("Re-clamping max output tokens for a later step in this turn",
+								"session_id", call.SessionID, "step_prompt_tokens", stepPromptEst,
+								"previous", *maxOutputTokens, "clamped_to", reclamped, "context_window", cw)
+							*maxOutputTokens = reclamped
+						} else {
+							// No headroom left at all for this step's payload.
+							// There is no per-step way to omit the field
+							// entirely once the run has started (only nil-vs-
+							// set was decided once, before agent.Stream), and
+							// writing 0 risks the provider reading it as
+							// "unbounded" rather than "as little as possible".
+							// Leave the last value in place: the existing
+							// FinishReasonMaxTokens continuation and the
+							// auto-summarize gates are the remaining safety
+							// nets for a turn that reaches this state.
+							slog.Warn("No headroom left to re-clamp max output tokens for this step; leaving the previous value in place",
+								"session_id", call.SessionID, "step_prompt_tokens", stepPromptEst,
+								"previous", *maxOutputTokens, "context_window", cw)
+						}
+					}
+				}
+			}
 
 			// Optionally record the full input messages on the LLM span.
 			// stepMessages now contains the complete set of messages sent to the model
@@ -2507,10 +2583,18 @@ func looksLikeUnrecognizedToolCall(text string) bool {
 }
 
 // contextWindowSafetyMargin reserves headroom beyond clampMaxOutputTokens's
-// arithmetic for tokens added between the session's last known usage and the
-// actual outgoing request — the new user message, tool results, and minor
-// drift between Phosphor's estimate and the provider's own tokenization.
-const contextWindowSafetyMargin = 4096
+// arithmetic for tokens added between the estimate and the actual outgoing
+// request — a new user message or tool result not yet reflected in the
+// estimate, and drift between Phosphor's char/4 approximation
+// (approxTokenCount) and the provider's own tokenizer. That drift is not
+// symmetric: dense code and JSON payloads commonly tokenize 10-30% denser
+// than chars/4 predicts, so a large step payload can under-count by more
+// than a small margin would cover. Widened from 4096 for that reason when
+// the per-step re-clamp in PrepareStep was added (see its call site) to
+// cover the same estimate being re-used against much larger, code-heavy
+// mid-turn payloads, not just the smaller pre-Stream estimate this was
+// originally sized for.
+const contextWindowSafetyMargin = 8192
 
 // clampMaxOutputTokens bounds a configured reply-token budget to what the
 // context window actually has left, given currentTokens already spent and

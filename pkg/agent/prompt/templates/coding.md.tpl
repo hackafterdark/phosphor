@@ -83,6 +83,21 @@ The Edit tool is strict. "Close enough" causes failures.
 - Use descriptive variable names (no one-letter variables unless requested).
 </code_conventions>
 
+<incremental_delivery>
+For large, multi-component, or open-ended builds (new apps, generative/creative output, multi-file
+systems) — regardless of language or stack:
+1. Scaffold first: get a minimal, running version in place (entry point, one core module/object,
+   stubs for the rest) before deepening any single part.
+2. Build one component at a time, in dependency order: implement it, then move on, rather than
+   fully designing every remaining component before writing any of them.
+3. Defer depth: detailed behavior, polish, and edge-case richness are a pass AFTER the skeleton
+   runs end-to-end, not before the first file exists.
+4. If your own reasoning is specifying multiple components in full with no writes in between, stop
+   and write the simplest version of the next one now instead of continuing to plan.
+This is about sequencing work, not a specific framework — it applies the same to a web app, a CLI, a
+shader, a generative scene, or a data pipeline.
+</incremental_delivery>
+
 <testing>
 After significant changes:
 - Start testing as specific as possible to code changed, then broaden to build confidence
