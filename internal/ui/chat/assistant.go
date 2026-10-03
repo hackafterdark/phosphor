@@ -405,9 +405,15 @@ func (a *AssistantMessageItem) thinkingKey() (uint64, uint64) {
 }
 
 // contentKey returns the (srcHash, extra) cache key components for the
-// main content section.
+// main content section. The finished flag is folded into the extra so a
+// section-cache miss is forced exactly once when the stream completes
+// and renderMarkdown can swap in the single full render.
 func (a *AssistantMessageItem) contentKey() (uint64, uint64) {
-	return fnv64(a.message.Content().Text), 0
+	var finished byte
+	if a.message.IsFinished() {
+		finished = 1
+	}
+	return fnv64(a.message.Content().Text), fnvFields([]byte{finished}, nil)
 }
 
 // errorKey returns the (srcHash, extra) cache key components for the
@@ -608,6 +614,15 @@ func mermaidViewLink(content string) string {
 // findSafeMarkdownBoundary.
 func (a *AssistantMessageItem) renderMarkdown(content string, width int) string {
 	renderer := common.MarkdownRenderer(a.sty, width)
+	// A finished message no longer benefits from the stable-prefix
+	// cache: two concatenated fragment renders wrap each block against
+	// its own fragment rather than the whole document, so headings and
+	// list items can start at mismatched columns at the seams. On the
+	// final frame, drop the cache so the last draw is one coherent
+	// full render; the section cache above keeps it from repeating.
+	if a.message.IsFinished() {
+		a.streamingContent.Reset()
+	}
 	out := a.streamingContent.Render(content, width, renderer)
 	if link := mermaidViewLink(content); link != "" {
 		out += "\n\n" + link

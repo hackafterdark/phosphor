@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"charm.land/glamour/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/hackafterdark/phosphor/internal/ui/common"
 )
 
@@ -180,13 +181,33 @@ func glueRenders(prefix, trail string) string {
 	}
 }
 
-// trimGlamourMargins strips leading and trailing whitespace
-// (including newlines) from a glamour-rendered fragment.
-// Glamour adds a leading blank line for documents that open with
-// a heading or paragraph, plus a trailing newline; both must be
-// removed before concatenation.
+// trimGlamourMargins drops the blank lines glamour emits above the
+// first block and below the last one of a rendered fragment, so
+// concatenated fragments keep the same one-blank-line rhythm the
+// whole-document render has.
+//
+// The trim is line-based on purpose. Glamour wraps every visible run
+// in CSI escape sequences, so the whitespace of a padded line sits
+// *between* sequences and [strings.Trim] stops at the first non-space
+// byte (the ESC of a leading sequence, or the final 'm' of a trailing
+// one) and removes nothing. Comparing the visible glyphs of each
+// border line is what actually shrinks the margins.
 func trimGlamourMargins(s string) string {
-	return strings.Trim(s, " \t\n")
+	lines := strings.Split(s, "\n")
+	first, last := 0, len(lines)-1
+	for first <= last && visibleBlank(lines[first]) {
+		first++
+	}
+	for last >= first && visibleBlank(lines[last]) {
+		last--
+	}
+	return strings.Join(lines[first:last+1], "\n")
+}
+
+// visibleBlank reports whether line renders as nothing once escape
+// sequences and padding are accounted for.
+func visibleBlank(line string) bool {
+	return strings.TrimSpace(ansi.Strip(line)) == ""
 }
 
 // findSafeMarkdownBoundary returns the byte offset of the END of
