@@ -28,10 +28,13 @@ type phosphorTraceDescriptionData struct {
 }
 
 func phosphorTraceDescription() string {
-	return renderTemplate(phosphorTraceDescriptionTpl, phosphorTraceDescriptionData{
+	out := renderTemplate(phosphorTraceDescriptionTpl, phosphorTraceDescriptionData{
 		DefaultLines: defaultTraceLines,
 		MaxLines:     maxTraceLines,
 	})
+	// go:embed keeps the template's on-disk line endings, which vary with the
+	// platform checkout; pin them to LF so the value is byte-stable.
+	return strings.ReplaceAll(out, "\r\n", "\n")
 }
 
 // Default and max span limits for the trace tool output.
