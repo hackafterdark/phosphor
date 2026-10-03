@@ -63,7 +63,23 @@ func Init(ctx context.Context, cfg config.Observability) (func(context.Context) 
 	captureOutputMsgs = cfg.CaptureOutputMessages
 	openInference = cfg.OpenInference
 
+	// The in-process span ring is independent of the OTLP endpoint: it backs
+	// the phosphor_trace tool, so it works with or without a collector. Off
+	// unless explicitly configured (MemoryBuffer <= 0 leaves the nil no-op).
+	if cfg.MemoryBuffer > 0 {
+		memoryBuffer = newMemorySpanExporter(cfg.MemoryBuffer)
+	}
+
 	if cfg.Endpoint == "" {
+		if memoryBuffer != nil {
+			// No collector, but the ring is on: a local-only provider with
+			// just the memory processor keeps spans alive in the buffer.
+			tp := sdktrace.NewTracerProvider(
+				sdktrace.WithSpanProcessor(sdktrace.NewSimpleSpanProcessor(memoryBuffer)),
+			)
+			otel.SetTracerProvider(tp)
+			tracer = otel.Tracer(TracerName)
+		}
 		return func(ctx context.Context) error { return nil }, nil
 	}
 
@@ -119,10 +135,10 @@ func Init(ctx context.Context, cfg config.Observability) (func(context.Context) 
 		return nil, fmt.Errorf("otel: create exporter: %w", err)
 	}
 
-	tp := sdktrace.NewTracerProvider(
+	tpOpts := []sdktrace.TracerProviderOption{
 		sdktrace.WithBatcher(exporter,
 			// Increase batch timeout to give parent spans more time to
-			// end before child spans are flushed. This reduces the
+			// end before child spans finish. This reduces the
 			// "parent span ID is not in the trace" warnings from the
 			// collector when child spans finish before the parent.
 			sdktrace.WithBatchTimeout(2000*time.Millisecond),
@@ -134,9 +150,16 @@ func Init(ctx context.Context, cfg config.Observability) (func(context.Context) 
 		sdktrace.WithSampler(sdktrace.ParentBased(
 			sdktrace.TraceIDRatioBased(cfg.SamplingRate),
 		)),
-	)
+	}
+	if memoryBuffer != nil {
+		// Mirror completed spans into the in-process ring alongside the
+		// remote export so phosphor_trace can read them back.
+		tpOpts = append(tpOpts, sdktrace.WithSpanProcessor(sdktrace.NewSimpleSpanProcessor(memoryBuffer)))
+	}
+	tp := sdktrace.NewTracerProvider(tpOpts...)
 
 	otel.SetTracerProvider(tp)
+	tracer = otel.Tracer(TracerName)
 	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
 		propagation.TraceContext{},
 		propagation.Baggage{},

@@ -105,8 +105,8 @@ func NewScanSecretsTool(workingDir string) fantasy.AgentTool {
 			ignores := loadGitleaksIgnores(absWorkingDir, absSearchPath)
 
 			var (
-				findings     []secretFinding
-				filesScaned  int
+				findings      []secretFinding
+				filesScaned   int
 				historyScaned bool
 			)
 

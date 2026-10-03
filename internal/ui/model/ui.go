@@ -217,21 +217,19 @@ type UI struct {
 
 	symbolIndex *workspaceindex.Store
 
-	// Cached workspace search progress (refreshed periodically, not every draw).
-	indexProgress     *workspaceindex.IndexProgress
-	indexProgressTime time.Time
+	// Cached workspace search progress. Refreshed off the render path by
+	// indexProgressTickCmd/indexProgressFetchedMsg, a tea.Cmd/Msg pair, so a
+	// slow index read delays the next refresh instead of blocking a
+	// keystroke — see internal/ui/AGENTS.md's "never do expensive work in
+	// Update" rule, which applies equally to Draw since both run on the
+	// single UI goroutine.
+	indexProgress *workspaceindex.IndexProgress
 
-	// Cached memory sources for the sidebar panel, keyed to the session they were
-	// read for and refreshed on a throttle rather than per draw, mirroring the
-	// workspace search progress cache directly above.
-	memorySidebar        []memoryui.Source
-	memorySidebarAt      time.Time
-	memorySidebarSession string
-
-	// Throttled cache of the store tallies the Memory panel renders, sharing the
-	// refresh interval of the recalled-sources cache above so a single draw tick
-	// reads the vault at most once.
-	memoryPanel memoryPanelSnapshot
+	// Cached memory sources for the sidebar panel and the store tallies the
+	// Memory panel renders, both refreshed off the render path on the same
+	// schedule by memoryPanelTickCmd/memoryPanelFetchedMsg.
+	memorySidebar []memoryui.Source
+	memoryPanel   memoryPanelSnapshot
 
 	// Memoized on-demand shared store the TUI opens when the app's startup index is
 	// absent, so a one-shot startup open failure does not leave every memory surface
@@ -294,6 +292,21 @@ type UI struct {
 
 	// sidebarLogo keeps a cached version of the sidebar sidebarLogo.
 	sidebarLogo string
+
+	// sidebarSmallLogo caches the sidebar's own logo block, keyed by the width
+	// and logo config it was rendered for, so a steady frame reuses the string
+	// instead of re-running the figlet render. A key mismatch (resize, theme
+	// change, logo config change) re-renders it.
+	sidebarSmallLogo    string
+	sidebarSmallLogoKey string
+
+	// sidebarSections caches each visible section's rendered string so
+	// tick-only frames (anim steps, spinner) reuse it instead of rebuilding
+	// every section. Any state-changing message marks the cache stale; the
+	// next draw rebuilds the entries and clears the flag. See
+	// [UI.renderSidebarComponent].
+	sidebarSections map[string]string
+	sidebarStale    bool
 
 	// sidebarScrollOffset tracks the vertical scroll position of the sidebar.
 	sidebarScrollOffset int
@@ -486,6 +499,10 @@ func (m *UI) Init() tea.Cmd {
 	if cmd := m.autoStartCodebaseIndexing(); cmd != nil {
 		cmds = append(cmds, cmd)
 	}
+	// Start the background refreshes for the sidebar's workspace-search and
+	// memory panels; both are no-ops per tick when their underlying store
+	// isn't configured.
+	cmds = append(cmds, indexProgressTickCmd(), m.memoryPanelTickCmd())
 	return tea.Batch(cmds...)
 }
 
@@ -636,6 +653,13 @@ func (m *UI) loadMCPrompts() tea.Msg {
 // Update handles updates to the UI model.
 func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
+	// Tick-only frames keep the cached sidebar sections; anything else can
+	// have changed an input, so the next draw rebuilds them.
+	switch msg.(type) {
+	case anim.StepMsg, spinner.TickMsg:
+	default:
+		m.sidebarStale = true
+	}
 	if m.hasSession() && m.isAgentBusy() {
 		queueSize := m.com.Workspace.AgentQueuedPrompts(m.session.ID)
 		if queueSize != m.promptQueue {
@@ -672,6 +696,14 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.session = msg.session
 		m.currentGoal = nil
 		m.sessionFiles = msg.files
+		// The cached sidebar sources belong to whichever session was loaded
+		// when fetchMemoryPanelCmd last ran; clear them now and kick off an
+		// immediate refresh rather than showing the old session's sources
+		// until the next memoryPanelTickMsg fires.
+		m.memorySidebar = nil
+		if cmd := m.fetchMemoryPanelCmd(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 		cmds = append(cmds, m.startLSPs(msg.lspFilePaths()))
 		cmds = append(cmds, func() tea.Msg {
 			g, err := m.com.Workspace.GoalGet(context.Background(), m.session.ID)
@@ -931,6 +963,29 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.currentGoal != nil && m.currentGoal.Status == goal.GoalActive {
 			m.renderPills()
 			cmds = append(cmds, goalTimerTickCmd())
+		}
+	case indexProgressTickMsg:
+		if cmd := m.fetchIndexProgressCmd(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+		cmds = append(cmds, indexProgressTickCmd())
+	case indexProgressFetchedMsg:
+		m.indexProgress = msg.progress
+	case memoryPanelTickMsg:
+		if cmd := m.fetchMemoryPanelCmd(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+		cmds = append(cmds, m.memoryPanelTickCmd())
+	case memoryPanelFetchedMsg:
+		if msg.snap.statsOK || msg.snap.integOK {
+			m.memoryPanel = msg.snap
+		}
+		sessionID := ""
+		if m.hasSession() {
+			sessionID = m.session.ID
+		}
+		if msg.session == sessionID {
+			m.memorySidebar = msg.sources
 		}
 	case tea.TerminalVersionMsg:
 		termVersion := strings.ToLower(msg.Name)
@@ -3154,10 +3209,13 @@ func (m *UI) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 		}
 
 		if m.textarea.Focused() {
-			cur := m.textarea.Cursor()
-			cur.X++                            // Adjust for app margins
-			cur.Y += m.layout.editor.Min.Y + 1 // Offset for attachments row
-			return cur
+			// Cursor is nil when the textarea uses its virtual (in-content)
+			// cursor instead of the terminal's real one.
+			if cur := m.textarea.Cursor(); cur != nil {
+				cur.X++                            // Adjust for app margins
+				cur.Y += m.layout.editor.Min.Y + 1 // Offset for attachments row
+				return cur
+			}
 		}
 	}
 	return nil
@@ -4158,6 +4216,8 @@ func (m *UI) refreshStyles() {
 	if m.layout.sidebar.Dx() > 0 {
 		m.cacheSidebarLogo(m.layout.sidebar.Dx())
 	}
+	// The logo block is style-dependent, so drop its cache with the theme.
+	m.sidebarSmallLogoKey = ""
 	m.textarea.SetStyles(t.Editor.Textarea)
 	m.completions.SetStyles(t.Completions.Normal, t.Completions.Focused, t.Completions.Match)
 	m.attachments.Renderer().SetStyles(

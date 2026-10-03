@@ -92,6 +92,7 @@ Phosphor provides a comprehensive suite of agent tools organized by function. Ea
 |------|-------------|
 | `phosphor_info` | Get Phosphor's current runtime state: active model, provider, LSP/MCP status, skills, hooks, permissions, and disabled tools. |
 | `phosphor_logs` | Read Phosphor's internal application logs with configurable line count. |
+| `phosphor_trace` | Read the in-process OTel span ring (turn/step/tool timing tree) when `observability.memory_buffer` is enabled. |
 | `reload_queries` | Reload custom query capabilities from the workspace `.phosphor/queries` directory. |
 
 ## Task Management
@@ -104,7 +105,7 @@ Phosphor provides a comprehensive suite of agent tools organized by function. Ea
 ## Quick Reference
 
 ```
-Total built-in tools: 33
+Total built-in tools: 34
 
 By category:
   File Operations:      9 tools (view, edit, write, append, multiedit, ls, glob, grep, view_node)
@@ -117,7 +118,7 @@ By category:
   Semantic Search:      1 tool  (semantic_search)
   Security:             1 tool  (scan_secrets)
   MCP:                  3 tools (mcp_*, read_mcp_resource, list_mcp_resources)
-  System:               3 tools (phosphor_info, phosphor_logs, reload_queries)
+  System:               4 tools (phosphor_info, phosphor_logs, phosphor_trace, reload_queries)
   Task Management:      2 tools (update_goal, todos)
 ```
 

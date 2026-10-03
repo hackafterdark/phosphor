@@ -16,8 +16,8 @@ import (
 	"github.com/hackafterdark/phosphor/internal/filepathext"
 	"github.com/hackafterdark/phosphor/pkg/egress"
 	"github.com/hackafterdark/phosphor/pkg/otel"
-	"github.com/hackafterdark/phosphor/pkg/security/urlguard"
 	"github.com/hackafterdark/phosphor/pkg/permission"
+	"github.com/hackafterdark/phosphor/pkg/security/urlguard"
 	"go.opentelemetry.io/otel/attribute"
 )
 

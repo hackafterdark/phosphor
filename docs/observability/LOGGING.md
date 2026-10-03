@@ -105,6 +105,8 @@ phosphor logs --follow
 
 The `phosphor_logs` agent tool is available **only when logging is enabled**. It reads the last N log entries efficiently by seeking backwards (no need to load the entire file).
 
+When `observability.memory_buffer` is set to a positive size, the `phosphor_trace` agent tool is also available. It reads the in-process ring of recent completed OTel spans (name, duration, nesting, status, key GenAI attributes), so the agent can inspect its own turn structure without a round-trip to the OTLP collector. The buffer works with or without an endpoint configured and costs on the order of tens of kilobytes for typical sizes (default 100, max 500 spans).
+
 **Usage in Phosphor TUI:**
 ```
 show me recent logs

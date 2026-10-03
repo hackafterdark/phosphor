@@ -160,15 +160,17 @@ func (m *UI) openMemoryMaintenanceStore(aw *workspace.AppWorkspace) (*memory.Sto
 	return store, true
 }
 
-// memorySidebarRefresh is how often the sidebar panel re-reads the store. The draw
-// loop calls memoryInfo every frame it draws the sidebar, and re-running the corpus
-// tally, the seal tally, and the transcript scan each time would make the cheapest
-// provenance surface in the app the most expensive one.
+// memorySidebarRefresh is how often the sidebar panel re-reads the store: the
+// corpus tally, the seal tally, and a transcript scan for this session's
+// recalled sources. All three run in the background — see
+// [UI.memoryPanelTickCmd] and [UI.fetchMemoryPanelCmd] — so a contended vault
+// or a slow disk delays the next refresh instead of freezing a keystroke.
+// Draw only ever reads the cached result (m.memoryPanel, m.memorySidebar).
 const memorySidebarRefresh = 2 * time.Second
 
-// memoryPanelSnapshot is the throttled cache behind the sidebar panel: both store
-// tallies plus when they were read. A failed read is cached as failed so a contended
-// vault is retried on the next tick rather than on every frame.
+// memoryPanelSnapshot is the cache behind the sidebar panel: both store
+// tallies plus when they were read. A failed read is cached as failed so a
+// contended vault is retried on the next tick rather than reported as empty.
 type memoryPanelSnapshot struct {
 	at      time.Time
 	stats   memory.Stats
@@ -177,21 +179,71 @@ type memoryPanelSnapshot struct {
 	integOK bool
 }
 
-// memoryPanelStats returns the corpus and seal tallies, refreshed at most once per
-// memorySidebarRefresh.
-func (m *UI) memoryPanelStats(ctx context.Context, store *memory.Store) memoryPanelSnapshot {
-	if time.Since(m.memoryPanel.at) < memorySidebarRefresh {
-		return m.memoryPanel
+// memoryPanelTickMsg fires on memorySidebarRefresh to trigger the next
+// background read of the memory panel stats and this session's recalled
+// sources. It carries no data; it only wakes Update so it can snapshot the
+// store and session id (safe: done on the UI goroutine) and hand the reads
+// off to a one-shot tea.Cmd.
+type memoryPanelTickMsg struct{}
+
+// memoryPanelFetchedMsg carries the memory panel snapshot plus the current
+// session's memory sources, read by that one-shot tea.Cmd, back to Update —
+// the only place m.memoryPanel and m.memorySidebar are written. The session
+// id travels with it so a session switch mid-flight cannot attribute a
+// stale fetch to the wrong session.
+type memoryPanelFetchedMsg struct {
+	session string
+	snap    memoryPanelSnapshot
+	sources []memoryui.Source
+}
+
+// memoryPanelTickCmd schedules the next memoryPanelTickMsg. It is
+// self-rescheduling: the memoryPanelTickMsg handler in Update appends
+// another call to keep the cadence going for the life of the program.
+func (m *UI) memoryPanelTickCmd() tea.Cmd {
+	return tea.Tick(memorySidebarRefresh, func(time.Time) tea.Msg {
+		return memoryPanelTickMsg{}
+	})
+}
+
+// fetchMemoryPanelCmd snapshots the memory store and the current session id
+// and returns a tea.Cmd that reads the store tallies and the session's
+// memory sources off the UI goroutine. The returned command touches only
+// those captured values, never m itself, so it is safe to run concurrently
+// with the next Update call: see internal/ui/AGENTS.md ("Never change the
+// model state inside of a command").
+func (m *UI) fetchMemoryPanelCmd() tea.Cmd {
+	store := m.memoryStore()
+	sessionID := ""
+	if m.hasSession() {
+		sessionID = m.session.ID
 	}
-	snap := memoryPanelSnapshot{at: time.Now()}
-	if stats, err := store.Report(ctx); err == nil {
-		snap.stats, snap.statsOK = stats, true
+	if store == nil && sessionID == "" {
+		return nil
 	}
-	if integ, err := store.ReportIntegrity(ctx); err == nil {
-		snap.integ, snap.integOK = integ, true
+	workspace := m.com.Workspace
+	return func() tea.Msg {
+		result := memoryPanelFetchedMsg{session: sessionID}
+		if store != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), memoryCommandTimeout)
+			result.snap.at = time.Now()
+			if stats, err := store.Report(ctx); err == nil {
+				result.snap.stats, result.snap.statsOK = stats, true
+			}
+			if integ, err := store.ReportIntegrity(ctx); err == nil {
+				result.snap.integ, result.snap.integOK = integ, true
+			}
+			cancel()
+		}
+		if sessionID != "" {
+			ctx, cancel := context.WithTimeout(context.Background(), memoryCommandTimeout)
+			if msgs, err := workspace.ListMessages(ctx, sessionID); err == nil {
+				result.sources = memoryui.SourcesFromMessages(msgs)
+			}
+			cancel()
+		}
+		return result
 	}
-	m.memoryPanel = snap
-	return snap
 }
 
 // memoryInfo renders the sidebar's Memory panel as a glanceable stat block: how full
@@ -202,16 +254,16 @@ func (m *UI) memoryPanelStats(ctx context.Context, store *memory.Store) memoryPa
 // It returns empty when memory is off, which is what keeps the panel out of the
 // sidebar without needing a second visibility setting.
 func (m *UI) memoryInfo(width int) string {
-	store := m.memoryStore()
-	if store == nil {
+	// memoryStore only type-asserts and nil-checks on the common path (the
+	// app's own MemoryIndex), so it stays safe to call from the draw path —
+	// unlike snap and recalled below, which are filled in off the render
+	// path by fetchMemoryPanelCmd and never computed here.
+	if m.memoryStore() == nil {
 		return ""
 	}
 	t := m.com.Styles
-	ctx, cancel := context.WithTimeout(context.Background(), memoryCommandTimeout)
-	defer cancel()
-
-	snap := m.memoryPanelStats(ctx, store)
-	recalled := len(m.sessionMemorySources(ctx))
+	snap := m.memoryPanel
+	recalled := len(m.memorySidebar)
 
 	var parts []string
 	parts = append(parts, common.Section(t, "Memory", width), "")
@@ -289,28 +341,6 @@ func injectBar(used, limit, width int) string {
 	}
 	filled := (min(max(used, 0), limit)*2*width + limit) / (2 * limit)
 	return strings.Repeat("▓", filled) + strings.Repeat("░", width-filled)
-}
-
-// sessionMemorySources refreshes the cached list of what the current session
-// touched, at most once per memorySidebarRefresh and always when the session
-// changed underneath the cache.
-func (m *UI) sessionMemorySources(ctx context.Context) []memoryui.Source {
-	sessionID := ""
-	if m.hasSession() {
-		sessionID = m.session.ID
-	}
-	if sessionID == m.memorySidebarSession && time.Since(m.memorySidebarAt) < memorySidebarRefresh {
-		return m.memorySidebar
-	}
-	m.memorySidebarSession = sessionID
-	m.memorySidebarAt = time.Now()
-	m.memorySidebar = nil
-	if sessionID != "" {
-		if msgs, err := m.com.Workspace.ListMessages(ctx, sessionID); err == nil {
-			m.memorySidebar = memoryui.SourcesFromMessages(msgs)
-		}
-	}
-	return m.memorySidebar
 }
 
 // memoryManageCommand is the manage-from-the-badge half of the provenance surfaces:

@@ -35,6 +35,8 @@ func TestRun_InternalContinuationBypassesBusyGate(t *testing.T) {
 		{"forced_stop", func(ctx context.Context) context.Context { return withForcedStopContinuations(ctx, 1) }},
 		{"max_tokens", func(ctx context.Context) context.Context { return withMaxTokensContinuations(ctx, 1) }},
 		{"unrecognized_tool_call", func(ctx context.Context) context.Context { return withUnrecognizedToolCallContinuations(ctx, 1) }},
+		{"empty_turn", func(ctx context.Context) context.Context { return withEmptyTurnContinuations(ctx, 1) }},
+		{"truncated_tool_call", func(ctx context.Context) context.Context { return withTruncatedToolCallContinuations(ctx, 1) }},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

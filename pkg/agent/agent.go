@@ -701,6 +701,15 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 	// tool-call block the provider's own parser failed to recognize (see
 	// looksLikeUnrecognizedToolCall).
 	unrecognizedToolCallContinuationsUsed := unrecognizedToolCallContinuationsFromContext(ctx)
+	// emptyTurnContinuationsUsed is the sibling budget for a step that ended
+	// normally but produced nothing actionable: no tool call and no
+	// non-whitespace text (see isEmptyDeadEndTurn).
+	emptyTurnContinuationsUsed := emptyTurnContinuationsFromContext(ctx)
+	// truncatedToolCallContinuationsUsed is the sibling budget for a step
+	// whose tool call received fantasy's JSON-parse-failure tool result — a
+	// truncated argument behind a normal FinishReasonToolUse (see
+	// sawTruncatedToolCallInput below).
+	truncatedToolCallContinuationsUsed := truncatedToolCallContinuationsFromContext(ctx)
 	slog.Info("SessionAgent.Run called", "session_id", call.SessionID, "temp", call.Temperature, "rep_pen", call.RepetitionPenalty)
 	if err := ValidateCall(call); err != nil {
 		return nil, err
@@ -732,6 +741,18 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 	// ended the turn with a plain "stop" is the signature of a mid-generation
 	// cutoff, not a normal completion, and is handled after Stream returns.
 	var sawRawControlToken bool
+	// sawTruncatedToolCallInput flags that the most recent tool result this
+	// turn produced is fantasy's own JSON-parse-failure signature ("invalid
+	// JSON input: ..." — see validateToolCall in the vendored fantasy source),
+	// meaning the provider streamed an incomplete/truncated argument for a
+	// call that reported a normal FinishReasonToolUse. Unlike
+	// sawRawControlToken this one is deliberately NOT reset per step: the
+	// failing call sits in an earlier step and the recovery step that follows
+	// ends on a plain stop, so the last result produced anywhere in the turn
+	// is what matters. The call never executed (fantasy's validation gate
+	// rejects it before Run), so re-issuing it is always safe — see
+	// _PLANS/TOOL_CALL_JSON_TRUNCATION_DEAD_END.md.
+	var sawTruncatedToolCallInput bool
 	defer func() {
 		// Optionally record the final assistant response as the root span's
 		// output.value attribute so observability backends can populate the
@@ -1168,6 +1189,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 					OperationName:        "chat",
 					ProviderName:         largeModel.ModelCfg.Provider,
 					RequestModel:         largeModel.CatwalkCfg.Name,
+					ConversationID:       call.SessionID,
 					InputMessages:        stepMessages,
 					RequestTemperature:   call.Temperature,
 					RequestTopP:          call.TopP,
@@ -1184,6 +1206,9 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 					RequestRepetitionPen: call.RepetitionPenalty,
 				}
 				llmCtx, llmSpan = otel.StartLLMSpan(callContext, largeModel.ModelCfg.Provider, largeModel.CatwalkCfg.Name, llmAttrs)
+				// Pin the step index so a trace reader can see which step of the
+				// turn a slow or failing chat call corresponds to.
+				llmSpan.SetAttributes(attribute.Int("gen_ai.step.index", options.StepNumber))
 				callContext = llmCtx
 			}
 
@@ -1493,6 +1518,11 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 		},
 		OnToolResult: func(result fantasy.ToolResultContent) error {
 			toolResult := a.convertToToolResult(result)
+			// Last-result-wins: each new tool result overwrites the flag, so
+			// after Stream returns it reflects the most recent result the turn
+			// produced (a later successful result means the model already
+			// recovered and no continuation is needed).
+			sawTruncatedToolCallInput = toolResult.IsError && strings.HasPrefix(toolResult.Content, "invalid JSON input:")
 			// Record security violations as OTel errors for dashboard visibility.
 			if toolResult.IsError && strings.Contains(toolResult.Content, "Security violation") {
 				secErr := fmt.Errorf("security violation: %s", toolResult.Content)
@@ -1750,6 +1780,52 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 		}
 		slog.Warn("Unrecognized-tool-call continuation budget exhausted, completing the turn as-is",
 			"used", unrecognizedToolCallContinuationsUsed, "max", defaultMaxUnrecognizedToolCallContinuations)
+	}
+
+	// After Stream returns, check whether the step ended normally but produced
+	// nothing actionable: no tool call and no non-whitespace text. Confirmed
+	// live: the model's own reasoning correctly planned a next step ("I'll read
+	// the target area for editing") but the turn's actual final text was a bare
+	// newline and no tool call followed — a dropped train of thought, not a
+	// deliberate empty response (see isEmptyDeadEndTurn's doc comment for why
+	// this combination is never legitimate). This check stays after the
+	// unrecognized-tool-call one above: the more specific, better-understood
+	// signature is matched first, this general catch-all second.
+	if err == nil && currentAssistant != nil && currentAssistant.FinishReason() == message.FinishReasonEndTurn &&
+		isEmptyDeadEndTurn(currentAssistant) {
+		if emptyTurnContinuationsUsed < defaultMaxEmptyTurnContinuations {
+			slog.Warn("Step ended with no tool call and no output, queueing an automatic continuation",
+				"session_id", call.SessionID, "attempt", emptyTurnContinuationsUsed+1, "max", defaultMaxEmptyTurnContinuations)
+			if !call.IsStateless {
+				a.queueNote(call.SessionID, "Your previous response ended without any output or tool call. Continue with whatever you described doing next.")
+			}
+			return a.Run(withEmptyTurnContinuations(ctx, emptyTurnContinuationsUsed+1), call)
+		}
+		slog.Warn("Empty-turn continuation budget exhausted, completing the turn as-is",
+			"used", emptyTurnContinuationsUsed, "max", defaultMaxEmptyTurnContinuations)
+	}
+
+	// After Stream returns, check whether the last tool result the turn
+	// produced was fantasy's JSON-parse-failure signature, regardless of
+	// what finish reason any step reported — unlike the checks above, this
+	// one is deliberately NOT gated on FinishReason: the whole point is that
+	// the provider reports a normal tool_use for a call whose arguments were
+	// truncated mid-string, and the recovery step that follows ends on a
+	// plain stop, so no single step's finish reason identifies the failure.
+	// The truncated call never ran (fantasy's validation gate rejects it
+	// before Run), so asking the model to reissue it cannot double-execute
+	// any side effect. See _PLANS/TOOL_CALL_JSON_TRUNCATION_DEAD_END.md 2.
+	if err == nil && sawTruncatedToolCallInput && currentAssistant != nil {
+		if truncatedToolCallContinuationsUsed < defaultMaxTruncatedToolCallContinuations {
+			slog.Warn("Step's tool call was truncated mid-argument by the provider despite a normal finish reason, queueing an automatic continuation",
+				"session_id", call.SessionID, "attempt", truncatedToolCallContinuationsUsed+1, "max", defaultMaxTruncatedToolCallContinuations)
+			if !call.IsStateless {
+				a.queueNote(call.SessionID, "Your previous tool call's arguments were cut off before completing, so it could not run and had no effect. Reissue that exact same tool call again, in full.")
+			}
+			return a.Run(withTruncatedToolCallContinuations(ctx, truncatedToolCallContinuationsUsed+1), call)
+		}
+		slog.Warn("Truncated-tool-call continuation budget exhausted, completing the turn as-is",
+			"used", truncatedToolCallContinuationsUsed, "max", defaultMaxTruncatedToolCallContinuations)
 	}
 
 	if err == nil && !call.IsStateless {
@@ -2580,6 +2656,14 @@ var unrecognizedToolCallPattern = regexp.MustCompile(`(?s)^\s*<tool_call>\s*<fun
 // answer.
 func looksLikeUnrecognizedToolCall(text string) bool {
 	return unrecognizedToolCallPattern.MatchString(text)
+}
+
+// isEmptyDeadEndTurn reports whether an assistant turn produced nothing
+// actionable: no tool calls and no non-whitespace text, despite ending
+// normally. See _PLANS/EMPTY_TURN_DEAD_END_FIX.md for why this combination
+// is always a dropped train of thought, never a legitimate response.
+func isEmptyDeadEndTurn(msg *message.Message) bool {
+	return len(msg.ToolCalls()) == 0 && strings.TrimSpace(msg.Content().Text) == ""
 }
 
 // contextWindowSafetyMargin reserves headroom beyond clampMaxOutputTokens's

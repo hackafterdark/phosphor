@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/hackafterdark/phosphor/internal/ui/common"
@@ -139,14 +140,9 @@ func (m *UI) codebaseIndexInfo(width int) string {
 
 	var statusParts []string
 	if m.symbolIndex != nil {
-		// Refresh progress only once per second to avoid per-draw SQL queries.
-		if m.indexProgress == nil || time.Since(m.indexProgressTime) > time.Second {
-			progress, err := m.symbolIndex.GetProgress(context.Background())
-			if err == nil {
-				m.indexProgress = progress
-				m.indexProgressTime = time.Now()
-			}
-		}
+		// m.indexProgress is refreshed off the render path by
+		// indexProgressTickCmd/indexProgressFetchedMsg; the draw path only
+		// ever reads it.
 		if m.indexProgress != nil {
 			p := m.indexProgress
 			switch p.Status {
@@ -181,6 +177,51 @@ func (m *UI) codebaseIndexInfo(width int) string {
 	}
 
 	return lipgloss.JoinVertical(lipgloss.Left, lipgloss.JoinVertical(lipgloss.Left, parts...))
+}
+
+// indexProgressRefreshInterval is how often the workspace search widget
+// re-reads the index. See [UI.indexProgressTickCmd].
+const indexProgressRefreshInterval = 1 * time.Second
+
+// indexProgressTickMsg fires on indexProgressRefreshInterval to trigger the
+// next background index-progress read. It carries no data; it only wakes
+// Update so it can snapshot m.symbolIndex (safe: done on the UI goroutine)
+// and hand the read off to a one-shot tea.Cmd.
+type indexProgressTickMsg struct{}
+
+// indexProgressFetchedMsg carries the workspace index progress read by that
+// one-shot tea.Cmd back to Update, which is the only place m.indexProgress
+// is written.
+type indexProgressFetchedMsg struct {
+	progress *workspaceindex.IndexProgress
+}
+
+// indexProgressTickCmd schedules the next indexProgressTickMsg. It is
+// self-rescheduling: the indexProgressTickMsg handler in Update appends
+// another call to keep the cadence going for the life of the program.
+func indexProgressTickCmd() tea.Cmd {
+	return tea.Tick(indexProgressRefreshInterval, func(time.Time) tea.Msg {
+		return indexProgressTickMsg{}
+	})
+}
+
+// fetchIndexProgressCmd snapshots m.symbolIndex and returns a tea.Cmd that
+// reads its progress off the UI goroutine. The returned command touches only
+// the captured store pointer, never m itself, so it is safe to run
+// concurrently with the next Update call: see internal/ui/AGENTS.md ("Never
+// change the model state inside of a command").
+func (m *UI) fetchIndexProgressCmd() tea.Cmd {
+	idx := m.symbolIndex
+	if idx == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		progress, err := idx.GetProgress(context.Background())
+		if err != nil {
+			return nil
+		}
+		return indexProgressFetchedMsg{progress: progress}
+	}
 }
 
 // indexStatusLines renders the Workspace Search counts and a build-freshness
@@ -300,6 +341,9 @@ func (m *UI) drawSidebar(scr uv.Screen, area uv.Rectangle) {
 			renderedSections = append(renderedSections, content)
 		}
 	}
+	// Every visible section refreshed its entry this pass; later tick-only
+	// frames can reuse the cache until the next state-changing message.
+	m.sidebarStale = false
 
 	// Join sections with vertical gap.
 	var content string
@@ -351,12 +395,35 @@ func (m *UI) getSidebarConfig() config.SidebarLayoutConfig {
 	return config.DefaultSidebarConfig()
 }
 
-// renderSidebarComponent renders a single sidebar component by ID.
+// renderSidebarComponent returns a section's rendered string, reusing the
+// cached entry while the cache is fresh. Entries are keyed by component ID;
+// width changes arrive as a WindowSizeMsg, which marks the cache stale.
 func (m *UI) renderSidebarComponent(cfg config.SidebarComponentConfig, width int) string {
+	if m.sidebarSections == nil {
+		m.sidebarSections = make(map[string]string, len(m.getSidebarConfig().Components)+1)
+	} else if !m.sidebarStale {
+		if s, ok := m.sidebarSections[cfg.ID]; ok {
+			return s
+		}
+	}
+	s := m.renderSidebarSection(cfg, width)
+	m.sidebarSections[cfg.ID] = s
+	return s
+}
+
+// renderSidebarSection renders a single sidebar component by ID.
+func (m *UI) renderSidebarSection(cfg config.SidebarComponentConfig, width int) string {
 	t := m.com.Styles
 
 	switch cfg.ID {
 	case "logo":
+		// The figlet render plus its gradient pass are pure functions of the
+		// width and logo config, so reuse the string while those hold and only
+		// re-render on a real change. See [UI.sidebarSmallLogo].
+		key := strconv.Itoa(width) + "\x00" + t.LogoConfig.AppTitle + "\x00" + t.LogoConfig.SidebarLogoType + "\x00" + t.LogoConfig.SidebarFigletFont + "\x00" + strconv.FormatBool(m.com.IsHyper())
+		if m.sidebarSmallLogoKey == key {
+			return m.sidebarSmallLogo
+		}
 		sidebarLogo := logo.SmallRender(t, width, 3, logo.Opts{
 			AppTitle:          t.LogoConfig.AppTitle,
 			Hyper:             m.com.IsHyper(),
@@ -364,10 +431,8 @@ func (m *UI) renderSidebarComponent(cfg config.SidebarComponentConfig, width int
 			SidebarLogoHidden: t.LogoConfig.SidebarLogoType == "hidden",
 			SidebarFigletFont: t.LogoConfig.SidebarFigletFont,
 		})
-		if sidebarLogo != "" {
-			return sidebarLogo
-		}
-		return ""
+		m.sidebarSmallLogo, m.sidebarSmallLogoKey = sidebarLogo, key
+		return sidebarLogo
 	case "session_title":
 		title := m.session.Title
 		if m.session.IsPinned {

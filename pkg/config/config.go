@@ -957,6 +957,13 @@ type Observability struct {
 	// compatibility with backends like Arize Phoenix that use the OpenInference
 	// attribute convention. Default is false.
 	OpenInference bool `json:"open_inference,omitempty" jsonschema:"description=Add OpenInference llm.* attributes alongside gen_ai.* attributes,default=false"`
+
+	// MemoryBuffer, when greater than zero, keeps the last N completed spans
+	// in an in-process ring buffer that the phosphor_trace tool reads back.
+	// Each entry is a compact summary (name, nesting, duration, status, a few
+	// key attributes), so the cost is on the order of tens of kilobytes for
+	// typical sizes. Off when unset.
+	MemoryBuffer int `json:"memory_buffer,omitempty" jsonschema:"description=Number of recent spans kept in the in-memory ring for phosphor_trace,example=100"`
 }
 
 // DisplayName returns the hook name for display purposes. It returns Name
@@ -1598,6 +1605,7 @@ func allToolNames() []string {
 		"bash",
 		"phosphor_info",
 		"phosphor_logs",
+		"phosphor_trace",
 		"job_output",
 		"job_kill",
 		"download",

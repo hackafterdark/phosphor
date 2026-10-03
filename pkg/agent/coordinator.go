@@ -1095,6 +1095,12 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, isSubA
 		allTools = append(allTools, tools.NewPhosphorLogsTool(logFile))
 	}
 
+	// Add phosphor_trace only when the in-memory span ring is enabled, so
+	// the default (unset) config keeps the tool list lean.
+	if c.cfg.Config().Observability != nil && c.cfg.Config().Observability.MemoryBuffer > 0 {
+		allTools = append(allTools, tools.NewPhosphorTraceTool())
+	}
+
 	allTools = append(
 		allTools,
 		tools.NewJobOutputTool(),
@@ -1283,16 +1289,16 @@ func (c *coordinator) buildAgentModels(ctx context.Context, isSubAgent bool) (Mo
 		}
 
 		return Model{
-				Model:      largeModel,
-				CatwalkCfg: *largeCatwalkModel,
-				ModelCfg:   largeModelCfg,
-				FlatRate:   largeProviderCfg.FlatRate,
-			}, Model{
-				Model:      smallModel,
-				CatwalkCfg: *smallCatwalkModel,
-				ModelCfg:   smallModelCfg,
-				FlatRate:   smallProviderCfg.FlatRate,
-			}, nil
+			Model:      largeModel,
+			CatwalkCfg: *largeCatwalkModel,
+			ModelCfg:   largeModelCfg,
+			FlatRate:   largeProviderCfg.FlatRate,
+		}, Model{
+			Model:      smallModel,
+			CatwalkCfg: *smallCatwalkModel,
+			ModelCfg:   smallModelCfg,
+			FlatRate:   smallProviderCfg.FlatRate,
+		}, nil
 	}
 
 	// Small model not configured — large model will be used for title generation.

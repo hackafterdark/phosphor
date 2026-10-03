@@ -229,11 +229,80 @@ func unrecognizedToolCallContinuationsFromContext(ctx context.Context) int {
 	return 0
 }
 
+// emptyTurnContinuationsContextKey is the unexported context key that
+// carries how many automatic continuations this turn has already spent
+// recovering from a step that ended normally (FinishReasonEndTurn) but
+// produced nothing actionable: no tool call and no non-whitespace text —
+// see isEmptyDeadEndTurn in agent.go. Kept as its own key for the same
+// reason as the siblings: nothing was truncated, so this budget is
+// unrelated to the forced-stop or token-budget ones.
+type emptyTurnContinuationsContextKey struct{}
+
+// defaultMaxEmptyTurnContinuations bounds those automatic continuations.
+// Not user-configurable, like the forced-stop and unrecognized-tool-call
+// budgets: this recovers from a known, narrow dropped-train-of-thought
+// shape, not a tunable cost/operator tradeoff like the token-budget
+// continuation.
+const defaultMaxEmptyTurnContinuations = 2
+
+// withEmptyTurnContinuations returns ctx carrying the number of automatic
+// continuations consumed so far, for the recursive call into
+// sessionAgent.Run.
+func withEmptyTurnContinuations(ctx context.Context, n int) context.Context {
+	return context.WithValue(ctx, emptyTurnContinuationsContextKey{}, n)
+}
+
+// emptyTurnContinuationsFromContext returns the count set by
+// [withEmptyTurnContinuations], or zero when the turn has not yet
+// recovered from an empty turn.
+func emptyTurnContinuationsFromContext(ctx context.Context) int {
+	if v, ok := ctx.Value(emptyTurnContinuationsContextKey{}).(int); ok {
+		return v
+	}
+	return 0
+}
+
+// truncatedToolCallContinuationsContextKey is the unexported context key
+// that carries how many automatic continuations this turn has already spent
+// recovering from a step whose tool call received fantasy's JSON-parse-
+// failure tool result ("invalid JSON input: ..." — see validateToolCall in
+// the vendored fantasy source), meaning the provider streamed an
+// incomplete/truncated argument for a call that reported a normal
+// FinishReasonToolUse. Kept as its own key for the same reason as the
+// siblings: each recovery is an independent budget for a distinct failure
+// signature.
+type truncatedToolCallContinuationsContextKey struct{}
+
+// defaultMaxTruncatedToolCallContinuations bounds those automatic
+// continuations. Not user-configurable, like the forced-stop and
+// unrecognized-tool-call budgets: this is a parser/transport reliability
+// quirk, not a tunable cost/operator tradeoff like the token-budget
+// continuation.
+const defaultMaxTruncatedToolCallContinuations = 2
+
+// withTruncatedToolCallContinuations returns ctx carrying the number of
+// automatic continuations consumed so far, for the recursive call into
+// sessionAgent.Run.
+func withTruncatedToolCallContinuations(ctx context.Context, n int) context.Context {
+	return context.WithValue(ctx, truncatedToolCallContinuationsContextKey{}, n)
+}
+
+// truncatedToolCallContinuationsFromContext returns the count set by
+// [withTruncatedToolCallContinuations], or zero when the turn has not yet
+// recovered from a truncated tool call.
+func truncatedToolCallContinuationsFromContext(ctx context.Context) int {
+	if v, ok := ctx.Value(truncatedToolCallContinuationsContextKey{}).(int); ok {
+		return v
+	}
+	return 0
+}
+
 // isInternalContinuation reports whether ctx marks this sessionAgent.Run call
 // as an internal recursive continuation of an already-active turn — the
 // self-critique reflection retry, the forced-stop recovery, a token-budget
-// continuation, or an unrecognized-tool-call retry — rather than a freshly,
-// independently dispatched request.
+// continuation, an unrecognized-tool-call retry, an empty-turn retry, or a
+// truncated-tool-call retry — rather than a freshly, independently
+// dispatched request.
 //
 // This matters because the outer Run invocation that is about to
 // `return a.Run(ctx, call)` is still, from the accepted-dispatch gate's point
@@ -251,5 +320,7 @@ func isInternalContinuation(ctx context.Context) bool {
 	return reflectionTurnsFromContext(ctx) > 0 ||
 		forcedStopContinuationsFromContext(ctx) > 0 ||
 		maxTokensContinuationsFromContext(ctx) > 0 ||
-		unrecognizedToolCallContinuationsFromContext(ctx) > 0
+		unrecognizedToolCallContinuationsFromContext(ctx) > 0 ||
+		emptyTurnContinuationsFromContext(ctx) > 0 ||
+		truncatedToolCallContinuationsFromContext(ctx) > 0
 }
