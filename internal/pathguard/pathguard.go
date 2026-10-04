@@ -129,11 +129,21 @@ func isShellDelimiter(c byte) bool {
 // whitespace and shell metacharacters and strips surrounding single/double
 // quotes, recording each token's span so callers can rewrite tokens in place
 // while leaving everything else byte-for-byte intact.
+//
+// Here-document bodies are masked out before tokenizing: the body is data
+// streamed to the command's stdin, not a path operand, so path-like text
+// inside it (a drive root in a commit message, a ".." in a patch) must
+// neither trigger a violation nor be rewritten in place. The mask also
+// protects quote tracking: embedded quotes in heredoc data would otherwise
+// fragment an enclosing quoted argument and expose the body's words as bare
+// tokens. Masking preserves byte offsets and length, so token spans remain
+// valid against the original command.
 func scanCommandTokens(command string) []commandToken {
 	var tokens []commandToken
+	masked := maskHeredocBodies(command)
 	i := 0
-	for i < len(command) {
-		if isShellDelimiter(command[i]) {
+	for i < len(masked) {
+		if isShellDelimiter(masked[i]) {
 			i++
 			continue
 		}
@@ -141,8 +151,8 @@ func scanCommandTokens(command string) []commandToken {
 		var text []byte
 		var quote byte
 		var openQuote byte
-		for i < len(command) {
-			c := command[i]
+		for i < len(masked) {
+			c := masked[i]
 			if quote != 0 {
 				if c == quote {
 					quote = 0
@@ -170,6 +180,186 @@ func scanCommandTokens(command string) []commandToken {
 		tokens = append(tokens, commandToken{text: string(text), start: start, end: i, quote: openQuote})
 	}
 	return tokens
+}
+
+// maskHeredocBodies returns a copy of command with every here-document body
+// blanked to spaces (newlines preserved, byte offsets unchanged). The parser
+// then cannot see any path-like text or quotes inside heredoc data.
+//
+// The pre-pass is deliberately quote-agnostic: any "<<" sequence is treated
+// as a heredoc introducer. A false positive here (e.g. "echo \"a << b\""
+// swallowing a later line) only suppresses the static text scan for those
+// bytes; the runtime exec/open handlers remain the authoritative gate, so
+// the bias toward masking errs on the side of availability, not evasion.
+func maskHeredocBodies(command string) string {
+	if !strings.Contains(command, "<<") {
+		return command
+	}
+	masked := []byte(command)
+	blank := func(from, to int) {
+		for j := from; j < to; j++ {
+			if masked[j] != '\n' {
+				masked[j] = ' '
+			}
+		}
+	}
+	var pending []pendingHeredoc
+	i := 0
+	for i < len(masked) {
+		// Herestring "<<<word": the operand is stdin data too, so mask it.
+		if masked[i] == '<' && i+2 < len(masked) && masked[i+1] == '<' && masked[i+2] == '<' {
+			j := i + 3
+			for j < len(masked) && masked[j] == ' ' {
+				j++
+			}
+			if j < len(masked) && (masked[j] == '\'' || masked[j] == '"') {
+				q := masked[j]
+				j++
+				for j < len(masked) && masked[j] != q {
+					j++
+				}
+				if j < len(masked) {
+					j++
+				}
+			} else {
+				for j < len(masked) && !isShellDelimiter(masked[j]) {
+					j++
+				}
+			}
+			blank(i, j)
+			i = j
+			continue
+		}
+		if masked[i] == '<' && i+1 < len(masked) && masked[i+1] == '<' {
+			if here, next, ok := parseHeredocIntro(command, i); ok {
+				if here != nil {
+					pending = append(pending, *here)
+				}
+				i = next
+				continue
+			}
+		}
+		if masked[i] == '\n' && len(pending) > 0 {
+			// Stacked introducers ("cat <<A <<B") stream their bodies in
+			// source order, each starting on the line after the previous
+			// terminator.
+			start := i + 1
+			pos := i
+			for _, here := range pending {
+				pos = skipHeredocBody(command, pos, here)
+			}
+			blank(start, pos)
+			pending = pending[:0]
+			i = pos
+			continue
+		}
+		i++
+	}
+	return string(masked)
+}
+
+// pendingHeredoc describes a here-document introducer whose body has not yet
+// been consumed by the scanner.
+type pendingHeredoc struct {
+	delim string
+	dash  bool
+}
+
+// parseHeredocIntro parses a here-document introducer at index i ("<<" or
+// "<<-"). It returns the pending heredoc (nil for an expanded or empty
+// delimiter, which cannot be matched reliably) and the index to resume
+// scanning at. ok is false for constructs that carry no body — the "<<<"
+// herestring and unparseable intros — in which case scanning proceeds
+// token-by-token as before.
+func parseHeredocIntro(command string, i int) (*pendingHeredoc, int, bool) {
+	j := i + 2
+	if j < len(command) && command[j] == '<' {
+		return nil, i, false // "<<<" herestring: no body
+	}
+	here := &pendingHeredoc{}
+	if j < len(command) && command[j] == '-' {
+		here.dash = true
+		j++
+	}
+	// POSIX allows whitespace between "<<" and the delimiter word.
+	for j < len(command) && (command[j] == ' ' || command[j] == '\t') {
+		j++
+	}
+	// Delimiter word: quoted or bare, ending at whitespace or a metachar.
+	var delim strings.Builder
+	closed := false
+	for j < len(command) {
+		c := command[j]
+		if c == '\'' || c == '"' {
+			if closed {
+				break // trailing text after a closed quote: bare word
+			}
+			q := c
+			j++
+			for j < len(command) && command[j] != q {
+				delim.WriteByte(command[j])
+				j++
+			}
+			if j >= len(command) {
+				return nil, i, false
+			}
+			j++
+			closed = true
+			continue
+		}
+		if delim.Len() > 0 && closed && !isShellDelimiter(c) {
+			// Concatenation like <<'E'"OF": treat as unmatchable.
+			return nil, i, false
+		}
+		if delim.Len() > 0 && (isShellDelimiter(c) || c == '<' || c == '>') {
+			break
+		}
+		if delim.Len() == 0 && (isShellDelimiter(c) || c == '<' || c == '>') {
+			// "<<" with no delimiter word (e.g. "cat <<;"): nothing to match.
+			return nil, j, true
+		}
+		if c == '$' || c == '`' || c == '(' || c == '{' {
+			// Expanded delimiter: its runtime value is unknown, so the body
+			// cannot be delimited reliably.
+			return nil, i, false
+		}
+		delim.WriteByte(c)
+		j++
+	}
+	word := delim.String()
+	if word == "" {
+		return nil, j, true
+	}
+	here.delim = word
+	return here, j, true
+}
+
+// skipHeredocBody consumes the here-document body that starts at the newline
+// index i and returns the index just past the terminator line. A body with no
+// terminator runs to the end of the command.
+func skipHeredocBody(command string, i int, here pendingHeredoc) int {
+	pos := i + 1
+	for pos < len(command) {
+		lineEnd := strings.IndexByte(command[pos:], '\n')
+		var line string
+		var next int
+		if lineEnd < 0 {
+			line = command[pos:]
+			next = len(command)
+		} else {
+			line = command[pos : pos+lineEnd]
+			next = pos + lineEnd + 1
+		}
+		trimmed := strings.TrimSuffix(line, "\r")
+		if here.dash {
+			trimmed = strings.TrimLeft(trimmed, "\t")
+		}
+		if trimmed == here.delim {
+			return next
+		}
+		pos = next
+	}
+	return len(command)
 }
 
 // CorrectCommandPaths relocates absolute-looking arguments that were meant to
@@ -273,16 +463,6 @@ func resolveTokenBase(token, base, home string) string {
 	return filepath.Clean(filepath.Join(base, s))
 }
 
-// isCDCommand reports whether the command is a cd command. These are skipped by
-// ValidateCommandPaths because they change directory rather than access files,
-// and the shell's workspace boundary enforcement already prevents them from
-// escaping the workspace.
-func isCDCommand(command string) bool {
-	trimmed := strings.TrimSpace(command)
-	lower := strings.ToLower(trimmed)
-	return strings.HasPrefix(lower, "cd ") || strings.HasPrefix(lower, "cd\t") || lower == "cd"
-}
-
 // ValidateCommandPaths checks whether any path in the raw (pre-expansion)
 // command string escapes the workspace. Unlike the previous implementation it is
 // not gated on the presence of a known I/O command name: every token that could
@@ -307,13 +487,6 @@ func isCDCommand(command string) bool {
 // (running them would duplicate side effects); they remain the documented
 // residual and are handled by the post-expansion walk discussed in the design.
 func ValidateCommandPaths(command string, absWorkingDir string) error {
-	// Skip cd commands entirely — they change directory, not access files.
-	// The shell's workspace boundary enforcement already prevents cd from
-	// escaping the workspace.
-	if isCDCommand(command) {
-		return nil
-	}
-
 	home := ""
 	if h, err := os.UserHomeDir(); err == nil {
 		home = h
@@ -516,6 +689,9 @@ func (c Confinement) Blocked(argv []string, cwd string) error {
 	}
 
 	roots := c.roots()
+	// Relative operands are only provably safe while cwd itself sits inside a
+	// trusted root; see the exemption below.
+	cwdInside := insideAny(filepath.Clean(cwd), roots)
 
 	for _, arg := range argv[1:] {
 		if arg == "" || isRemoteURL(arg) {
@@ -540,7 +716,12 @@ func (c Confinement) Blocked(argv []string, cwd string) error {
 		if referencesOutsideEnvVar(arg, c.TrustTempRoots) {
 			return fmt.Errorf("Security violation: path %s is outside workspace", arg)
 		}
-		if !isEscapablePathToken(arg) {
+		// Relative operands are only exempt while the current directory is
+		// itself inside a trusted root: a mid-command "cd" can move cwd
+		// outside the workspace, and then a harmless-looking relative
+		// operand resolves to an outside location. Once cwd has escaped,
+		// every path-like operand must be resolved and bounds-checked.
+		if !isEscapablePathToken(arg) && cwdInside {
 			continue
 		}
 		absPath := resolveTokenBase(arg, cwd, home)
@@ -550,6 +731,23 @@ func (c Confinement) Blocked(argv []string, cwd string) error {
 		return fmt.Errorf("Security violation: path %s is outside workspace", absPath)
 	}
 	return nil
+}
+
+// DirBlocked reports whether the interpreter's current working directory
+// itself lies outside the trusted roots. The cd builtin is dispatched
+// inside the interpreter and never reaches the exec-handler chain, so a
+// mid-command "cd /outside" escapes argv-based checks entirely; commands
+// that operate on the cwd without naming a path ("ls", "du", "rm -rf .")
+// must still be refused while cwd is outside the workspace.
+func (c Confinement) DirBlocked(dir string) error {
+	if c.WorkspaceRoot == "" || dir == "" {
+		return nil
+	}
+	absDir := filepath.Clean(dir)
+	if insideAny(absDir, c.roots()) {
+		return nil
+	}
+	return fmt.Errorf("Security violation: working directory %s is outside workspace", absDir)
 }
 
 // isHomePath reports whether a token begins with a home-directory expansion.

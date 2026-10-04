@@ -47,7 +47,11 @@ func TestMemoryExporterExportSpansFillsRing(t *testing.T) {
 }
 
 func TestGetSpanSummariesDisabled(t *testing.T) {
-	t.Parallel()
+	// The buffer is process-wide and other tests swap it out, so pin it to
+	// nil here rather than relying on test-execution order.
+	prev := memoryBuffer
+	defer func() { memoryBuffer = prev }()
+	memoryBuffer = nil
 
 	require.Nil(t, GetSpanSummaries("", 10), "a disabled buffer returns nothing")
 }

@@ -1,0 +1,27 @@
+# CodeRabbit configuration — https://docs.coderabbit.ai/configuration/
+# Keeps core Go code + tests fully reviewed while avoiding wasted review
+# quota on generated docs, bot PRs, and per-push incremental re-reviews.
+
+reviews:
+  auto_review:
+    enabled: true
+    # Review once when the PR opens; no re-review on every push.
+    # Incremental reviews count against the per-developer rate limit.
+    auto_incremental_review: false
+    # Pause after this many commits are reviewed on one PR (0 = never pause).
+    auto_pause_after_reviewed_commits: 2
+    drafts: false
+    # Exact-match bot accounts whose PRs should never be reviewed.
+    ignore_usernames:
+      - "dependabot[bot]"
+      - "renovate[bot]"
+      - "github-actions[bot]"
+    ignore_title_keywords:
+      - "WIP"
+      - "[skip review]"
+
+  # "!" prefix excludes a path; exclusions win over inclusions.
+  # go.sum and *.pb.go are already skipped by CodeRabbit defaults.
+  # *_test.go stays reviewed on purpose.
+  path_filters:
+    - "!pkg/phosphordocs/content/**"

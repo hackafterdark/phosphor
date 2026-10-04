@@ -120,7 +120,33 @@ func checkProgram(conf *pathguard.Confinement, cwd string, env []string, file *s
 				return true
 			}
 		case *syntax.CallExpr:
-			if n == nil || len(n.Args) < 2 || !isSourcingCommand(n.Args[0], env) {
+			if n == nil || len(n.Args) < 2 {
+				return true
+			}
+			if isCDCommandWord(n.Args[0], env) {
+				// The cd builtin is dispatched inside the interpreter and
+				// never reaches the exec-handler chain, so its target is
+				// bounds-checked here. A cd that lands outside the workspace
+				// turns every later relative operand in the same command
+				// into an out-of-workspace access. Unprovable targets (e.g.
+				// "cd $(mktemp -d)") are tolerated like output redirections
+				// are: the runtime cwd check in [pathConfinementHandler] and
+				// the post-expansion operand resolution in [Blocked] gate any
+				// actual file access that follows.
+				for _, word := range n.Args[1:] {
+					if word == nil {
+						continue
+					}
+					if strings.HasPrefix(strings.TrimSpace(word.Lit()), "-") {
+						continue // option word, not a path
+					}
+					if !checkOperand(word, false) {
+						return false
+					}
+				}
+				return true
+			}
+			if !isSourcingCommand(n.Args[0], env) {
 				return true
 			}
 			// Args[0] is "." / "source"; the remaining words are files to read.
@@ -147,6 +173,23 @@ func checkProgram(conf *pathguard.Confinement, cwd string, env []string, file *s
 		}
 	}
 	return nil
+}
+
+// isCDCommandWord reports whether a command-word names the cd builtin, whose
+// target changes the interpreter's working directory. It handles both a
+// literal ("cd") and a name produced only through expansion, mirroring
+// [isSourcingCommand].
+func isCDCommandWord(word *syntax.Word, env []string) bool {
+	if word == nil {
+		return false
+	}
+	if name := word.Lit(); name == "cd" {
+		return true
+	}
+	if expanded, _, err := expandRedirectOperand(env, word); err == nil {
+		return expanded == "cd"
+	}
+	return false
 }
 
 // isSourcingCommand reports whether a command-word names a sourcing builtin.
