@@ -30,8 +30,10 @@ Typing of entry to use:
 
 How to write it well:
 
-- `op=add` records a new entry and is the default when `op` is omitted. Every other op acts on an
-  existing entry and needs its `id`; there is no `write` or `record` op.
+- `op=add` records a new entry and is the default when `op` is omitted. The id-targeted ops (refine,
+  supersede, pin, unpin, note) need the entry's `id`; there is no `write` or `record` op. `op=retire`
+  without an `id` is a contradiction claim: the classifier finds the entry it retires, and records the
+  statement as new memory when nothing matches.
 - One atomic fact per call. Do not store a paragraph of history; store the assertion.
 - `summary` is a single line a stranger could act on. `body` carries the reason and the tradeoff.
 - Set `thread` to a stable topic name so "continue the memory design work" resolves later. Reuse the
