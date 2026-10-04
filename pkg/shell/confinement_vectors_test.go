@@ -303,3 +303,81 @@ func TestExecConfinesExpandedRedirectOperands(t *testing.T) {
 
 // Compile-time guard: newConfinement returns the policy type jq/dispatch expect.
 var _ *pathguard.Confinement = newConfinement("x", nil, false)
+
+// TestMidCommandCDEscapeBlocked proves the mid-command "cd" escape vectors
+// found during red-team testing are refused: cd is a special builtin executed
+// inside the interpreter, so neither the exec-argv confinement nor the open
+// handler saw the escaped cwd before these fixes.
+func TestMidCommandCDEscapeBlocked(t *testing.T) {
+	t.Parallel()
+
+	base := t.TempDir()
+	workspace := filepath.Join(base, "ws")
+	outside := filepath.Join(base, "outside")
+	require.NoError(t, os.MkdirAll(workspace, 0o755))
+	require.NoError(t, os.MkdirAll(outside, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(outside, "secret.txt"), []byte("leak"), 0o644))
+
+	vectors := []string{
+		// cd outside, then read via a relative operand resolved against the
+		// escaped cwd.
+		"cd " + shellQuote(filepath.ToSlash(outside)) + " && cat secret.txt",
+		// cd outside, then operate on the cwd itself with no path operand.
+		"cd " + shellQuote(filepath.ToSlash(outside)) + " && ls",
+		// cd home via tilde expansion, then enumerate it.
+		"cd ~ && ls .ssh",
+		// cd outside, then write through a redirection operand.
+		"cd " + shellQuote(filepath.ToSlash(outside)) + "; echo hi > leak.txt",
+	}
+
+	for _, cmd := range vectors {
+		err := Run(t.Context(), RunOptions{
+			Command:         cmd,
+			Cwd:             workspace,
+			Workspace:       workspace,
+			DisableTempRoot: true,
+		})
+		require.Error(t, err, "vector %q must be refused", cmd)
+		require.Contains(t, err.Error(), "outside workspace", "vector %q", cmd)
+	}
+}
+
+// TestMidCommandCDInTreeAllowed proves the fixes do not over-constrain
+// legitimate in-tree directory changes.
+func TestMidCommandCDInTreeAllowed(t *testing.T) {
+	t.Parallel()
+
+	workspace := t.TempDir()
+	sub := filepath.Join(workspace, "sub")
+	require.NoError(t, os.MkdirAll(sub, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(sub, "f.txt"), []byte("ok"), 0o644))
+
+	err := Run(t.Context(), RunOptions{
+		Command:         "cd sub && cat f.txt",
+		Cwd:             workspace,
+		Workspace:       workspace,
+		Stdout:          io.Discard,
+		DisableTempRoot: true,
+	})
+	if err != nil {
+		require.NotContains(t, err.Error(), "outside workspace", err.Error())
+	}
+}
+
+// TestCDEscapeHarmlessWithTrustedTempRoots proves the confinement keeps its
+// documented temp-staging behavior: after cd into the trusted temp root,
+// relative operands remain reachable.
+func TestCDEscapeHarmlessWithTrustedTempRoots(t *testing.T) {
+	t.Parallel()
+
+	workspace := t.TempDir()
+	err := Run(t.Context(), RunOptions{
+		Command:   "cd " + shellQuote(filepath.ToSlash(os.TempDir())) + " && pwd",
+		Cwd:       workspace,
+		Workspace: workspace,
+		Stdout:    io.Discard,
+	})
+	if err != nil {
+		require.NotContains(t, err.Error(), "outside workspace", err.Error())
+	}
+}

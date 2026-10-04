@@ -273,16 +273,6 @@ func resolveTokenBase(token, base, home string) string {
 	return filepath.Clean(filepath.Join(base, s))
 }
 
-// isCDCommand reports whether the command is a cd command. These are skipped by
-// ValidateCommandPaths because they change directory rather than access files,
-// and the shell's workspace boundary enforcement already prevents them from
-// escaping the workspace.
-func isCDCommand(command string) bool {
-	trimmed := strings.TrimSpace(command)
-	lower := strings.ToLower(trimmed)
-	return strings.HasPrefix(lower, "cd ") || strings.HasPrefix(lower, "cd\t") || lower == "cd"
-}
-
 // ValidateCommandPaths checks whether any path in the raw (pre-expansion)
 // command string escapes the workspace. Unlike the previous implementation it is
 // not gated on the presence of a known I/O command name: every token that could
@@ -307,13 +297,6 @@ func isCDCommand(command string) bool {
 // (running them would duplicate side effects); they remain the documented
 // residual and are handled by the post-expansion walk discussed in the design.
 func ValidateCommandPaths(command string, absWorkingDir string) error {
-	// Skip cd commands entirely — they change directory, not access files.
-	// The shell's workspace boundary enforcement already prevents cd from
-	// escaping the workspace.
-	if isCDCommand(command) {
-		return nil
-	}
-
 	home := ""
 	if h, err := os.UserHomeDir(); err == nil {
 		home = h
@@ -516,6 +499,9 @@ func (c Confinement) Blocked(argv []string, cwd string) error {
 	}
 
 	roots := c.roots()
+	// Relative operands are only provably safe while cwd itself sits inside a
+	// trusted root; see the exemption below.
+	cwdInside := insideAny(filepath.Clean(cwd), roots)
 
 	for _, arg := range argv[1:] {
 		if arg == "" || isRemoteURL(arg) {
@@ -540,7 +526,12 @@ func (c Confinement) Blocked(argv []string, cwd string) error {
 		if referencesOutsideEnvVar(arg, c.TrustTempRoots) {
 			return fmt.Errorf("Security violation: path %s is outside workspace", arg)
 		}
-		if !isEscapablePathToken(arg) {
+		// Relative operands are only exempt while the current directory is
+		// itself inside a trusted root: a mid-command "cd" can move cwd
+		// outside the workspace, and then a harmless-looking relative
+		// operand resolves to an outside location. Once cwd has escaped,
+		// every path-like operand must be resolved and bounds-checked.
+		if !isEscapablePathToken(arg) && cwdInside {
 			continue
 		}
 		absPath := resolveTokenBase(arg, cwd, home)
@@ -550,6 +541,23 @@ func (c Confinement) Blocked(argv []string, cwd string) error {
 		return fmt.Errorf("Security violation: path %s is outside workspace", absPath)
 	}
 	return nil
+}
+
+// DirBlocked reports whether the interpreter's current working directory
+// itself lies outside the trusted roots. The cd builtin is dispatched
+// inside the interpreter and never reaches the exec-handler chain, so a
+// mid-command "cd /outside" escapes argv-based checks entirely; commands
+// that operate on the cwd without naming a path ("ls", "du", "rm -rf .")
+// must still be refused while cwd is outside the workspace.
+func (c Confinement) DirBlocked(dir string) error {
+	if c.WorkspaceRoot == "" || dir == "" {
+		return nil
+	}
+	absDir := filepath.Clean(dir)
+	if insideAny(absDir, c.roots()) {
+		return nil
+	}
+	return fmt.Errorf("Security violation: working directory %s is outside workspace", absDir)
 }
 
 // isHomePath reports whether a token begins with a home-directory expansion.

@@ -159,11 +159,60 @@ func (s *Shell) updateShellFromRunner(runner *interp.Runner) {
 }
 ```
 
-If a `cd` command would move the working directory outside the workspace, it is silently reverted. The agent sees the original cwd in `<cwd>` tags and never gains access to paths it tried to escape to.
+If a `cd` command would move the working directory outside the workspace, it is reverted after the command completes. The agent sees the original cwd in `<cwd>` tags and never carries an escaped cwd into the next command.
 
 The background shell manager passes the workspace root through to each new Shell:
 
 **Location:** `internal/shell/background.go:89` — `Start(ctx, workingDir, workspace, blockFuncs, command, description)`
+
+### Why the post-command reset is not sufficient
+
+The reset in `updateShellFromRunner` runs *after* the interpreter finishes the
+command. `cd` is a special builtin dispatched inside `mvdan.cc/sh/v3` and never
+reaches the exec-handler middleware chain, so a compound command such as
+`cd C:/ && cat Windows/win.ini` or `cd ~ && ls .ssh` executed the second part
+with the interpreter's cwd already outside the workspace: the relative operand
+resolved against the escaped cwd and read the file, while the post-command
+reset silently restored cwd and hid the violation from the transcript.
+
+### Layer 3a: Static `cd` Target Confinement
+
+**Locations:** `internal/pathguard/pathguard.go` (`ValidateCommandPaths`),
+`pkg/shell/confinement_ast.go` (`checkProgram`)
+
+The static validator no longer skips `cd` commands wholesale — every path
+token in a `cd`-prefixed command (including the `cd` target itself and the
+operands of any commands chained after it) is bounds-checked before the shell
+starts. Independently, the AST walk in `checkProgram` bounds-checks the
+expanded target of every `cd` call node, so an explicit escape (`cd C:/`,
+`cd ~`, `cd /etc`) is refused before any I/O happens. Unprovable targets such
+as `cd $(mktemp -d)` are tolerated at this layer — exactly like output
+redirection operands — because the runtime layer below gates any file access
+that follows.
+
+### Layer 3b: Runtime CWD Confinement
+
+**Locations:** `pkg/shell/confinement.go` (`pathConfinementHandler`),
+`pkg/shell/run.go` (`pathOpenHandler`), `internal/pathguard/pathguard.go`
+(`Confinement.DirBlocked`)
+
+Two runtime gates close the residual window:
+
+1. `DirBlocked` — before any external command executes (exec-handler chain)
+   and before any interpreter-opened file (open handler: redirections,
+   sourced scripts, here-documents), the interpreter's *current working
+   directory itself* is bounds-checked against the trusted roots. A command
+   that operates on the cwd without naming a path (`ls`, `du`, `rm -rf .`)
+   is refused while cwd sits outside the workspace.
+2. `Confinement.Blocked` no longer waves through relative operands while the
+   cwd is outside a trusted root. When cwd has escaped, every path-like
+   operand is resolved against the real cwd and bounds-checked, so
+   `cat Windows/win.ini` after `cd C:/` surfaces a security violation
+   instead of reading `C:/Windows/win.ini`.
+
+Together these make a mid-command `cd` escape harmless: the cwd can change,
+but nothing that runs or opens files afterwards can act on an outside
+directory.
 
 ## Layer 4: Agent Prompt Instructions
 
@@ -237,4 +286,6 @@ All bounds-check logic is covered by unit tests:
 - `internal/filepathext/bounds_test.go` — `IsInside` correctness (7 cases + real-path integration test).
 - `internal/agent/tools/append_test.go` — existing append tests pass with the refactored bounds check.
 - `internal/shell/background_test.go` — background shell manager tests pass with the updated `Start` signature.
+- `internal/pathguard/pathguard_test.go` — `TestCommandEscapesWorkspace_CDCommandValidated` pins that `cd` targets are bounds-checked (absolute, `~`, and compound `cd X && cmd` forms are refused; in-tree `cd` is allowed).
+- `pkg/shell/confinement_vectors_test.go` — `TestMidCommandCDEscapeBlocked` pins the red-team vectors (`cd <outside> && cat <relative>`, `cd <outside> && ls`, `cd ~ && ls .ssh`, `cd <outside>; echo > file`) are refused; `TestMidCommandCDInTreeAllowed` and `TestCDEscapeHarmlessWithTrustedTempRoots` pin that legitimate in-tree and trusted-temp directory changes still work.
 - Full `go test ./internal/...` suite passes with no regressions.

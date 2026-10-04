@@ -229,7 +229,11 @@ func pathOpenHandler(conf *pathguard.Confinement) interp.OpenHandlerFunc {
 		return base
 	}
 	return func(ctx context.Context, path string, flag int, perm os.FileMode) (io.ReadWriteCloser, error) {
-		cwd := interp.HandlerCtx(ctx).Dir
+		hc := interp.HandlerCtx(ctx)
+		cwd := hc.Dir
+		if err := conf.DirBlocked(cwd); err != nil {
+			return nil, err
+		}
 		absPath := path
 		if !filepath.IsAbs(path) {
 			absPath = filepath.Join(cwd, path)

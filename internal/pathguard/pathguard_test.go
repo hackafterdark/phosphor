@@ -105,26 +105,20 @@ func TestCommandEscapesWorkspace_AbsolutePathClean(t *testing.T) {
 
 // TestCommandEscapesWorkspace_NonIOCommands verifies that ordinary build/test
 // commands whose operands cannot escape the workspace pass validation without
-// error, and that cd is recognised as a directory-change (not a file access).
+// error.
 func TestCommandEscapesWorkspace_NonIOCommands(t *testing.T) {
 	t.Parallel()
 
 	workspace := t.TempDir()
 
 	for _, cmd := range []string{
-		`go build ./cmd/petstore/...`,
-		`go vet ./...`,
-		`go test ./internal/agent -run TestFoo`,
-		`git status`,
+		"go build ./cmd/petstore/...",
+		"go vet ./...",
+		"go test ./internal/agent -run TestFoo",
+		"git status",
 	} {
 		require.NoError(t, ValidateCommandPaths(cmd, workspace), cmd)
 	}
-
-	require.True(t, isCDCommand("cd F:/some/path"),
-		"'cd' should be detected as a cd command")
-	require.True(t, isCDCommand("cd .."))
-	require.False(t, isCDCommand("go build ./cmd/..."),
-		"'go build' should not be detected as cd")
 }
 
 // TestIsEscapablePathToken pins the token classifier that decides which
@@ -160,21 +154,26 @@ func TestIsEscapablePathToken(t *testing.T) {
 	}
 }
 
-// TestCommandEscapesWorkspace_CDCommandSkipped verifies that cd commands bypass
-// path validation entirely. The shell's workspace boundary enforcement
-// (updateShellFromRunner) already prevents cd from escaping the workspace.
-func TestCommandEscapesWorkspace_CDCommandSkipped(t *testing.T) {
+// TestCommandEscapesWorkspace_CDCommandValidated verifies that cd targets are
+// bounds-checked like any other path token: a cd to an outside directory
+// changes the interpreter's cwd mid-command, and relative operands in the
+// same command would then resolve outside the workspace.
+func TestCommandEscapesWorkspace_CDCommandValidated(t *testing.T) {
 	t.Parallel()
+
+	workspace := t.TempDir()
 
 	cases := []struct {
 		name    string
 		command string
-		wantCD  bool
+		wantErr bool
 	}{
-		{"cd relative", "cd cmd", true},
-		{"cd absolute", "cd F:/some/path", true},
-		{"cd ..", "cd ..", true},
-		{"cd with trailing space", "cd /tmp ", true},
+		{"cd relative", "cd cmd", false},
+		{"cd dotdot to sibling", "cd ../elsewhere", true},
+		{"cd absolute outside", "cd C:/some/path", true},
+		{"cd home", "cd ~", true},
+		{"cd compound with absolute", "cd C:/ && cat win.ini", true},
+		{"cd compound in-tree", "cd internal && cat x.go", false},
 		{"go build", "go build ./cmd/...", false},
 		{"cat file", "cat file.txt", false},
 	}
@@ -182,9 +181,13 @@ func TestCommandEscapesWorkspace_CDCommandSkipped(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			require.Equal(t, tc.wantCD, isCDCommand(tc.command),
-				"isCDCommand(%q) = %v, want %v", tc.command,
-				isCDCommand(tc.command), tc.wantCD)
+			err := ValidateCommandPaths(tc.command, workspace)
+			if tc.wantErr {
+				require.Error(t, err, "expected %q to be refused", tc.command)
+				require.Contains(t, err.Error(), "Security violation")
+			} else {
+				require.NoError(t, err, tc.command)
+			}
 		})
 	}
 }

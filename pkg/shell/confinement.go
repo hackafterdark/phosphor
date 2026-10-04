@@ -34,9 +34,14 @@ import (
 func pathConfinementHandler(conf *pathguard.Confinement, blockFuncs []BlockFunc) func(next interp.ExecHandlerFunc) interp.ExecHandlerFunc {
 	return func(next interp.ExecHandlerFunc) interp.ExecHandlerFunc {
 		return func(ctx context.Context, args []string) error {
-			if conf != nil && conf.WorkspaceRoot != "" && len(args) > 1 && !isBlocked(args, blockFuncs) {
-				dir := interp.HandlerCtx(ctx).Dir
-				if err := conf.Blocked(args, dir); err != nil {
+			if conf != nil && conf.WorkspaceRoot != "" && !isBlocked(args, blockFuncs) {
+				hc := interp.HandlerCtx(ctx)
+				// The cd builtin is dispatched inside the interpreter and
+				// never reaches this chain, so cwd itself may already sit
+				// outside the workspace after a mid-command "cd". Commands
+				// that act on the cwd without naming a path ("ls", "du")
+				// must be refused in that state.
+				if err := conf.DirBlocked(hc.Dir); err != nil {
 					slog.InfoContext(ctx, "Command blocked by workspace path confinement",
 						"command", args[0],
 						"args", args,
@@ -44,6 +49,17 @@ func pathConfinementHandler(conf *pathguard.Confinement, blockFuncs []BlockFunc)
 						"reason", err.Error(),
 					)
 					return err
+				}
+				if len(args) > 1 {
+					if err := conf.Blocked(args, hc.Dir); err != nil {
+						slog.InfoContext(ctx, "Command blocked by workspace path confinement",
+							"command", args[0],
+							"args", args,
+							"workspace", conf.WorkspaceRoot,
+							"reason", err.Error(),
+						)
+						return err
+					}
 				}
 			}
 			return next(ctx, args)
