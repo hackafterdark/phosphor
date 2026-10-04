@@ -30,6 +30,8 @@ Typing of entry to use:
 
 How to write it well:
 
+- `op=add` records a new entry and is the default when `op` is omitted. Every other op acts on an
+  existing entry and needs its `id`; there is no `write` or `record` op.
 - One atomic fact per call. Do not store a paragraph of history; store the assertion.
 - `summary` is a single line a stranger could act on. `body` carries the reason and the tradeoff.
 - Set `thread` to a stable topic name so "continue the memory design work" resolves later. Reuse the

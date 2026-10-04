@@ -393,7 +393,7 @@ func (g *Gate) Apply(ctx context.Context, req WriteRequest, op Op) (Outcome, err
 		scope   = req.Entry.Scope
 	)
 	if id == "" {
-		return Outcome{Op: op, Status: StatusRefused, Message: "This op needs an existing entry id."}, nil
+		return Outcome{Op: op, Status: StatusRefused, Message: fmt.Sprintf("This op needs an existing entry id. To record a new entry use op=%s; find the id of an existing one with memory_search.", OpAdd)}, nil
 	}
 	if scope == "" {
 		scope = ScopeProject
@@ -462,7 +462,8 @@ func (g *Gate) Record(ctx context.Context, req WriteRequest, op Op) (Outcome, er
 	case OpPin, OpUnpin, OpNote, OpConfirm, OpIgnore:
 		return g.Apply(ctx, req, op)
 	default:
-		return Outcome{Op: op, Status: StatusRefused, Message: fmt.Sprintf("Unknown memory op %q.", op)}, nil
+		return Outcome{Op: op, Status: StatusRefused, Message: fmt.Sprintf("Unknown memory op %q. Valid ops: %s, %s, %s, %s, %s, %s, %s, %s, %s.",
+			op, OpAdd, OpRefine, OpSupersede, OpRetire, OpPin, OpUnpin, OpNote, OpConfirm, OpIgnore)}, nil
 	}
 }
 
