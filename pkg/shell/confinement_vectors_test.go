@@ -340,6 +340,35 @@ func TestMidCommandCDEscapeBlocked(t *testing.T) {
 		require.Error(t, err, "vector %q must be refused", cmd)
 		require.Contains(t, err.Error(), "outside workspace", "vector %q", cmd)
 	}
+
+	// Runtime-only target via command substitution: the static AST defers
+	// it, so only the runtime exec gate can refuse what follows.
+	err := Run(t.Context(), RunOptions{
+		Command:         "cd $(echo " + shellQuote(filepath.ToSlash(outside)) + ") && cat secret.txt",
+		Cwd:             workspace,
+		Workspace:       workspace,
+		Stdout:          io.Discard,
+		DisableTempRoot: true,
+	})
+	require.Error(t, err, "runtime vector must be refused")
+	require.Contains(t, err.Error(), "outside workspace")
+
+	// Glob expansion of an escaped cwd: mvdan/sh swallows expansion errors,
+	// so the vector is refused silently — the security property is that no
+	// outside directory entries reach the builtin's output.
+	var globOut strings.Builder
+	err = Run(t.Context(), RunOptions{
+		Command:         "cd $(echo " + shellQuote(filepath.ToSlash(outside)) + ") && echo *",
+		Cwd:             workspace,
+		Workspace:       workspace,
+		Stdout:          &globOut,
+		DisableTempRoot: true,
+	})
+	if err != nil {
+		require.Contains(t, err.Error(), "outside workspace", err.Error())
+	}
+	require.NotContains(t, globOut.String(), "secret.txt",
+		"escaped glob must not list outside directory entries")
 }
 
 // TestMidCommandCDInTreeAllowed proves the fixes do not over-constrain

@@ -170,9 +170,9 @@ func TestCommandEscapesWorkspace_CDCommandValidated(t *testing.T) {
 	}{
 		{"cd relative", "cd cmd", false},
 		{"cd dotdot to sibling", "cd ../elsewhere", true},
-		{"cd absolute outside", "cd C:/some/path", true},
+		{"cd absolute outside", "cd /etc/somewhere", true},
 		{"cd home", "cd ~", true},
-		{"cd compound with absolute", "cd C:/ && cat win.ini", true},
+		{"cd compound with absolute", "cd /etc && cat passwd", true},
 		{"cd compound in-tree", "cd internal && cat x.go", false},
 		{"go build", "go build ./cmd/...", false},
 		{"cat file", "cat file.txt", false},

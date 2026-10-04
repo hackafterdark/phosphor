@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -207,8 +208,38 @@ func newRunner(cwd string, env []string, stdin io.Reader, stdout, stderr io.Writ
 		interp.Env(expand.ListEnviron(env...)),
 		interp.Dir(cwd),
 		interp.OpenHandler(pathOpenHandler(conf)),
+		interp.ReadDirHandler2(pathReadDirHandler(conf)),
 		execHandlerOption(blockFuncs, conf),
 	)
+}
+
+// pathReadDirHandler returns an [interp.ReadDirHandlerFunc2] that bounds-checks
+// the directory pathname expansion reads before the glob is produced. Without
+// it, `cd <outside> && echo *` lists the outside directory's entries and
+// builtin output (echo, printf) never reaches the exec-handler chain, so the
+// escaped listing escapes both the exec and open gates. Confinement is skipped
+// when disabled so trusted surfaces keep their unrestricted behavior.
+func pathReadDirHandler(conf *pathguard.Confinement) interp.ReadDirHandlerFunc2 {
+	base := interp.DefaultReadDirHandler2()
+	if conf == nil || conf.WorkspaceRoot == "" {
+		return base
+	}
+	return func(ctx context.Context, path string) ([]fs.DirEntry, error) {
+		hc := interp.HandlerCtx(ctx)
+		dir := path
+		if !filepath.IsAbs(dir) {
+			dir = filepath.Join(hc.Dir, path)
+		}
+		if err := conf.DirBlocked(dir); err != nil {
+			slog.InfoContext(ctx, "Glob expansion blocked by workspace path confinement",
+				"path", path,
+				"workspace", conf.WorkspaceRoot,
+				"reason", err.Error(),
+			)
+			return nil, err
+		}
+		return base(ctx, path)
+	}
 }
 
 // pathOpenHandler returns an [interp.OpenHandlerFunc] that bounds-checks every

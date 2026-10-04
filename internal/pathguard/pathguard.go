@@ -281,6 +281,10 @@ func parseHeredocIntro(command string, i int) (*pendingHeredoc, int, bool) {
 		here.dash = true
 		j++
 	}
+	// POSIX allows whitespace between "<<" and the delimiter word.
+	for j < len(command) && (command[j] == ' ' || command[j] == '\t') {
+		j++
+	}
 	// Delimiter word: quoted or bare, ending at whitespace or a metachar.
 	var delim strings.Builder
 	closed := false

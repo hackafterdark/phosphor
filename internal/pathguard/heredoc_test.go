@@ -29,9 +29,13 @@ func TestHeredocBodyIsData(t *testing.T) {
 	require.NoError(t, ValidateCommandPaths(failingCommand, t.TempDir()))
 
 	// A real operand on the same line as the introducer is still flagged.
-	err := ValidateCommandPaths("cat <<EOF > C:/evil.txt\nbody\nEOF", t.TempDir())
+	err := ValidateCommandPaths("cat <<EOF > /etc/evil.txt\nbody\nEOF", t.TempDir())
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "Security violation")
+
+	// Whitespace between the introducer and the delimiter is POSIX-legal and
+	// must mask the body too.
+	require.NoError(t, ValidateCommandPaths("cat << EOF\nC:/drive root text\nEOF", t.TempDir()))
 
 	// Stacked heredocs: bodies stream in source order.
 	stacked := "cat <<A <<B\nC:/one\nA\nC:/two\nB\n"

@@ -215,12 +215,14 @@ availability, not evasion.
 
 Two runtime gates close the residual window:
 
-1. `DirBlocked` — before any external command executes (exec-handler chain)
-   and before any interpreter-opened file (open handler: redirections,
-   sourced scripts, here-documents), the interpreter's *current working
+1. `DirBlocked` — before any external command executes (exec-handler chain),
+   before any interpreter-opened file (open handler: redirections, sourced
+   scripts, here-documents), and before any directory pathname expansion
+   reads (read-dir handler), the interpreter's *current working
    directory itself* is bounds-checked against the trusted roots. A command
    that operates on the cwd without naming a path (`ls`, `du`, `rm -rf .`)
-   is refused while cwd sits outside the workspace.
+   is refused while cwd sits outside the workspace, and `echo *` after an
+   escaped `cd` cannot list the outside directory's entries.
 2. `Confinement.Blocked` no longer waves through relative operands while the
    cwd is outside a trusted root. When cwd has escaped, every path-like
    operand is resolved against the real cwd and bounds-checked, so
