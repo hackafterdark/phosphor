@@ -190,6 +190,23 @@ as `cd $(mktemp -d)` are tolerated at this layer — exactly like output
 redirection operands — because the runtime layer below gates any file access
 that follows.
 
+#### Heredocs and herestrings are data, not operands
+
+The raw-text validator must distinguish *operands* (paths the shell opens or
+execs) from *data* (bytes streamed to stdin). A here-document body is data:
+path-like text inside it — a drive root in a commit message, a `..` in a
+patch — must neither trigger a violation nor be rewritten in place by
+`CorrectCommandPaths`. `maskHeredocBodies` blanks every heredoc body (and
+herestring operand) to spaces before tokenization, preserving byte offsets
+and newlines. The mask also repairs quote tracking: without it, a `"`
+embedded in heredoc data closes an enclosing quoted argument, fragments the
+argument, and exposes the body's words as bare path tokens — the false
+positive that once blocked a commit message containing `C:/`. The pre-pass is
+deliberately quote-agnostic (any `<<` is treated as an introducer); a
+misfire only suppresses the static text scan for those bytes, and the runtime
+exec/open handlers remain the authoritative gate, so the bias errs toward
+availability, not evasion.
+
 ### Layer 3b: Runtime CWD Confinement
 
 **Locations:** `pkg/shell/confinement.go` (`pathConfinementHandler`),
@@ -287,5 +304,6 @@ All bounds-check logic is covered by unit tests:
 - `internal/agent/tools/append_test.go` — existing append tests pass with the refactored bounds check.
 - `internal/shell/background_test.go` — background shell manager tests pass with the updated `Start` signature.
 - `internal/pathguard/pathguard_test.go` — `TestCommandEscapesWorkspace_CDCommandValidated` pins that `cd` targets are bounds-checked (absolute, `~`, and compound `cd X && cmd` forms are refused; in-tree `cd` is allowed).
+- `internal/pathguard/heredoc_test.go` — `TestHeredocBodyIsData` pins that heredoc bodies, stacked heredocs, `<<-` bodies, and herestring operands are treated as data while real operands on the introducer line are still flagged; `TestHeredocBodyNotRewritten` pins that `CorrectCommandPaths` leaves heredoc data byte-for-byte intact.
 - `pkg/shell/confinement_vectors_test.go` — `TestMidCommandCDEscapeBlocked` pins the red-team vectors (`cd <outside> && cat <relative>`, `cd <outside> && ls`, `cd ~ && ls .ssh`, `cd <outside>; echo > file`) are refused; `TestMidCommandCDInTreeAllowed` and `TestCDEscapeHarmlessWithTrustedTempRoots` pin that legitimate in-tree and trusted-temp directory changes still work.
 - Full `go test ./internal/...` suite passes with no regressions.
