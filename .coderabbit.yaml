@@ -24,7 +24,4 @@ reviews:
   # go.sum and *.pb.go are already skipped by CodeRabbit defaults.
   # *_test.go stays reviewed on purpose.
   path_filters:
-    - "!docs/**"
     - "!pkg/phosphordocs/content/**"
-    - "!_PLANS/**"
-    - "!_other_project_research/**"
