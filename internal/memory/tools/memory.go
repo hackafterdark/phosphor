@@ -48,7 +48,7 @@ const ToolName = memory.ToolName
 // Params is the argument set of the memory writer.
 type Params struct {
 	Op           string   `json:"op" jsonschema:"description=What to do: add | refine | supersede | retire | pin | unpin | note | confirm | ignore"`
-	ID           string   `json:"id,omitempty" jsonschema:"description=Target entry id for refine, supersede, retire, pin, unpin and note"`
+	ID           string   `json:"id,omitempty" jsonschema:"description=Target entry id for refine, supersede, retire, pin, unpin, note, confirm and ignore"`
 	Type         string   `json:"type,omitempty" jsonschema:"description=decision | constraint | requirement | open_question | reference | plan | preference | fact | pattern | environment | task | policy"`
 	Summary      string   `json:"summary,omitempty" jsonschema:"description=One-line headline shown in listings and search results"`
 	Body         string   `json:"body,omitempty" jsonschema:"description=The full statement to remember"`

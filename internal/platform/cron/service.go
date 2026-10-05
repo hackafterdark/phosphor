@@ -6,11 +6,9 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/robfig/cron/v3"
@@ -358,48 +356,84 @@ func (s *Service) acquireJobLock(jobName string) (func(), bool) {
 	jobDir := filepath.Join(s.cfg.WorkingDir(), ".phosphor/jobs", jobName)
 	lockFile := filepath.Join(jobDir, ".job.lock")
 
-	if data, err := os.ReadFile(lockFile); err == nil {
-		pid, parseErr := strconv.Atoi(strings.TrimSpace(string(data)))
-		if parseErr == nil && pidAlive(pid) {
-			s.logger.Info("job is locked, skipping run", "job", jobName, "pid", pid)
-			return nil, false
-		}
-		s.logger.Warn("removing stale job lock", "job", jobName, "lock_file", lockFile)
+	if s.claimLock(lockFile, jobName) {
+		return func() { s.unlockJob(lockFile, jobName) }, true
 	}
 
-	// Create lock file holding our PID so future runs can detect staleness.
-	if err := os.WriteFile(lockFile, []byte(strconv.Itoa(os.Getpid())), 0o644); err != nil {
-		s.logger.Error("failed to create lock file", "job", jobName, "error", err)
+	// The lock exists. Take it over only when its owner is gone.
+	if !s.lockOwnerGone(lockFile, jobName) {
 		return nil, false
 	}
-	return func() {
-		if err := os.Remove(lockFile); err != nil {
-			s.logger.Error("failed to remove lock file", "job", jobName, "error", err)
-		}
-	}, true
+	if err := os.Remove(lockFile); err != nil && !os.IsNotExist(err) {
+		s.logger.Error("failed to remove stale lock file", "job", jobName, "error", err)
+		return nil, false
+	}
+	// Claiming with O_EXCL makes the takeover exclusive even when another
+	// instance is reclaiming the same stale lock.
+	if !s.claimLock(lockFile, jobName) {
+		s.logger.Info("job is locked, skipping run", "job", jobName)
+		return nil, false
+	}
+	// A racing instance may have removed our claim and taken the slot
+	// itself; only the instance whose PID survives in the file runs.
+	if pid, err := readLockPID(lockFile); err != nil || pid != os.Getpid() {
+		s.logger.Info("job is locked, skipping run", "job", jobName)
+		return nil, false
+	}
+	return func() { s.unlockJob(lockFile, jobName) }, true
 }
 
-// pidAlive reports whether a process with the given PID appears to exist.
-// It is a best-effort check used only to reclaim stale job locks.
-func pidAlive(pid int) bool {
-	if pid <= 0 {
-		return false
-	}
-	p, err := os.FindProcess(pid)
+// claimLock claims the lock slot by creating the file exclusively, so at
+// most one racing instance can succeed. The file holds our PID so future
+// runs can detect staleness.
+func (s *Service) claimLock(lockFile, jobName string) bool {
+	f, err := os.OpenFile(lockFile, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
 	if err != nil {
 		return false
 	}
-	if runtime.GOOS == "windows" {
-		// On Windows FindProcess itself fails for dead PIDs; a successful
-		// lookup means the process exists.
-		_ = p.Release()
-		return true
-	}
-	// On Unix FindProcess always succeeds; probe liveness with signal 0.
-	if err := p.Signal(syscall.Signal(0)); err != nil {
-		return false
+	defer f.Close()
+	if _, err := f.WriteString(strconv.Itoa(os.Getpid())); err != nil {
+		s.logger.Error("failed to write lock file", "job", jobName, "error", err)
 	}
 	return true
+}
+
+// lockOwnerGone reports whether the process recorded in the lock file is
+// gone (or its record is unreadable), allowing takeover.
+func (s *Service) lockOwnerGone(lockFile, jobName string) bool {
+	pid, err := readLockPID(lockFile)
+	if err != nil {
+		// An empty or damaged record predates PID locking; it cannot pin
+		// the job.
+		s.logger.Warn("removing stale job lock", "job", jobName, "lock_file", lockFile)
+		return true
+	}
+	if pidAlive(pid) {
+		s.logger.Info("job is locked, skipping run", "job", jobName, "pid", pid)
+		return false
+	}
+	s.logger.Warn("removing stale job lock", "job", jobName, "lock_file", lockFile)
+	return true
+}
+
+// unlockJob releases the run lock.
+func (s *Service) unlockJob(lockFile, jobName string) {
+	if err := os.Remove(lockFile); err != nil && !os.IsNotExist(err) {
+		s.logger.Error("failed to remove lock file", "job", jobName, "error", err)
+	}
+}
+
+// readLockPID returns the PID recorded in a lock file.
+func readLockPID(path string) (int, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0, err
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		return 0, fmt.Errorf("unreadable lock file %s: %w", path, err)
+	}
+	return pid, nil
 }
 
 // getFailureCount returns the failure count for a job.
