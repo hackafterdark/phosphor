@@ -6,8 +6,11 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/robfig/cron/v3"
@@ -196,6 +199,14 @@ func (s *Service) loadJobFile(path string) (*Job, error) {
 	// The prompt is the content after the frontmatter.
 	prompt := strings.TrimSpace(content)
 
+	// session_mode is optional and defaults to ephemeral, per the docs.
+	// Without this default an omitted field reached runJob's switch as
+	// the empty string and every fire was skipped as "unknown session
+	// mode".
+	if fm.SessionMode == "" {
+		fm.SessionMode = "ephemeral"
+	}
+
 	return &Job{
 		Name:             fm.Title,
 		Schedule:         fm.Schedule,
@@ -210,10 +221,15 @@ func (s *Service) loadJobFile(path string) (*Job, error) {
 
 // scheduleJob schedules a job with the cron scheduler.
 func (s *Service) scheduleJob(ctx context.Context, jobName string, job *Job) error {
-	// Add the job to the cron scheduler.
-	entryID, _ := s.cron.AddFunc(job.Schedule, func() {
+	// Add the job to the cron scheduler. An invalid schedule must surface
+	// here: the job would otherwise appear in the scheduled-jobs listing
+	// while never firing.
+	entryID, err := s.cron.AddFunc(job.Schedule, func() {
 		s.runJob(ctx, jobName, job)
 	})
+	if err != nil {
+		return fmt.Errorf("invalid schedule %q for job %s: %w", job.Schedule, jobName, err)
+	}
 
 	// Store the entry and job metadata.
 	s.mu.Lock()
@@ -246,19 +262,11 @@ func (s *Service) runJob(ctx context.Context, jobName string, job *Job) {
 
 	// Check for lock file if concurrent runs are not allowed.
 	if !job.AllowConcurrent {
-		jobDir := filepath.Join(s.cfg.WorkingDir(), ".phosphor/jobs", jobName)
-		lockFile := filepath.Join(jobDir, ".job.lock")
-		if _, err := os.Stat(lockFile); err == nil {
-			s.logger.Info("job is locked, skipping run", "job", jobName)
+		unlock, ok := s.acquireJobLock(jobName)
+		if !ok {
 			return
 		}
-		// Create lock file.
-		if err := os.WriteFile(lockFile, []byte{}, 0o644); err != nil {
-			s.logger.Error("failed to create lock file", "job", jobName, "error", err)
-			return
-		}
-		// Remove lock file after the job finishes.
-		defer os.Remove(lockFile)
+		defer unlock()
 	}
 
 	// Determine the session ID based on session mode.
@@ -339,6 +347,59 @@ func (s *Service) runJob(ctx context.Context, jobName string, job *Job) {
 	// Success! Reset failure count.
 	s.resetFailureCount(jobName)
 	s.logger.Info("job completed successfully", "job", jobName)
+}
+
+// acquireJobLock attempts to take the run lock for a job. It returns an
+// unlock function and true when the lock was acquired, or false when the job
+// is already running. A lock whose owning process is gone (e.g. after the
+// service was killed mid-run) is treated as stale and reclaimed, so an
+// interrupted run cannot block every future run.
+func (s *Service) acquireJobLock(jobName string) (func(), bool) {
+	jobDir := filepath.Join(s.cfg.WorkingDir(), ".phosphor/jobs", jobName)
+	lockFile := filepath.Join(jobDir, ".job.lock")
+
+	if data, err := os.ReadFile(lockFile); err == nil {
+		pid, parseErr := strconv.Atoi(strings.TrimSpace(string(data)))
+		if parseErr == nil && pidAlive(pid) {
+			s.logger.Info("job is locked, skipping run", "job", jobName, "pid", pid)
+			return nil, false
+		}
+		s.logger.Warn("removing stale job lock", "job", jobName, "lock_file", lockFile)
+	}
+
+	// Create lock file holding our PID so future runs can detect staleness.
+	if err := os.WriteFile(lockFile, []byte(strconv.Itoa(os.Getpid())), 0o644); err != nil {
+		s.logger.Error("failed to create lock file", "job", jobName, "error", err)
+		return nil, false
+	}
+	return func() {
+		if err := os.Remove(lockFile); err != nil {
+			s.logger.Error("failed to remove lock file", "job", jobName, "error", err)
+		}
+	}, true
+}
+
+// pidAlive reports whether a process with the given PID appears to exist.
+// It is a best-effort check used only to reclaim stale job locks.
+func pidAlive(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	p, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	if runtime.GOOS == "windows" {
+		// On Windows FindProcess itself fails for dead PIDs; a successful
+		// lookup means the process exists.
+		_ = p.Release()
+		return true
+	}
+	// On Unix FindProcess always succeeds; probe liveness with signal 0.
+	if err := p.Signal(syscall.Signal(0)); err != nil {
+		return false
+	}
+	return true
 }
 
 // getFailureCount returns the failure count for a job.
