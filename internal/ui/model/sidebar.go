@@ -4,6 +4,8 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -309,6 +311,86 @@ func relTimeStr(t time.Time) string {
 	}
 }
 
+// gitBranch returns the current git branch of the workspace, or "" when the
+// workspace is not a git checkout. It only reads HEAD, which is valid in a
+// bare repo too: there the name comes from HEAD's contents instead of the
+// directory name. A detached HEAD renders its short SHA. The result is
+// cached for the lifetime of the program because the checked-out branch can
+// only change out from under a running instance.
+func (m *UI) gitBranch() string {
+	if m.gitBranchLoaded {
+		return m.gitBranchName
+	}
+	m.gitBranchLoaded = true
+	m.gitBranchName = readGitBranch(m.com.Workspace.WorkingDir())
+	return m.gitBranchName
+}
+
+// readGitBranch resolves the branch for the repository rooted at dir. The
+// .git entry may be a directory, a symlink to one, or a gitfile naming the
+// real git directory (worktrees and submodules); each is resolved to a
+// directory that holds HEAD.
+func readGitBranch(dir string) string {
+	gitDir := filepath.Join(dir, ".git")
+	if st, err := os.Stat(gitDir); err == nil && st.IsDir() {
+		if name, ok := headBranch(gitDir); ok {
+			return name
+		}
+	} else if real, ok := gitFileDir(gitDir); ok {
+		if name, ok := headBranch(real); ok {
+			return name
+		}
+	}
+	// The workspace path may itself be the git directory.
+	if name, ok := headBranch(dir); ok {
+		return name
+	}
+	return ""
+}
+
+// gitFileDir resolves the git directory referenced by a .git gitfile.
+func gitFileDir(gitFile string) (string, bool) {
+	data, err := os.ReadFile(gitFile)
+	if err != nil {
+		return "", false
+	}
+	path, ok := strings.CutPrefix(strings.TrimSpace(string(data)), "gitdir:")
+	if !ok {
+		return "", false
+	}
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "", false
+	}
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(filepath.Dir(gitFile), path)
+	}
+	return path, true
+}
+
+// headBranch reads the branch (or detached short SHA) recorded in HEAD.
+func headBranch(gitDir string) (string, bool) {
+	head := filepath.Join(gitDir, "HEAD")
+	if st, err := os.Stat(head); err != nil || !st.Mode().IsRegular() {
+		return "", false
+	}
+	data, err := os.ReadFile(head)
+	if err != nil {
+		return "", false
+	}
+	ref := strings.TrimSpace(string(data))
+	if name, ok := strings.CutPrefix(ref, "ref: refs/heads/"); ok {
+		if name = strings.TrimSpace(name); name != "" {
+			return name, true
+		}
+		return "", false
+	}
+	if len(ref) >= 7 {
+		return ref[:7], true
+	}
+	return "", false
+}
+
 func (m *UI) drawSidebar(scr uv.Screen, area uv.Rectangle) {
 	if m.session == nil {
 		return
@@ -440,7 +522,15 @@ func (m *UI) renderSidebarSection(cfg config.SidebarComponentConfig, width int) 
 		}
 		return t.Sidebar.SessionTitle.Width(width).MaxHeight(2).Render(title)
 	case "working_dir":
-		return common.PrettyPath(t, m.com.Workspace.WorkingDir(), width)
+		path := common.PrettyPath(t, m.com.Workspace.WorkingDir(), width)
+		if branch := m.gitBranch(); branch != "" {
+			path = lipgloss.JoinVertical(
+				lipgloss.Left,
+				path,
+				t.ModelInfo.Reasoning.Width(width).Render(branch),
+			)
+		}
+		return path
 	case "active_llm":
 		return m.modelInfo(width)
 	case "goal":
