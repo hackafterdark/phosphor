@@ -311,6 +311,13 @@ type UI struct {
 	// sidebarScrollOffset tracks the vertical scroll position of the sidebar.
 	sidebarScrollOffset int
 
+	// gitBranchName caches the workspace's current git branch for the
+	// sidebar's working_dir section. A checkout's branch cannot change while
+	// the program runs, so it is read once; gitBranchLoaded marks the read
+	// done so a non-repo workspace isn't probed again every draw.
+	gitBranchName   string
+	gitBranchLoaded bool
+
 	// Notification state
 	notifyBackend       notification.Backend
 	notifyWindowFocused bool
