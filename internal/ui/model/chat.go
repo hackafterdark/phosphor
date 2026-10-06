@@ -419,7 +419,11 @@ func (m *Chat) ScrollToTop() {
 // ScrollBy scrolls the chat view by the given number of line deltas.
 func (m *Chat) ScrollBy(lines int) {
 	m.list.ScrollBy(lines)
-	m.follow = lines >= 0 // Disable follow mode only when scrolling up
+	// Follow mode tracks position, not scroll direction: the view only
+	// follows new output once it is actually anchored at the bottom, so
+	// partial scrolls and mixed wheel deltas during an active turn don't
+	// re-snap the view to the latest message.
+	m.follow = m.AtBottom()
 }
 
 // ScrollToSelected scrolls the chat view to the selected item.
