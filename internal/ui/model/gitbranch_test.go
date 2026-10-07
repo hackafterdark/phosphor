@@ -5,7 +5,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/hackafterdark/phosphor/internal/ui/common"
+	"github.com/hackafterdark/phosphor/internal/workspace"
 	"github.com/stretchr/testify/require"
 )
 
@@ -83,4 +86,29 @@ func TestReadGitBranch_NotARepo(t *testing.T) {
 	t.Parallel()
 
 	require.Equal(t, "", readGitBranch(t.TempDir()))
+}
+
+// branchTestWorkspace is a workspace stub pinned to a fixed directory.
+type branchTestWorkspace struct {
+	workspace.Workspace
+	dir string
+}
+
+func (w *branchTestWorkspace) WorkingDir() string { return w.dir }
+
+func TestGitBranch_RefreshesAfterCheckout(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".git", "HEAD"), "ref: refs/heads/main\n")
+
+	ui := &UI{com: &common.Common{Workspace: &branchTestWorkspace{dir: dir}}}
+	require.Equal(t, "main", ui.gitBranch())
+
+	// Within the refresh window the cached value is served, even after
+	// the checkout changes underneath the program.
+	writeFile(t, filepath.Join(dir, ".git", "HEAD"), "ref: refs/heads/feature/x\n")
+	require.Equal(t, "main", ui.gitBranch())
+
+	// Once the refresh interval elapses the new branch is picked up.
+	ui.gitBranchCheckedAt = time.Now().Add(-2 * gitBranchRefresh)
+	require.Equal(t, "feature/x", ui.gitBranch())
 }

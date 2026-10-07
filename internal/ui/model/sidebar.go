@@ -311,17 +311,24 @@ func relTimeStr(t time.Time) string {
 	}
 }
 
+// gitBranchRefresh bounds how often the sidebar re-reads HEAD. The value is
+// only consulted while the sidebar is already redrawing, so HEAD is probed
+// at most once per interval even under continuous UI activity; no polling
+// or watcher is involved, keeping input frames free of extra IO.
+const gitBranchRefresh = 2 * time.Second
+
 // gitBranch returns the current git branch of the workspace, or "" when the
 // workspace is not a git checkout. It only reads HEAD, which is valid in a
 // bare repo too: there the name comes from HEAD's contents instead of the
 // directory name. A detached HEAD renders its short SHA. The result is
-// cached for the lifetime of the program because the checked-out branch can
-// only change out from under a running instance.
+// cached and refreshed at most once per [gitBranchRefresh], so a checkout
+// made by the agent or another terminal shows up without polling.
 func (m *UI) gitBranch() string {
-	if m.gitBranchLoaded {
+	if m.gitBranchLoaded && time.Since(m.gitBranchCheckedAt) < gitBranchRefresh {
 		return m.gitBranchName
 	}
 	m.gitBranchLoaded = true
+	m.gitBranchCheckedAt = time.Now()
 	m.gitBranchName = readGitBranch(m.com.Workspace.WorkingDir())
 	return m.gitBranchName
 }
