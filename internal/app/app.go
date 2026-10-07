@@ -230,11 +230,18 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore, skillsMgr
 			// used to ride memory.Open, but the memory tools open a store per call and
 			// seeding takes a write transaction on the file the watcher indexes, which
 			// put a contended SQLite lock in front of every memory read. Bounded by a
-			// timeout so a busy index can never hold the app up.
+			// timeout so a busy index can never hold the app up, and cancelled on
+			// shutdown so it cannot outlive the vault handles it writes to.
+			seedCtx, cancelSeed := context.WithCancel(context.Background())
+			app.cleanupFuncs = append(app.cleanupFuncs, func(context.Context) error {
+				cancelSeed()
+				return nil
+			})
 			go func() {
-				seedCtx, cancelSeed := context.WithTimeout(context.Background(), 15*time.Second)
 				defer cancelSeed()
-				if _, err := memStore.SeedVocabulary(seedCtx, store.WorkingDir()); err != nil {
+				seedCtx, timeout := context.WithTimeout(seedCtx, 15*time.Second)
+				defer timeout()
+				if _, err := memStore.SeedVocabulary(seedCtx, store.WorkingDir()); err != nil && seedCtx.Err() == nil {
 					slog.Warn("Failed to seed the project memory vocabulary", "error", err)
 				}
 			}()
