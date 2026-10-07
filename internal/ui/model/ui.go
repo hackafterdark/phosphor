@@ -2789,6 +2789,7 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 
 			case key.Matches(msg, m.keyMap.Editor.PasteImage):
 				if !m.currentModelSupportsImages() {
+					cmds = append(cmds, util.ReportInfo("Current model does not support images"))
 					break
 				}
 				cmds = append(cmds, m.pasteImageFromClipboard)
