@@ -102,16 +102,19 @@ func Register(workingDir, dataDir string) error {
 		})
 	}
 
-	// Sort by last accessed (most recent first)
-	slices.SortFunc(list.Projects, func(a, b Project) int {
-		if a.LastAccessed.After(b.LastAccessed) {
-			return -1
-		}
-		if a.LastAccessed.Before(b.LastAccessed) {
-			return 1
-		}
-		return 0
+	// Sort by last accessed (most recent first).
+	slices.SortStableFunc(list.Projects, func(a, b Project) int {
+		return b.LastAccessed.Compare(a.LastAccessed)
 	})
+
+	// The project just registered was accessed now: it leads the list even
+	// when the platform clock is too coarse to reflect that in LastAccessed.
+	for i, p := range list.Projects {
+		if p.Path == workingDir && i > 0 {
+			list.Projects = slices.Insert(slices.Delete(list.Projects, i, i+1), 0, p)
+			break
+		}
+	}
 
 	return Save(list)
 }

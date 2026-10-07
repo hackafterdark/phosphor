@@ -12,8 +12,27 @@ import (
 	"github.com/hackafterdark/phosphor/pkg/config"
 )
 
+// TestMain runs the package with mock providers so no test pays the
+// provider-discovery network fetch inside config.Init. Setting the flag once
+// here (rather than per test) keeps t.Parallel tests race-free.
+func TestMain(m *testing.M) {
+	config.UseMockProviders = true
+	code := m.Run()
+	config.UseMockProviders = false
+	config.ResetProviders()
+	os.Exit(code)
+}
+
+// newTestService builds a cron service over an isolated config store. The
+// XDG redirects keep config.Init off the developer's real global config,
+// which may define custom providers whose endpoints would otherwise be
+// dialed on every call. Tests using this helper must not be parallel
+// (t.Setenv is incompatible with t.Parallel).
 func newTestService(t *testing.T) *Service {
 	t.Helper()
+	isolated := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(isolated, ".config"))
+	t.Setenv("XDG_DATA_HOME", filepath.Join(isolated, ".local", "share"))
 	workingDir := t.TempDir()
 	store, err := config.Init(workingDir, filepath.Join(workingDir, "data"), false)
 	require.NoError(t, err)
@@ -21,7 +40,6 @@ func newTestService(t *testing.T) *Service {
 }
 
 func TestLoadJobFile_DefaultsSessionMode(t *testing.T) {
-	t.Parallel()
 	s := newTestService(t)
 
 	path := filepath.Join(t.TempDir(), "job.md")
@@ -34,7 +52,6 @@ func TestLoadJobFile_DefaultsSessionMode(t *testing.T) {
 }
 
 func TestLoadJobFile_KeepsExplicitSessionMode(t *testing.T) {
-	t.Parallel()
 	s := newTestService(t)
 
 	path := filepath.Join(t.TempDir(), "job.md")
@@ -47,7 +64,6 @@ func TestLoadJobFile_KeepsExplicitSessionMode(t *testing.T) {
 }
 
 func TestScheduleJob_InvalidSchedule(t *testing.T) {
-	t.Parallel()
 	s := newTestService(t)
 
 	err := s.scheduleJob(context.Background(), "bad", &Job{
@@ -63,7 +79,6 @@ func TestScheduleJob_InvalidSchedule(t *testing.T) {
 }
 
 func TestScheduleJob_ValidSchedule(t *testing.T) {
-	t.Parallel()
 	s := newTestService(t)
 
 	err := s.scheduleJob(context.Background(), "good", &Job{

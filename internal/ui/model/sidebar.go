@@ -97,7 +97,7 @@ func (m *UI) modelInfo(width int) string {
 		modelContext = &common.ModelContextInfo{
 			ContextUsed:    tokens,
 			Cost:           m.session.Cost,
-			ModelContext:   model.CatwalkCfg.ContextWindow, // contextWindow,
+			ModelContext:   contextWindow,
 			EstimatedUsage: m.session.EstimatedUsage,
 		}
 	}
