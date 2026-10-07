@@ -47,11 +47,16 @@ func TestService_RecordRead(t *testing.T) {
 	path := "/path/to/file.go"
 	env.createSession(t, sessionID)
 
+	before := time.Now()
 	env.svc.RecordRead(env.ctx, sessionID, path)
 
 	lastRead := env.svc.LastReadTime(env.ctx, sessionID, path)
 	require.False(t, lastRead.IsZero(), "expected non-zero time after recording read")
-	require.WithinDuration(t, time.Now(), lastRead, 2*time.Second)
+	// The DB stamps unix seconds at second precision, so bound the value
+	// relative to the test's own clock instead of asserting a fixed window
+	// around now: the queries themselves may stall under CI load.
+	require.False(t, lastRead.Before(before.Add(-time.Second)))
+	require.False(t, lastRead.After(time.Now().Add(time.Second)))
 }
 
 func TestService_LastReadTime_NotFound(t *testing.T) {
