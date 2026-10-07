@@ -8,7 +8,9 @@ import (
 	"time"
 
 	"github.com/hackafterdark/phosphor/internal/ui/common"
+	uistyles "github.com/hackafterdark/phosphor/internal/ui/styles"
 	"github.com/hackafterdark/phosphor/internal/workspace"
+	"github.com/hackafterdark/phosphor/pkg/config"
 	"github.com/stretchr/testify/require"
 )
 
@@ -95,6 +97,9 @@ type branchTestWorkspace struct {
 }
 
 func (w *branchTestWorkspace) WorkingDir() string { return w.dir }
+func (w *branchTestWorkspace) Config() *config.Config {
+	return &config.Config{Options: &config.Options{TUI: &config.TUIOptions{}}}
+}
 
 func TestGitBranch_RefreshesAfterCheckout(t *testing.T) {
 	dir := t.TempDir()
@@ -111,4 +116,26 @@ func TestGitBranch_RefreshesAfterCheckout(t *testing.T) {
 	// Once the refresh interval elapses the new branch is picked up.
 	ui.gitBranchCheckedAt = time.Now().Add(-2 * gitBranchRefresh)
 	require.Equal(t, "feature/x", ui.gitBranch())
+}
+
+func TestRenderSidebarComponent_BranchCacheExpires(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".git", "HEAD"), "ref: refs/heads/main\n")
+
+	styles := uistyles.Theme("", "", ".")
+	ui := &UI{com: &common.Common{Workspace: &branchTestWorkspace{dir: dir}, Styles: &styles}}
+
+	cfg := config.SidebarComponentConfig{ID: "working_dir"}
+	require.Contains(t, ui.renderSidebarComponent(cfg, 40), "main")
+
+	writeFile(t, filepath.Join(dir, ".git", "HEAD"), "ref: refs/heads/feature/x\n")
+
+	// Tick-only frames (cache not stale) keep serving the old section
+	// while the branch cache is fresh.
+	require.Contains(t, ui.renderSidebarComponent(cfg, 40), "main")
+
+	// Once the branch cache expires the section is rebuilt even without
+	// a state-changing message.
+	ui.gitBranchCheckedAt = time.Now().Add(-2 * gitBranchRefresh)
+	require.Contains(t, ui.renderSidebarComponent(cfg, 40), "feature/x")
 }

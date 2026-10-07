@@ -487,12 +487,17 @@ func (m *UI) getSidebarConfig() config.SidebarLayoutConfig {
 // renderSidebarComponent returns a section's rendered string, reusing the
 // cached entry while the cache is fresh. Entries are keyed by component ID;
 // width changes arrive as a WindowSizeMsg, which marks the cache stale.
+// The working_dir entry is additionally rebuilt once the branch cache
+// expires, so tick-only frames can pick up a checkout without waiting for
+// a state-changing message.
 func (m *UI) renderSidebarComponent(cfg config.SidebarComponentConfig, width int) string {
 	if m.sidebarSections == nil {
 		m.sidebarSections = make(map[string]string, len(m.getSidebarConfig().Components)+1)
 	} else if !m.sidebarStale {
 		if s, ok := m.sidebarSections[cfg.ID]; ok {
-			return s
+			if cfg.ID != "working_dir" || time.Since(m.gitBranchCheckedAt) < gitBranchRefresh {
+				return s
+			}
 		}
 	}
 	s := m.renderSidebarSection(cfg, width)
