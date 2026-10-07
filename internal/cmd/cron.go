@@ -6,11 +6,13 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"github.com/spf13/cobra"
 
 	"github.com/hackafterdark/phosphor/internal/app"
+	phosphorlog "github.com/hackafterdark/phosphor/internal/log"
 	"github.com/hackafterdark/phosphor/internal/platform/cron"
 	"github.com/hackafterdark/phosphor/internal/projects"
 	"github.com/hackafterdark/phosphor/pkg/config"
@@ -35,6 +37,23 @@ until interrupted by a signal (Ctrl+C).`,
 			if err != nil {
 				return fmt.Errorf("failed to resolve working directory: %w", err)
 			}
+
+			// Repo-defined jobs are repo tooling: honor --trust and the
+			// interactive trust gate the same way the TUI and server do.
+			applyWorkspaceTrustFlags(cmd, cwd)
+
+			// The default slog logger is discarded for CLI commands; the cron
+			// daemon runs in the foreground, so surface job events in the
+			// terminal and keep a persistent log for post-hoc diagnostics.
+			phosphorlog.SetupWithConfig(
+				filepath.Join(config.GlobalCacheDir(), "cron", "phosphor.log"),
+				&phosphorlog.LogConfig{
+					Enabled: true,
+					Level:   "info",
+				},
+				debug,
+				os.Stderr,
+			)
 
 			// Initialize config store
 			store, err := config.Init(cwd, dataDir, debug)
