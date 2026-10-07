@@ -129,11 +129,17 @@ func TestCronService_EndToEnd_FiresScheduledJob(t *testing.T) {
 		defer sessions.mu.Unlock()
 		return len(sessions.deleted) == 1
 	}, 5*time.Second, 10*time.Millisecond)
+	// Snapshot the recorded state under the lock, then assert after releasing
+	// it: a failing require would otherwise leave the mutex held and wedge
+	// fakeSessions (and s.Stop) for any later scheduled run.
 	sessions.mu.Lock()
-	require.Equal(t, []string{"sess-1"}, keysOf(sessions.stateless))
-	require.Equal(t, []string{"sess-1"}, keysOf(sessions.deleted))
-	require.True(t, sessions.stateless["sess-1"])
+	stateless := keysOf(sessions.stateless)
+	deleted := keysOf(sessions.deleted)
+	statelessTrue := sessions.stateless["sess-1"]
 	sessions.mu.Unlock()
+	require.Equal(t, []string{"sess-1"}, stateless)
+	require.Equal(t, []string{"sess-1"}, deleted)
+	require.True(t, statelessTrue)
 }
 
 func (f *fakeSessions) hasTitlePrefix(prefix string) bool {
