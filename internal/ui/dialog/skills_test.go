@@ -223,12 +223,28 @@ func TestSkillDetailScrollAndClose(t *testing.T) {
 	builtin := skills.DiscoverBuiltin()
 	require.NotEmpty(t, builtin)
 	sd := NewSkillDetail(com, builtin[0], skills.SourceSystem)
-	require.NoError(t, sd.err)
-	require.NotEmpty(t, sd.content)
+	content, err := SkillFileContent(builtin[0])
+	require.NoError(t, err)
+	require.NotEmpty(t, content)
+	require.Nil(t, sd.HandleMsg(SkillDetailLoadedMsg{Content: content}))
+	require.False(t, sd.loading)
+
+	// The pane is sized to 4 rows so scrolling is observable; the long
+	// content guarantees there is somewhere to scroll to.
+	longContent := strings.Repeat("scroll me\n", 50)
+	require.Nil(t, sd.HandleMsg(SkillDetailLoadedMsg{Content: longContent}))
+	// The viewport only measures its content when it is rendered, so the
+	// scroll keys need the pane to have painted once at its size.
+	sd.body.SetContent(longContent)
+	sd.body.SetWidth(38)
+	sd.body.SetHeight(4)
+	sd.body.View()
+	require.Equal(t, 0, sd.body.YOffset())
 
 	// Scrolling keys belong to the reading pane and produce no action.
+	// Down scrolls by one line: the reading pane must follow the key.
 	require.Nil(t, sd.HandleMsg(tea.KeyPressMsg{Code: tea.KeyDown}))
-	require.Nil(t, sd.HandleMsg(tea.KeyPressMsg{Code: tea.KeyPgDown}))
+	require.Greater(t, sd.body.YOffset(), 0)
 
 	// Escape closes.
 	require.Equal(t, ActionClose{}, sd.HandleMsg(tea.KeyPressMsg{Code: tea.KeyEscape}))

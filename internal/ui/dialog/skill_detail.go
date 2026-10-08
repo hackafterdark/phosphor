@@ -37,6 +37,7 @@ type SkillDetail struct {
 
 	skill        *skills.Skill
 	source       skills.SourceType
+	loading      bool
 	content      string
 	err          error
 	contentWidth int
@@ -53,11 +54,10 @@ var (
 	_ help.KeyMap = (*SkillDetail)(nil)
 )
 
-// NewSkillDetail creates the detail dialog and loads the skill file
-// content. The file is small and read synchronously; failures are shown
-// in the pane rather than dropped.
+// NewSkillDetail creates the detail dialog in its loading state; the
+// owner sends a [SkillDetailLoadedMsg] to fill it.
 func NewSkillDetail(com *common.Common, skill *skills.Skill, source skills.SourceType) *SkillDetail {
-	s := &SkillDetail{com: com, skill: skill, source: source}
+	s := &SkillDetail{com: com, skill: skill, source: source, loading: true}
 
 	h := help.New()
 	h.Styles = com.Styles.DialogHelpStyles()
@@ -89,13 +89,20 @@ func NewSkillDetail(com *common.Common, skill *skills.Skill, source skills.Sourc
 	}
 	s.body = body
 
-	s.content, s.err = skillFileContent(skill)
 	return s
 }
 
-// skillFileContent reads the raw SKILL.md for a skill, resolving builtin
+// SkillDetailLoadedMsg carries the skill file content for the detail
+// dialog. The owner reads the file on a tea.Cmd so disk or embedded
+// reads never block the update loop.
+type SkillDetailLoadedMsg struct {
+	Content string
+	Err     error
+}
+
+// SkillFileContent reads the raw SKILL.md for a skill, resolving builtin
 // skills through the embedded filesystem.
-func skillFileContent(skill *skills.Skill) (string, error) {
+func SkillFileContent(skill *skills.Skill) (string, error) {
 	if skill == nil {
 		return "", nil
 	}
@@ -116,6 +123,14 @@ func (s *SkillDetail) ID() string {
 // HandleMsg implements [Dialog].
 func (s *SkillDetail) HandleMsg(msg tea.Msg) Action {
 	switch msg := msg.(type) {
+	case SkillDetailLoadedMsg:
+		s.loading = false
+		s.err = msg.Err
+		s.content = msg.Content
+		s.body.SetContent(s.content)
+		s.body.GotoTop()
+		return nil
+
 	case common.CoalescedWheelMsg:
 		if msg.DeltaY != 0 {
 			s.body, _ = s.body.Update(tea.MouseWheelMsg(msg.Mouse))
@@ -154,7 +169,7 @@ func (s *SkillDetail) measure(area uv.Rectangle) (width, height, bodyHeight int)
 		1 + // the title gap row
 		2 + // one gap row each above and below the body
 		t.Dialog.HelpView.GetVerticalFrameSize()
-	bodyHeight = max(4, height-verticalBudget)
+	bodyHeight = max(1, height-verticalBudget)
 	return
 }
 
@@ -179,6 +194,8 @@ func (s *SkillDetail) render(width, bodyHeight int) string {
 	rc.Subtitle = s.subtitle()
 
 	switch {
+	case s.loading:
+		rc.AddPart(padded(t.Dialog.SecondaryText.Render("Reading skill file..."), innerWidth, bodyHeight))
 	case s.err != nil:
 		rc.AddPart(padded(t.Dialog.SecondaryText.Render("Failed to read skill file: "+s.err.Error()), innerWidth, bodyHeight))
 	case s.content == "":

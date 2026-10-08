@@ -1943,17 +1943,23 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 
 	// Skills dialog messages.
 	case dialog.ActionToggleSkill:
-		if err := dialog.ToggleSkill(m.com.Workspace, msg.Name, msg.Disable); err != nil {
-			cmds = append(cmds, util.ReportError(err))
-			break
-		}
-		if msg.Disable {
-			cmds = append(cmds, util.ReportInfo("Skill "+msg.Name+" disabled"))
-		} else {
-			cmds = append(cmds, util.ReportInfo("Skill "+msg.Name+" enabled"))
-		}
+		name, disable := msg.Name, msg.Disable
+		cmds = append(cmds, func() tea.Msg {
+			if err := dialog.ToggleSkill(m.com.Workspace, name, disable); err != nil {
+				return util.NewErrorMsg(err)
+			}
+			if disable {
+				return util.NewInfoMsg("Skill " + name + " disabled")
+			}
+			return util.NewInfoMsg("Skill " + name + " enabled")
+		})
 	case dialog.ActionShowSkillDetail:
 		m.dialog.OpenDialog(dialog.NewSkillDetail(m.com, msg.Skill, msg.Source))
+		skill := msg.Skill
+		cmds = append(cmds, func() tea.Msg {
+			content, err := dialog.SkillFileContent(skill)
+			return dialog.SkillDetailLoadedMsg{Content: content, Err: err}
+		})
 
 	// Command dialog messages.
 	case dialog.ActionToggleYoloMode:

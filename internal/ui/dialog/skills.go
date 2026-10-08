@@ -398,21 +398,20 @@ func (s *SkillItem) Render(width int) string {
 	}
 	title := iconStyle.Render(icon) + " " + s.Name
 
-	info := string(s.Source)
-	if s.Description != "" {
-		// Collapse any newlines/runs of whitespace and truncate the
-		// description to a fixed budget, then pad to that width. The
-		// info block keeps a constant width across rows, so renderItem's
-		// right-alignment puts the source and description columns at the
-		// same offsets on every row.
-		desc := strings.Join(strings.Fields(s.Description), " ")
-		budget := max(0, width-skillTitleReserve-skillSourceColWidth-3)
-		desc = ansi.Truncate(desc, budget, "…")
-		desc += strings.Repeat(" ", max(0, budget-ansi.StringWidth(desc)))
-		source := string(s.Source)
-		source += strings.Repeat(" ", max(0, skillSourceColWidth-ansi.StringWidth(source)))
-		info = source + " · " + desc
-	}
+	var info string
+	// Collapse any newlines/runs of whitespace and truncate the
+	// description to a fixed budget, then pad to that width. The source
+	// column is padded too, so the info block keeps a constant width
+	// across rows and renderItem's right-alignment puts the source and
+	// description columns at the same offsets on every row, including
+	// rows with an empty description.
+	desc := strings.Join(strings.Fields(s.Description), " ")
+	budget := max(0, width-skillTitleReserve-skillSourceColWidth-3)
+	desc = ansi.Truncate(desc, budget, "…")
+	desc += strings.Repeat(" ", max(0, budget-ansi.StringWidth(desc)))
+	source := string(s.Source)
+	source += strings.Repeat(" ", max(0, skillSourceColWidth-ansi.StringWidth(source)))
+	info = source + " · " + desc
 
 	itemStyles := ListItemStyles{
 		ItemBlurred:     s.t.Dialog.NormalItem,
