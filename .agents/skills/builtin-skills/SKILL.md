@@ -2,7 +2,7 @@
 name: builtin-skills
 description:
   Use when creating a new builtin skill for Phosphor, editing an existing builtin
-  skill (internal/skills/builtin/), or when the user needs to understand how the
+  skill (pkg/skills/builtin/), or when the user needs to understand how the
   embedded skill system works.
 ---
 
@@ -15,7 +15,7 @@ These are always available without user configuration.
 
 - Each skill lives in `pkg/skills/builtin/<skill-name>/SKILL.md`.
 - The tree is embedded at compile time via `//go:embed builtin/*` in
-  `internal/skills/embed.go`.
+  `pkg/skills/embed.go`.
 - `DiscoverBuiltin()` walks the embedded FS, parses each `SKILL.md`, and sets
   paths with the `phosphor://skills/` prefix (e.g., `phosphor://skills/jq/SKILL.md`).
 - The View tool resolves `phosphor://` paths from the embedded FS, not disk.
