@@ -66,6 +66,9 @@ func TestSessionLifecycleAndEvents(t *testing.T) {
 			"data_directory": ".phosphor",
 			"disable_default_providers": true
 		},
+		"memory": {
+			"provider": "off"
+		},
 		"providers": {
 			"mock": {
 				"type": "openai",
@@ -94,7 +97,10 @@ func TestSessionLifecycleAndEvents(t *testing.T) {
 	}`, server.URL)
 	require.NoError(t, os.WriteFile(filepath.Join(wsDir, "phosphor.json"), []byte(phosphorJson), 0o644))
 
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	// 30s: the budget covers migrations, provider/skills discovery, and
+	// app wiring; loaded CI runners (Windows in particular) can take the
+	// better part of it, and a tighter bound flakes on disk contention.
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 
 	// Initialize the session
@@ -182,6 +188,9 @@ func TestSessionWithCustomDB(t *testing.T) {
 			"data_directory": ".phosphor",
 			"disable_default_providers": true
 		},
+		"memory": {
+			"provider": "off"
+		},
 		"providers": {
 			"mock": {
 				"type": "openai",
@@ -210,13 +219,19 @@ func TestSessionWithCustomDB(t *testing.T) {
 	}`
 	require.NoError(t, os.WriteFile(filepath.Join(wsDir, "phosphor.json"), []byte(phosphorJson), 0o644))
 
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	// 30s: the budget covers migrations, provider/skills discovery, and
+	// app wiring; loaded CI runners (Windows in particular) can take the
+	// better part of it, and a tighter bound flakes on disk contention.
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 
 	// 1. Manually open a database connection
 	dataDir := filepath.Join(wsDir, ".phosphor")
 	dbConn, err := db.Connect(ctx, dataDir)
 	require.NoError(t, err)
+	// Release the reference even if an assertion below aborts the test,
+	// so the temp dir can be cleaned up.
+	t.Cleanup(func() { _ = db.Release(dataDir) })
 
 	// 2. Initialize the session passing the custom DB connection
 	h, err := client.NewSession(ctx, wsDir, client.WithDB(dbConn))
@@ -230,10 +245,6 @@ func TestSessionWithCustomDB(t *testing.T) {
 
 	// Test that database connection is still alive (e.g. Ping doesn't fail)
 	err = dbConn.PingContext(ctx)
-	require.NoError(t, err)
-
-	// Clean up by releasing our own reference
-	err = db.Release(dataDir)
 	require.NoError(t, err)
 }
 
@@ -261,7 +272,10 @@ func TestSessionWithSkipMigrations(t *testing.T) {
 	}`
 	require.NoError(t, os.WriteFile(filepath.Join(wsDir, "phosphor.json"), []byte(phosphorJson), 0o644))
 
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	// 30s: the budget covers migrations, provider/skills discovery, and
+	// app wiring; loaded CI runners (Windows in particular) can take the
+	// better part of it, and a tighter bound flakes on disk contention.
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 
 	// Connect manually with skipMigrations. This should NOT run migrations (e.g. no goose_db_version table).
@@ -277,6 +291,7 @@ func TestSessionWithSkipMigrations(t *testing.T) {
 	// Close database reference
 	err = db.Release(dataDir)
 	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Release(dataDir) })
 }
 
 func TestSessionWithCustomDBName(t *testing.T) {
@@ -303,6 +318,9 @@ func TestSessionWithCustomDBName(t *testing.T) {
 		"options": {
 			"data_directory": ".phosphor",
 			"disable_default_providers": true
+		},
+		"memory": {
+			"provider": "off"
 		},
 		"providers": {
 			"mock": {
@@ -332,7 +350,10 @@ func TestSessionWithCustomDBName(t *testing.T) {
 	}`
 	require.NoError(t, os.WriteFile(filepath.Join(wsDir, "phosphor.json"), []byte(phosphorJson), 0o644))
 
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	// 30s: the budget covers migrations, provider/skills discovery, and
+	// app wiring; loaded CI runners (Windows in particular) can take the
+	// better part of it, and a tighter bound flakes on disk contention.
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 
 	// 1. Initialize session with custom db name

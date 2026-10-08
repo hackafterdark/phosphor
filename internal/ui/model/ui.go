@@ -312,11 +312,14 @@ type UI struct {
 	sidebarScrollOffset int
 
 	// gitBranchName caches the workspace's current git branch for the
-	// sidebar's working_dir section. A checkout's branch cannot change while
-	// the program runs, so it is read once; gitBranchLoaded marks the read
-	// done so a non-repo workspace isn't probed again every draw.
-	gitBranchName   string
-	gitBranchLoaded bool
+	// sidebar's working_dir section. The branch can change while the
+	// program runs (the agent or another terminal may check out a
+	// different branch), so gitBranchCheckedAt timestamps the read and
+	// gitBranch marks it done so a non-repo workspace isn't probed twice
+	// in a row. See [UI.gitBranch].
+	gitBranchName      string
+	gitBranchLoaded    bool
+	gitBranchCheckedAt time.Time
 
 	// Notification state
 	notifyBackend       notification.Backend
