@@ -63,6 +63,19 @@ func TestLoadJobFile_KeepsExplicitSessionMode(t *testing.T) {
 	require.Equal(t, "persistent", job.SessionMode)
 }
 
+func TestLoadJobFile_RejectsUnknownSessionMode(t *testing.T) {
+	s := newTestService(t)
+
+	path := filepath.Join(t.TempDir(), "job.md")
+	err := os.WriteFile(path, []byte("---\ntitle: \"Test\"\nschedule: \"0 9 * * *\"\nsession_mode: \"new\"\n---\n\nDo the thing.\n"), 0o644)
+	require.NoError(t, err)
+
+	_, err = s.loadJobFile(path)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "invalid session_mode")
+	require.Contains(t, err.Error(), "persistent, ephemeral, per_run")
+}
+
 func TestScheduleJob_InvalidSchedule(t *testing.T) {
 	s := newTestService(t)
 

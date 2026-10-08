@@ -204,6 +204,14 @@ func (s *Service) loadJobFile(path string) (*Job, error) {
 	if fm.SessionMode == "" {
 		fm.SessionMode = "ephemeral"
 	}
+	// Reject unknown modes at load time so a misconfigured job surfaces
+	// its error at startup with the valid values, rather than once per
+	// fire at the runtime switch.
+	switch fm.SessionMode {
+	case "persistent", "ephemeral", "per_run":
+	default:
+		return nil, fmt.Errorf("invalid session_mode %q (valid: persistent, ephemeral, per_run)", fm.SessionMode)
+	}
 
 	return &Job{
 		Name:             fm.Title,
