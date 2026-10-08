@@ -10,6 +10,7 @@ import (
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	uv "github.com/charmbracelet/ultraviolet"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/hackafterdark/phosphor/internal/ui/common"
 	"github.com/hackafterdark/phosphor/internal/ui/list"
 	"github.com/hackafterdark/phosphor/internal/ui/styles"
@@ -23,14 +24,30 @@ import (
 const SkillsID = "skills"
 
 const (
-	skillsDialogMaxWidth  = 70
-	skillsDialogMaxHeight = 20
+	skillsDialogMinWidth    = 60
+	skillsDialogMaxWidth    = 120
+	skillsDialogWidthRatio  = 0.9
+	skillsDialogMinHeight   = 14
+	skillsDialogMaxHeight   = 36
+	skillsDialogHeightRatio = 0.75
+	// skillSourceColWidth is the fixed width of the source column so the
+	// scope labels line up across rows; skillTitleReserve keeps enough
+	// room for the icon and skill name.
+	skillSourceColWidth = 8
+	skillTitleReserve   = 24
 )
 
 // ActionToggleSkill is sent when a skill is toggled in the skills dialog.
 type ActionToggleSkill struct {
 	Name    string
 	Disable bool
+}
+
+// ActionShowSkillDetail is sent when the selected skill's content should
+// be shown in the skill detail dialog.
+type ActionShowSkillDetail struct {
+	Skill  *skills.Skill
+	Source skills.SourceType
 }
 
 // SkillItem represents a single skill entry in the skills dialog.
@@ -40,6 +57,7 @@ type SkillItem struct {
 	Description string
 	Source      skills.SourceType
 	Disabled    bool
+	Skill       *skills.Skill
 	t           *styles.Styles
 	focused     bool
 	m           fuzzy.Match
@@ -58,6 +76,7 @@ type Skills struct {
 
 	keyMap struct {
 		Toggle   key.Binding
+		Details  key.Binding
 		Next     key.Binding
 		Previous key.Binding
 		Close    key.Binding
@@ -82,6 +101,10 @@ func NewSkills(com *common.Common) *Skills {
 	s.keyMap.Toggle = key.NewBinding(
 		key.WithKeys("enter", "space", "ctrl+y"),
 		key.WithHelp("enter/space", "toggle"),
+	)
+	s.keyMap.Details = key.NewBinding(
+		key.WithKeys("d"),
+		key.WithHelp("d", "details"),
 	)
 	s.keyMap.Next = key.NewBinding(
 		key.WithKeys("down", "ctrl+n"),
@@ -127,6 +150,19 @@ func (s *Skills) HandleMsg(msg tea.Msg) Action {
 			}
 			s.list.SelectNext()
 			s.list.ScrollToSelected()
+		case key.Matches(msg, s.keyMap.Details):
+			selectedItem := s.list.SelectedItem()
+			if selectedItem == nil {
+				break
+			}
+			skillItem, ok := selectedItem.(*SkillItem)
+			if !ok || skillItem.Skill == nil {
+				break
+			}
+			return ActionShowSkillDetail{
+				Skill:  skillItem.Skill,
+				Source: skillItem.Source,
+			}
 		case key.Matches(msg, s.keyMap.Toggle):
 			selectedItem := s.list.SelectedItem()
 			if selectedItem == nil {
@@ -155,10 +191,13 @@ func (s *Skills) Cursor() *tea.Cursor {
 // Draw implements [Dialog].
 func (s *Skills) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 	t := s.com.Styles
-	width := max(0, min(skillsDialogMaxWidth, area.Dx()))
-	height := max(0, min(skillsDialogMaxHeight, area.Dy()))
+	width := max(min(skillsDialogMinWidth, area.Dx()),
+		min(int(float64(area.Dx())*skillsDialogWidthRatio), skillsDialogMaxWidth))
+	height := max(min(skillsDialogMinHeight, area.Dy()),
+		min(int(float64(area.Dy())*skillsDialogHeightRatio), skillsDialogMaxHeight))
 	innerWidth := width - t.Dialog.View.GetHorizontalFrameSize()
 	heightOffset := t.Dialog.Title.GetVerticalFrameSize() + titleContentHeight +
+		1 + // the title gap row
 		t.Dialog.HelpView.GetVerticalFrameSize() +
 		t.Dialog.View.GetVerticalFrameSize()
 
@@ -167,6 +206,7 @@ func (s *Skills) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 
 	rc := NewRenderContext(t, width)
 	rc.Title = "Skills"
+	rc.TitleGap = 1
 	rc.Subtitle = s.subtitle()
 	rc.Gap = 1
 
@@ -204,6 +244,7 @@ func (s *Skills) subtitle() string {
 func (s *Skills) ShortHelp() []key.Binding {
 	return []key.Binding{
 		s.keyMap.Toggle,
+		s.keyMap.Details,
 		s.keyMap.Close,
 	}
 }
@@ -213,6 +254,7 @@ func (s *Skills) FullHelp() [][]key.Binding {
 	m := [][]key.Binding{}
 	slice := []key.Binding{
 		s.keyMap.Toggle,
+		s.keyMap.Details,
 		s.keyMap.Next,
 		s.keyMap.Previous,
 		s.keyMap.Close,
@@ -245,6 +287,7 @@ func (s *Skills) setItems() {
 			Description: skill.Description,
 			Source:      s.sourceFor(skill),
 			Disabled:    disabled[skill.Name],
+			Skill:       skill,
 			t:           s.com.Styles,
 		})
 	}
@@ -346,12 +389,29 @@ func (s *SkillItem) SetMatch(m fuzzy.Match) {
 
 // Render implements [list.FilterableItem].
 func (s *SkillItem) Render(width int) string {
-	info := string(s.Source)
+	// The leading icon carries the enabled/disabled state: a filled dot
+	// in the success color for enabled skills, a hollow dot for disabled
+	// ones.
+	icon, iconStyle := "●", s.t.Dialog.CheckboxChecked
 	if s.Disabled {
-		info += " · disabled"
+		icon, iconStyle = "○", s.t.Dialog.CheckboxUnchecked
 	}
+	title := iconStyle.Render(icon) + " " + s.Name
+
+	info := string(s.Source)
 	if s.Description != "" {
-		info += " · " + s.Description
+		// Collapse any newlines/runs of whitespace and truncate the
+		// description to a fixed budget, then pad to that width. The
+		// info block keeps a constant width across rows, so renderItem's
+		// right-alignment puts the source and description columns at the
+		// same offsets on every row.
+		desc := strings.Join(strings.Fields(s.Description), " ")
+		budget := max(0, width-skillTitleReserve-skillSourceColWidth-3)
+		desc = ansi.Truncate(desc, budget, "…")
+		desc += strings.Repeat(" ", max(0, budget-ansi.StringWidth(desc)))
+		source := string(s.Source)
+		source += strings.Repeat(" ", max(0, skillSourceColWidth-ansi.StringWidth(source)))
+		info = source + " · " + desc
 	}
 
 	itemStyles := ListItemStyles{
@@ -361,11 +421,14 @@ func (s *SkillItem) Render(width int) string {
 		InfoTextFocused: s.t.Dialog.Sessions.InfoFocused,
 	}
 	if s.Disabled {
-		itemStyles.InfoTextBlurred = s.t.Dialog.SecondaryText
-		itemStyles.InfoTextFocused = s.t.Dialog.SecondaryText
+		// Padding(0, 0): SecondaryText carries its own horizontal padding,
+		// which would widen the disabled row's info block and shift its
+		// columns. The padded block width must stay identical across rows.
+		itemStyles.InfoTextBlurred = s.t.Dialog.SecondaryText.Padding(0, 0)
+		itemStyles.InfoTextFocused = s.t.Dialog.SecondaryText.Padding(0, 0)
 	}
 
-	return renderItem(itemStyles, s.Name, info, s.focused, width, nil, &s.m)
+	return renderItem(itemStyles, title, info, s.focused, width, nil, &s.m)
 }
 
 // ToggleSkill adds or removes a skill name from the disabled-skills list

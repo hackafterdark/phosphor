@@ -477,6 +477,7 @@ func (c *Commands) defaultCommands() []*CommandItem {
 		NewCommandItem(c.com.Styles, "switch_session", "Sessions", "ctrl+s", ActionOpenDialog{SessionsID}),
 		NewCommandItem(c.com.Styles, "switch_cron_session", "Scheduled Job Sessions", "", ActionOpenDialog{CronSessionsID}),
 		NewCommandItem(c.com.Styles, "switch_cron_jobs", "Scheduled Jobs", "", ActionOpenDialog{CronJobsID}),
+		NewCommandItem(c.com.Styles, "skills", "Skills", "", ActionOpenDialog{SkillsID}),
 		NewCommandItem(c.com.Styles, "switch_model", "Switch Model", "ctrl+l", ActionOpenDialog{ModelsID}),
 		NewCommandItem(c.com.Styles, "custom_providers", "Manage Custom Providers", "", ActionOpenDialog{DialogID: ProviderManagerID}),
 		NewCommandItem(c.com.Styles, "add_custom_provider", "Add Custom Provider", "", ActionOpenDialog{DialogID: ProviderWizardID}),

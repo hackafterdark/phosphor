@@ -1,14 +1,17 @@
 package dialog
 
 import (
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/hackafterdark/phosphor/internal/ui/common"
 	"github.com/hackafterdark/phosphor/internal/ui/list"
 	uis "github.com/hackafterdark/phosphor/internal/ui/styles"
 	"github.com/hackafterdark/phosphor/internal/workspace"
 	"github.com/hackafterdark/phosphor/pkg/config"
+	"github.com/hackafterdark/phosphor/pkg/skills"
 	"github.com/stretchr/testify/require"
 )
 
@@ -169,3 +172,64 @@ func TestToggleSkillNoOpWhenUnchanged(t *testing.T) {
 
 // Ensure the item type satisfies the filterable list contract.
 var _ list.FilterableItem = (*SkillItem)(nil)
+
+func TestSkillItemRenderFitsWidth(t *testing.T) {
+	t.Parallel()
+
+	st := uis.CharmtonePantera()
+	item := &SkillItem{
+		Versioned:   list.NewVersioned(),
+		Name:        "long-desc-skill",
+		Description: "Line one of the description.\n" + strings.Repeat("x", 900) + " trailing text",
+		Source:      skills.SourceUser,
+		t:           &st,
+	}
+
+	out := item.Render(60)
+	// The row must stay on a single line no matter how long the
+	// description is; the item style may add its own padding on top.
+	require.Equal(t, 1, lipgloss.Height(out), "rendered item must be a single line")
+	require.Contains(t, out, "long-desc-skill")
+	require.Contains(t, out, "…", "long description must be truncated")
+	require.NotContains(t, out, strings.Repeat("x", 900))
+}
+
+func TestSkillsDialogDetailsOpensDetail(t *testing.T) {
+	t.Parallel()
+
+	ws := &skillsTestWorkspace{cfg: &config.Config{}}
+	d := newSkillsTestDialog(t, ws)
+
+	d.list.SetSelected(0)
+	action := d.HandleMsg(tea.KeyPressMsg{Code: 'd', Text: "d"})
+	detail, ok := action.(ActionShowSkillDetail)
+	require.True(t, ok)
+	require.NotNil(t, detail.Skill)
+
+	// The detail dialog loads the skill file and keeps its ID.
+	st := uis.CharmtonePantera()
+	sd := NewSkillDetail(&common.Common{Workspace: ws, Styles: &st}, detail.Skill, detail.Source)
+	require.Equal(t, SkillDetailID, sd.ID())
+}
+
+func TestSkillDetailScrollAndClose(t *testing.T) {
+	t.Parallel()
+
+	ws := &skillsTestWorkspace{cfg: &config.Config{}}
+	st := uis.CharmtonePantera()
+	com := &common.Common{Workspace: ws, Styles: &st}
+
+	// A builtin skill is guaranteed to exist and to have content.
+	builtin := skills.DiscoverBuiltin()
+	require.NotEmpty(t, builtin)
+	sd := NewSkillDetail(com, builtin[0], skills.SourceSystem)
+	require.NoError(t, sd.err)
+	require.NotEmpty(t, sd.content)
+
+	// Scrolling keys belong to the reading pane and produce no action.
+	require.Nil(t, sd.HandleMsg(tea.KeyPressMsg{Code: tea.KeyDown}))
+	require.Nil(t, sd.HandleMsg(tea.KeyPressMsg{Code: tea.KeyPgDown}))
+
+	// Escape closes.
+	require.Equal(t, ActionClose{}, sd.HandleMsg(tea.KeyPressMsg{Code: tea.KeyEscape}))
+}
