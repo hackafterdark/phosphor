@@ -72,7 +72,7 @@ require (
 	github.com/tidwall/sjson v1.2.5
 	github.com/tree-sitter/go-tree-sitter v0.25.0
 	github.com/tsawler/prose/v3 v3.0.0-beta2
-	github.com/xuri/excelize/v2 v2.11.1-0.20260906004932-2badfcd5841d
+	github.com/xuri/excelize/v2 v2.11.1-0.20261008044812-1cf5392f4fb7
 	github.com/zeebo/xxh3 v1.1.0
 	github.com/zricethezav/gitleaks/v8 v8.30.1
 	go.opentelemetry.io/otel v1.46.0
