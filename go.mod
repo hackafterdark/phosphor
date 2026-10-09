@@ -72,7 +72,7 @@ require (
 	github.com/tidwall/sjson v1.2.5
 	github.com/tree-sitter/go-tree-sitter v0.25.0
 	github.com/tsawler/prose/v3 v3.0.0-beta2
-	github.com/xuri/excelize/v2 v2.11.0
+	github.com/xuri/excelize/v2 v2.11.1-0.20261008044812-1cf5392f4fb7
 	github.com/zeebo/xxh3 v1.1.0
 	github.com/zricethezav/gitleaks/v8 v8.30.1
 	go.opentelemetry.io/otel v1.46.0
@@ -85,7 +85,7 @@ require (
 	go.uber.org/goleak v1.3.0
 	golang.design/x/clipboard v0.9.0
 	golang.org/x/exp v0.0.0-20260908205506-85c1c2202aba
-	golang.org/x/net v0.59.0
+	golang.org/x/net v0.60.0
 	golang.org/x/sync v0.23.0
 	golang.org/x/sys v0.48.0
 	golang.org/x/text v0.42.0
