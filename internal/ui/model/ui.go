@@ -1941,6 +1941,26 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			cmds = append(cmds, cmd)
 		}
 
+	// Skills dialog messages.
+	case dialog.ActionToggleSkill:
+		name, disable := msg.Name, msg.Disable
+		cmds = append(cmds, func() tea.Msg {
+			if err := dialog.ToggleSkill(m.com.Workspace, name, disable); err != nil {
+				return util.NewErrorMsg(err)
+			}
+			if disable {
+				return util.NewInfoMsg("Skill " + name + " disabled")
+			}
+			return util.NewInfoMsg("Skill " + name + " enabled")
+		})
+	case dialog.ActionShowSkillDetail:
+		m.dialog.OpenDialog(dialog.NewSkillDetail(m.com, msg.Skill, msg.Source))
+		skill := msg.Skill
+		cmds = append(cmds, func() tea.Msg {
+			content, err := dialog.SkillFileContent(skill)
+			return dialog.SkillDetailLoadedMsg{Content: content, Err: err}
+		})
+
 	// Command dialog messages.
 	case dialog.ActionToggleYoloMode:
 		yolo := !m.com.Workspace.PermissionSkipRequests()
@@ -4718,6 +4738,10 @@ func (m *UI) openDialog(id string) tea.Cmd {
 		if cmd := m.openCronJobsDialog(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
+	case dialog.SkillsID:
+		if cmd := m.openSkillsDialog(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 	case dialog.ModelsID:
 		if cmd := m.openModelsDialog(); cmd != nil {
 			cmds = append(cmds, cmd)
@@ -5260,6 +5284,18 @@ func (m *UI) openCronJobsDialog() tea.Cmd {
 	}
 
 	m.dialog.OpenDialog(dialog)
+	return nil
+}
+
+// openSkillsDialog opens the skills dialog.
+func (m *UI) openSkillsDialog() tea.Cmd {
+	if m.dialog.ContainsDialog(dialog.SkillsID) {
+		// Bring to front
+		m.dialog.BringToFront(dialog.SkillsID)
+		return nil
+	}
+
+	m.dialog.OpenDialog(dialog.NewSkills(m.com))
 	return nil
 }
 

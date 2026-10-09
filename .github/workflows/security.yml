@@ -71,9 +71,15 @@ jobs:
       - name: Install govulncheck
         run: go install golang.org/x/vuln/cmd/govulncheck@latest
       - name: Run govulncheck
+        # govulncheck can emit duplicate stack entries for the same result,
+        # which upload-sarif rejects as invalid SARIF. Deduplicate stacks
+        # before uploading so the report is always schema-valid.
         run: |
           govulncheck -C . -format sarif ./... > results.sarif
+          jq '(.runs[].results[] | select(.stacks != null) | .stacks) |= unique' results.sarif > results.dedup.sarif
+          mv results.dedup.sarif results.sarif
       - uses: github/codeql-action/upload-sarif@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
+        if: always()
         with:
           sarif_file: results.sarif
 
