@@ -29,8 +29,10 @@ type coercingTool struct {
 
 // wrapToolsWithCoercion returns a tool slice with each entry wrapped in a
 // coercingTool. The wrapper is applied unconditionally — type coercion is
-// independent of hooks and sub-agent context — and must run before
-// wrapToolsWithHooks so hooks observe the repaired input.
+// independent of hooks and sub-agent context. It is applied after
+// wrapToolsWithHooks so it becomes the outermost wrapper: its Run repairs
+// the raw model input first, and PreToolUse hooks then inspect and may
+// rewrite the repaired input.
 func wrapToolsWithCoercion(tools []fantasy.AgentTool) []fantasy.AgentTool {
 	out := make([]fantasy.AgentTool, len(tools))
 	for i, tool := range tools {
@@ -74,11 +76,11 @@ func coerceToolCallInput(tool fantasy.AgentTool, input string) (string, bool) {
 	if err != nil {
 		return input, false
 	}
-	props, ok := toolParamProps(tool)
-	if !ok {
+	params := toolParamNode(tool)
+	if params == nil {
 		return input, false
 	}
-	repaired, changed := coerceObject(decoded, props)
+	repaired, changed := coerceObjectForSchema(decoded, params)
 	if !changed {
 		return input, false
 	}

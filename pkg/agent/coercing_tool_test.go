@@ -89,6 +89,41 @@ func TestCoerceToolCallInputLeavesUnparsableInputAlone(t *testing.T) {
 	}
 }
 
+func TestCoerceToolCallInputKeepsAdditionalProperties(t *testing.T) {
+	t.Parallel()
+	tool := fantasy.NewAgentTool("free", "free tool", func(
+		_ context.Context, _ map[string]any, _ fantasy.ToolCall,
+	) (fantasy.ToolResponse, error) {
+		return fantasy.NewTextResponse("ok"), nil
+	})
+	// A hand-written schema that permits extra keys keeps them while
+	// declared fields are still repaired.
+	schemaTool := additionalPropsTool{AgentTool: tool}
+	got, changed := coerceToolCallInput(schemaTool, `{"active":"true","payload":42}`)
+	require.True(t, changed)
+	var m map[string]any
+	require.NoError(t, json.Unmarshal([]byte(got), &m))
+	require.Equal(t, true, m["active"])
+	require.Equal(t, float64(42), m["payload"])
+}
+
+type additionalPropsTool struct {
+	fantasy.AgentTool
+}
+
+func (additionalPropsTool) Info() fantasy.ToolInfo {
+	return fantasy.ToolInfo{
+		Name: "free",
+		Parameters: map[string]any{
+			"type":                 "object",
+			"additionalProperties": true,
+			"properties": map[string]any{
+				"active": map[string]any{"type": "boolean"},
+			},
+		},
+	}
+}
+
 func TestCoerceToolCallInputSchemalessTool(t *testing.T) {
 	t.Parallel()
 	schemaless := fantasy.NewAgentTool("free", "free tool", func(

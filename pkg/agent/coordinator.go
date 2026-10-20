@@ -1203,17 +1203,18 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, isSubA
 		return strings.Compare(a.Info().Name, b.Info().Name)
 	})
 
-	// Repair schema type mismatches (e.g. "true" for a boolean
-	// parameter) before any other interception, so hooks and the typed
-	// decoder both see schema-conformant input.
-	filteredTools = wrapToolsWithCoercion(filteredTools)
-
 	// Wrap tools with hook interception for the top-level agent only.
 	// Sub-agents (the `agent` task tool, `agentic_fetch`, etc.) run
 	// without hook interception to avoid firing the user's hook N times
 	// per delegated turn. The top-level invocation of the sub-agent tool
 	// itself is still wrapped from the coder's side.
 	filteredTools = wrapToolsWithHooks(filteredTools, hookRunner, isSubAgent, c.cfg.ActiveProfile())
+
+	// Repair schema type mismatches (e.g. "true" for a boolean
+	// parameter) before hook interception runs: applying this wrapper last
+	// makes it the outermost layer, so coercion repairs the input first
+	// and hooks then inspect and may rewrite the repaired input.
+	filteredTools = wrapToolsWithCoercion(filteredTools)
 
 	return filteredTools, nil
 }
