@@ -164,3 +164,69 @@ func TestRepairToolCallUnknownToolReturnsNil(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, got)
 }
+
+type rawParamsTool struct {
+	name       string
+	parameters map[string]any
+}
+
+func (r rawParamsTool) Info() fantasy.ToolInfo {
+	return fantasy.ToolInfo{Name: r.name, Description: "raw params tool", Parameters: r.parameters}
+}
+
+func (r rawParamsTool) Run(_ context.Context, _ fantasy.ToolCall) (fantasy.ToolResponse, error) {
+	return fantasy.NewTextResponse("ok"), nil
+}
+
+func (r rawParamsTool) ProviderOptions() fantasy.ProviderOptions { return nil }
+
+func (r rawParamsTool) SetProviderOptions(_ fantasy.ProviderOptions) {}
+
+func repairWith(t *testing.T, tool fantasy.AgentTool, input string) map[string]any {
+	t.Helper()
+	got, err := repairToolCall(context.Background(), fantasy.ToolCallRepairOptions{
+		OriginalToolCall: fantasy.ToolCallContent{ToolCallID: "call-1", ToolName: tool.Info().Name, Input: input},
+		AvailableTools:   []fantasy.AgentTool{tool},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, got, "expected the call to be repaired")
+	var m map[string]any
+	dec := json.NewDecoder(strings.NewReader(got.Input))
+	dec.UseNumber()
+	require.NoError(t, dec.Decode(&m))
+	return m
+}
+
+func TestRepairToolCallInlinePropertiesArgIsNotSchema(t *testing.T) {
+	t.Parallel()
+	tool := rawParamsTool{name: "raw", parameters: map[string]any{
+		"properties": map[string]any{"type": "string"},
+		"active":     map[string]any{"type": "boolean"},
+	}}
+	m := repairWith(t, tool, `{"properties":"meta","active":"true"}`)
+	require.Equal(t, "meta", m["properties"])
+	require.Equal(t, true, m["active"])
+}
+
+func TestRepairToolCallSchemaValuedAdditionalProperties(t *testing.T) {
+	t.Parallel()
+	tool := rawParamsTool{name: "raw", parameters: map[string]any{
+		"type":                 "object",
+		"properties":           map[string]any{"active": map[string]any{"type": "boolean"}},
+		"additionalProperties": map[string]any{"type": "integer"},
+	}}
+	m := repairWith(t, tool, `{"active":"true","extra":"7"}`)
+	require.Equal(t, true, m["active"])
+	require.Equal(t, json.Number("7"), m["extra"])
+}
+
+func TestRepairToolCallClosedEmptyObjectDropsUnknown(t *testing.T) {
+	t.Parallel()
+	tool := rawParamsTool{name: "raw", parameters: map[string]any{
+		"type":                 "object",
+		"properties":           map[string]any{},
+		"additionalProperties": false,
+	}}
+	m := repairWith(t, tool, `{"unexpected":1}`)
+	require.Empty(t, m)
+}

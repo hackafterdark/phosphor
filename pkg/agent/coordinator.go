@@ -1210,6 +1210,12 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, isSubA
 	// itself is still wrapped from the coder's side.
 	filteredTools = wrapToolsWithHooks(filteredTools, hookRunner, isSubAgent, c.cfg.ActiveProfile())
 
+	// Repair schema type mismatches (e.g. "true" for a boolean
+	// parameter) before hook interception runs: applying this wrapper last
+	// makes it the outermost layer, so coercion repairs the input first
+	// and hooks then inspect and may rewrite the repaired input.
+	filteredTools = wrapToolsWithCoercion(filteredTools)
+
 	return filteredTools, nil
 }
 
@@ -1289,16 +1295,16 @@ func (c *coordinator) buildAgentModels(ctx context.Context, isSubAgent bool) (Mo
 		}
 
 		return Model{
-			Model:      largeModel,
-			CatwalkCfg: *largeCatwalkModel,
-			ModelCfg:   largeModelCfg,
-			FlatRate:   largeProviderCfg.FlatRate,
-		}, Model{
-			Model:      smallModel,
-			CatwalkCfg: *smallCatwalkModel,
-			ModelCfg:   smallModelCfg,
-			FlatRate:   smallProviderCfg.FlatRate,
-		}, nil
+				Model:      largeModel,
+				CatwalkCfg: *largeCatwalkModel,
+				ModelCfg:   largeModelCfg,
+				FlatRate:   largeProviderCfg.FlatRate,
+			}, Model{
+				Model:      smallModel,
+				CatwalkCfg: *smallCatwalkModel,
+				ModelCfg:   smallModelCfg,
+				FlatRate:   smallProviderCfg.FlatRate,
+			}, nil
 	}
 
 	// Small model not configured — large model will be used for title generation.

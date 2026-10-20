@@ -186,7 +186,9 @@ func (c *coordinator) agenticFetchTool(_ context.Context, client *http.Client) (
 			// Sub-agent tools run without hook interception. The top-level
 			// `agentic_fetch` call itself is already wrapped from the coder's
 			// side; firing hooks again for every inner tool call would run
-			// the user's hooks N times per delegated turn.
+			// the user's hooks N times per delegated turn. Type coercion
+			// still applies, so inner tool calls get the same repair.
+			fetchTools = wrapToolsWithCoercion(fetchTools)
 
 			agent := NewSessionAgent(SessionAgentOptions{
 				LargeModel:           small, // Use small model for both (fetch doesn't need large)

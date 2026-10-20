@@ -43,18 +43,12 @@ func repairToolCall(_ context.Context, opts fantasy.ToolCallRepairOptions) (*fan
 		candidates = append(candidates, sanitized)
 	}
 
-	var props map[string]any
-	if p, ok := tool.Info().Parameters["properties"].(map[string]any); ok {
-		props = p
-	} else if tool.Info().Parameters != nil {
-		props = tool.Info().Parameters
-	}
 	for _, candidate := range candidates {
 		decoded, err := decodeLoose(candidate)
 		if err != nil {
 			continue
 		}
-		repaired, changed := coerceObject(decoded, props)
+		repaired, changed := coerceObjectForSchema(decoded, toolParamNode(tool))
 		if !changed {
 			// Nothing to fix; let fantasy retry the original decode.
 			continue
@@ -79,6 +73,36 @@ func repairToolCall(_ context.Context, opts fantasy.ToolCallRepairOptions) (*fan
 	return nil, nil
 }
 
+// toolParamNode returns the tool's parameter schema node in
+// {"properties": ..., "additionalProperties": ...} form, tolerating schemas
+// that place the property map inline instead of under "properties".
+func toolParamNode(tool fantasy.AgentTool) map[string]any {
+	params := tool.Info().Parameters
+	if params == nil {
+		return nil
+	}
+	if isObjectSchemaNode(params) {
+		return params
+	}
+	return map[string]any{"properties": params}
+}
+
+// isObjectSchemaNode reports whether node is a complete JSON-Schema object
+// node rather than an inline argument map. The properties map alone is not
+// enough: an inline argument named "properties" would otherwise be mistaken
+// for root schema metadata. The surrounding structure — a declared
+// "type": "object" or an "additionalProperties" constraint — decides.
+func isObjectSchemaNode(node map[string]any) bool {
+	if _, ok := node["properties"].(map[string]any); !ok {
+		return false
+	}
+	if t, _ := node["type"].(string); t == "object" {
+		return true
+	}
+	_, hasAdditional := node["additionalProperties"]
+	return hasAdditional
+}
+
 // decodeLoose parses a JSON object while keeping numbers as json.Number so
 // coercions round-trip without float64 precision damage (large ids, offsets).
 func decodeLoose(s string) (map[string]any, error) {
@@ -94,7 +118,9 @@ func decodeLoose(s string) (map[string]any, error) {
 	return m, nil
 }
 
-func coerceObject(obj map[string]any, props map[string]any) (map[string]any, bool) {
+func coerceObject(obj map[string]any, props map[string]any, additionalProps any) (map[string]any, bool) {
+	additionalIsTrue, _ := additionalProps.(bool)
+	additionalSchema, _ := additionalProps.(map[string]any)
 	changed := false
 	out := make(map[string]any, len(obj))
 	for k, v := range obj {
@@ -104,9 +130,18 @@ func coerceObject(obj map[string]any, props map[string]any) (map[string]any, boo
 			// keys match it instead of being treated as unknown.
 			if wildcard, ok := props["*"]; ok {
 				schema = wildcard
-			} else if len(props) > 0 {
+			} else if additionalIsTrue || additionalSchema != nil {
+				// The schema explicitly permits extra keys; keep them, and
+				// coerce against the additionalProperties value schema when
+				// one is declared.
+				if additionalSchema != nil {
+					schema = additionalSchema
+				}
+			} else {
 				// An unknown key guarantees a validation failure downstream;
-				// dropping it gives the tool a chance to run instead.
+				// dropping it gives the tool a chance to run instead. The
+				// check fires on a present (even empty) props map: a closed
+				// object schema admits no keys at all.
 				changed = true
 				continue
 			}
@@ -121,6 +156,18 @@ func coerceObject(obj map[string]any, props map[string]any) (map[string]any, boo
 		out[canon] = nv
 	}
 	return out, changed
+}
+
+// coerceObjectForSchema coerces obj against a full object schema node,
+// honouring additionalProperties: keys outside the declared properties are
+// dropped only when the schema disallows them (a missing or false
+// additionalProperties counts as disallowed, matching the strict generated
+// structs behind reflection-built schemas). A schema-valued
+// additionalProperties permits extras and its value schema is applied to
+// them.
+func coerceObjectForSchema(obj map[string]any, schema map[string]any) (map[string]any, bool) {
+	props, _ := schema["properties"].(map[string]any)
+	return coerceObject(obj, props, schema["additionalProperties"])
 }
 
 // lookupProp matches a schema property to a key the model sent, tolerating
@@ -173,15 +220,17 @@ func coerceValue(v any, schema any) (any, bool) {
 	case "array":
 		return coerceArray(v, schema)
 	case "object":
+		m, ok := schema.(map[string]any)
+		if !ok {
+			return v, false
+		}
 		if obj, ok := v.(map[string]any); ok {
-			props, _ := schema.(map[string]any)["properties"].(map[string]any)
-			return coerceObject(obj, props)
+			return coerceObjectForSchema(obj, m)
 		}
 		// The model often stringifies nested objects; try to parse them.
 		if s, ok := v.(string); ok {
 			if obj, err := decodeLoose(s); err == nil {
-				props, _ := schema.(map[string]any)["properties"].(map[string]any)
-				inner, _ := coerceObject(obj, props)
+				inner, _ := coerceObjectForSchema(obj, m)
 				return inner, true
 			}
 		}
