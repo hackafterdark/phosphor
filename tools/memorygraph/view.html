@@ -915,7 +915,7 @@ function status(msg) {
 }
 async function probe() {
   try {
-    const r = await fetch("graph.json?_=" + Date.now(), { method: "HEAD" });
+    const r = await fetch("graph.json?_=" + Date.now());
     return r.ok && r.headers.get("content-length") !== liveSize;
   } catch { return false; }
 }
