@@ -1,0 +1,5 @@
+# generated graph data and snapshot reports contain raw memory
+# entries — never commit them
+graph.json
+report*.html
+__pycache__/
