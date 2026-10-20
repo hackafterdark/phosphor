@@ -908,30 +908,26 @@ function boot(g) {
 
 // ---- data loading: snapshot (embedded) or live polling --------------------
 const live = !window.__PHOSPHOR_SNAPSHOT__;
+const POLL_MS = 10000;
 let liveSize = null;
 function status(msg) {
   const el = document.getElementById("status");
   if (el) el.textContent = msg;
 }
-async function probe() {
-  try {
-    const r = await fetch("graph.json?_=" + Date.now());
-    return r.ok && r.headers.get("content-length") !== liveSize;
-  } catch { return false; }
-}
 async function poll() {
   if (!live) return;
-  if (await probe()) {
-    try {
-      const r = await fetch("graph.json?_=" + Date.now());
-      if (r.ok) {
-        liveSize = r.headers.get("content-length");
-        boot(await r.json());
+  try {
+    const r = await fetch("graph.json?_=" + Date.now());
+    if (r.ok) {
+      const text = await r.text();
+      if (text.length !== liveSize) {
+        liveSize = text.length;
+        boot(JSON.parse(text));
         status("LIVE · SYNCED");
       }
-    } catch { /* transient; retry on next tick */ }
-  }
-  liveTimer = setTimeout(poll, 3000);
+    }
+  } catch { /* transient; retry on next tick */ }
+  liveTimer = setTimeout(poll, POLL_MS);
 }
 if (live) {
   if (location.protocol === "file:") {
