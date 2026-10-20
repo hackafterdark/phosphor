@@ -513,10 +513,16 @@ the agent, and the cron scheduler for unattended runs:
       "port": 8643,
       "auth": { "type": "bearer", "key": "$PHOSPHOR_API_TOKEN" }
     },
+    "memory-graph": { "enabled": true },
     "cron": { "enabled": true, "jobs_directory": ".phosphor/jobs" }
   }
 }
 ```
+
+The `memory-graph` service serves the memory vault viewer at
+`http://127.0.0.1:<openai-api port>/service/memorygraph/view.html` and is on
+by default. Set `"enabled": false` to remove the endpoints; it rides on the
+OpenAI-compatible API server, so it is unavailable when that service is off.
 
 Docs: [platform/openai-api.md](platform/openai-api.md),
 [platform/SCHEDULED_JOBS.md](platform/SCHEDULED_JOBS.md).
