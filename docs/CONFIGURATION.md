@@ -513,16 +513,16 @@ the agent, and the cron scheduler for unattended runs:
       "port": 8643,
       "auth": { "type": "bearer", "key": "$PHOSPHOR_API_TOKEN" }
     },
-    "memory-graph": { "enabled": true },
+    "memory-graph": { "host": "127.0.0.1", "port": 8644 },
     "cron": { "enabled": true, "jobs_directory": ".phosphor/jobs" }
   }
 }
 ```
 
-The `memory-graph` service serves the memory vault viewer at
-`http://127.0.0.1:<openai-api port>/service/memorygraph/view.html` and is on
-by default. Set `"enabled": false` to remove the endpoints; it rides on the
-OpenAI-compatible API server, so it is unavailable when that service is off.
+The `memory-graph` entry configures the memory vault viewer started with
+`phosphor memorygraph`. It is a standalone foreground server (like
+`phosphor cron`) on its own port — it does not depend on the OpenAI API
+service. The host and port fields above are the defaults.
 
 Docs: [platform/openai-api.md](platform/openai-api.md),
 [platform/SCHEDULED_JOBS.md](platform/SCHEDULED_JOBS.md).

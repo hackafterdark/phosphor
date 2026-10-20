@@ -73,6 +73,7 @@ func init() {
 		sessionCmd,
 		indexCmd,
 		NewCronCommand(),
+		NewMemoryGraphCommand(),
 	)
 }
 

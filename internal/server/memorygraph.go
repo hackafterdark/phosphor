@@ -3,6 +3,9 @@ package server
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
+	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -12,7 +15,6 @@ import (
 
 	"github.com/hackafterdark/phosphor/internal/home"
 	"github.com/hackafterdark/phosphor/internal/memory"
-	"github.com/labstack/echo/v5"
 )
 
 // memoryGraphWorkspace is the workspace directory used to discover the
@@ -62,22 +64,46 @@ func memoryGraphDBPath() string {
 }
 
 // HandleMemoryGraphView serves the embedded memory graph viewer page.
-func HandleMemoryGraphView(ctx *echo.Context) error {
-	return ctx.HTML(http.StatusOK, memoryGraphHTML)
+func HandleMemoryGraphView(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	io.WriteString(w, memoryGraphHTML)
 }
 
 // HandleMemoryGraphData builds the graph for the current memory vault on
 // every request, so the viewer's polling sees fresh entries.
-func HandleMemoryGraphData(ctx *echo.Context) error {
+func HandleMemoryGraphData(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
 	dbPath := memoryGraphDBPath()
 	if dbPath == "" {
-		return ctx.String(http.StatusNotFound, "No memory vault found")
+		http.Error(w, "No memory vault found", http.StatusNotFound)
+		return
 	}
-	graph, err := buildMemoryGraph(ctx.Request().Context(), dbPath)
+	graph, err := buildMemoryGraph(r.Context(), dbPath)
 	if err != nil {
-		return ctx.String(http.StatusInternalServerError, "Failed to build memory graph: "+err.Error())
+		http.Error(w, "Failed to build memory graph: "+err.Error(), http.StatusInternalServerError)
+		return
 	}
-	return ctx.JSON(http.StatusOK, graph)
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(graph); err != nil {
+		slog.Error("Failed to encode memory graph", "error", err)
+	}
+}
+
+// NewMemoryGraphHandler returns an http.Handler serving the viewer page at
+// / (and /view.html) and the graph data at /graph.json.
+func NewMemoryGraphHandler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/view.html", HandleMemoryGraphView)
+	mux.HandleFunc("/graph.json", HandleMemoryGraphData)
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" {
+			HandleMemoryGraphView(w, r)
+			return
+		}
+		http.NotFound(w, r)
+	})
+	return mux
 }
 
 type graphNode struct {

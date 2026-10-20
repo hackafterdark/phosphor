@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/labstack/echo/v5"
 	"github.com/stretchr/testify/require"
 )
 
@@ -104,26 +103,22 @@ func TestMemoryGraphHandlers(t *testing.T) {
 	t.Cleanup(func() { memoryGraphWorkspace = orig })
 	memoryGraphWorkspace = ws
 
-	e := echo.New()
-
 	seed := seedMemoryDB(t)
 	data, err := os.ReadFile(seed)
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(vault, "memory.db"), data, 0o644))
 
-	req := httptest.NewRequest(http.MethodGet, "/service/memorygraph/graph.json", nil)
+	req := httptest.NewRequest(http.MethodGet, "/graph.json", nil)
 	rec := httptest.NewRecorder()
-	ctx := e.NewContext(req, rec)
-	require.NoError(t, HandleMemoryGraphData(ctx))
+	HandleMemoryGraphData(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code)
 	var g memoryGraph
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &g))
 	require.Len(t, g.Nodes, 7)
 
-	req = httptest.NewRequest(http.MethodGet, "/service/memorygraph/view.html", nil)
+	req = httptest.NewRequest(http.MethodGet, "/view.html", nil)
 	rec = httptest.NewRecorder()
-	ctx = e.NewContext(req, rec)
-	require.NoError(t, HandleMemoryGraphView(ctx))
+	HandleMemoryGraphView(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Contains(t, rec.Body.String(), "cosmos")
 }
