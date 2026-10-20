@@ -206,6 +206,7 @@ what a tool produced and what the transcript stores is attributable:
 | ChatML/control-token defang, VT100 device-control strip | `pkg/agent/sanitization.go` (`DefangSpecialTokens` / `StripDeviceControls`) | Stop sequences and terminal-escape injection from untrusted text |
 | Trailing-garbage trim of tool-call JSON | `sanitizeJSONInput` | vLLM tool-call parser workaround (malformed suffixes cause 400s) |
 | Schema-driven tool-call repair | `repairToolCall` (`pkg/agent/toolcallrepair.go`) | Deterministic type coercion of model-emitted inputs against the tool schema |
+| Pre-execution type coercion | `coercingTool` (`pkg/agent/coercing_tool.go`) | Fantasy's validation is type-blind, so `repairToolCall` (which fantasy only invokes on validation failure) cannot see schema type mismatches such as `"true"` for a boolean parameter; this wrapper coerces them with the same strict rules before the typed decoder runs |
 | Hook rewrite of tool input | `hooked_tool.go` | Operator-defined PreToolUse behaviour |
 | Outgoing defang + last-resort secret/PII mask | `outgoing_redact.go` | Second line of defence at the provider wire |
 

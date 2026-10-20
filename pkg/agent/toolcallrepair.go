@@ -44,10 +44,8 @@ func repairToolCall(_ context.Context, opts fantasy.ToolCallRepairOptions) (*fan
 	}
 
 	var props map[string]any
-	if p, ok := tool.Info().Parameters["properties"].(map[string]any); ok {
+	if p, ok := toolParamProps(tool); ok {
 		props = p
-	} else if tool.Info().Parameters != nil {
-		props = tool.Info().Parameters
 	}
 	for _, candidate := range candidates {
 		decoded, err := decodeLoose(candidate)
@@ -77,6 +75,19 @@ func repairToolCall(_ context.Context, opts fantasy.ToolCallRepairOptions) (*fan
 		return &fixed, nil
 	}
 	return nil, nil
+}
+
+// toolParamProps returns the tool's parameter property map, tolerating
+// schemas that place the properties inline instead of under "properties".
+func toolParamProps(tool fantasy.AgentTool) (map[string]any, bool) {
+	info := tool.Info()
+	if p, ok := info.Parameters["properties"].(map[string]any); ok {
+		return p, true
+	}
+	if info.Parameters != nil {
+		return info.Parameters, true
+	}
+	return nil, false
 }
 
 // decodeLoose parses a JSON object while keeping numbers as json.Number so

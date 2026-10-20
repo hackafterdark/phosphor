@@ -1203,6 +1203,11 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, isSubA
 		return strings.Compare(a.Info().Name, b.Info().Name)
 	})
 
+	// Repair schema type mismatches (e.g. "true" for a boolean
+	// parameter) before any other interception, so hooks and the typed
+	// decoder both see schema-conformant input.
+	filteredTools = wrapToolsWithCoercion(filteredTools)
+
 	// Wrap tools with hook interception for the top-level agent only.
 	// Sub-agents (the `agent` task tool, `agentic_fetch`, etc.) run
 	// without hook interception to avoid firing the user's hook N times
@@ -1289,16 +1294,16 @@ func (c *coordinator) buildAgentModels(ctx context.Context, isSubAgent bool) (Mo
 		}
 
 		return Model{
-			Model:      largeModel,
-			CatwalkCfg: *largeCatwalkModel,
-			ModelCfg:   largeModelCfg,
-			FlatRate:   largeProviderCfg.FlatRate,
-		}, Model{
-			Model:      smallModel,
-			CatwalkCfg: *smallCatwalkModel,
-			ModelCfg:   smallModelCfg,
-			FlatRate:   smallProviderCfg.FlatRate,
-		}, nil
+				Model:      largeModel,
+				CatwalkCfg: *largeCatwalkModel,
+				ModelCfg:   largeModelCfg,
+				FlatRate:   largeProviderCfg.FlatRate,
+			}, Model{
+				Model:      smallModel,
+				CatwalkCfg: *smallCatwalkModel,
+				ModelCfg:   smallModelCfg,
+				FlatRate:   smallProviderCfg.FlatRate,
+			}, nil
 	}
 
 	// Small model not configured — large model will be used for title generation.
