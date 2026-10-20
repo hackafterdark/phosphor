@@ -8,8 +8,9 @@ searchable through the `phosphor_docs` tool or by viewing any
 
 | Doc | Covers |
 | --- | --- |
-| [CONFIGURATION.md](CONFIGURATION.md) | Where config files live per OS, merge order, and a snippet for every config section. Start here. |
-| [CORE_PHILOSOPHY.md](CORE_PHILOSOPHY.md) | Identity and core pillars of the project. |
+|| [CONFIGURATION.md](CONFIGURATION.md) | Where config files live per OS, merge order, and a snippet for every config section. Start here. |
+|| [CLI.md](CLI.md) | Global flags, subcommands, and per-command options for the `phosphor` CLI. |
+|| [CORE_PHILOSOPHY.md](CORE_PHILOSOPHY.md) | Identity and core pillars of the project. |
 | [KEYBINDINGS.md](KEYBINDINGS.md) | Default TUI key bindings and how to configure custom ones. |
 
 ## Configuration
@@ -50,9 +51,10 @@ searchable through the `phosphor_docs` tool or by viewing any
 
 | Doc | Covers |
 | --- | --- |
-| [memory/OVERVIEW.md](memory/OVERVIEW.md) | How the memory system works: vaults, the entry model, write/read paths, Tier A/B injection, config, `/memory`. |
-| [memory/INTEGRITY.md](memory/INTEGRITY.md) | The tamper seal: the HMAC key, what is signed vs. deliberately exempt, the threat model, key operations. |
-| [memory/POISONING.md](memory/POISONING.md) | The layered defenses against a poisoned memory entry reaching the system prompt. |
+|| [memory/OVERVIEW.md](memory/OVERVIEW.md) | How the memory system works: vaults, the entry model, write/read paths, Tier A/B injection, config, `/memory`. |
+|| [memory/INTEGRITY.md](memory/INTEGRITY.md) | The tamper seal: the HMAC key, what is signed vs. deliberately exempt, the threat model, key operations. |
+|| [memory/POISONING.md](memory/POISONING.md) | The layered defenses against a poisoned memory entry reaching the system prompt. |
+|| [memory/MEMORYGRAPH.md](memory/MEMORYGRAPH.md) | The memory graph viewer: live server, report export, host/port config, and node/edge semantics. |
 
 ## Extending the Agent
 

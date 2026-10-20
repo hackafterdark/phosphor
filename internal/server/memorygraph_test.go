@@ -121,7 +121,10 @@ func TestMemoryGraphHandlers(t *testing.T) {
 	rec = httptest.NewRecorder()
 	HandleMemoryGraphView(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code)
-	require.Contains(t, rec.Body.String(), "cosmos")
+	page := rec.Body.String()
+	require.NotContains(t, page, cosmosPlaceholder)
+	require.NotContains(t, page, "@cosmos.gl/graph")
+	require.Contains(t, page, cosmosGraphJS[:200])
 }
 func TestRenderMemoryGraphReport(t *testing.T) {
 	t.Parallel()
@@ -131,6 +134,13 @@ func TestRenderMemoryGraphReport(t *testing.T) {
 	html := string(page)
 	require.Contains(t, html, "window.__PHOSPHOR_SNAPSHOT__ = true;")
 	require.Contains(t, html, "window.__PHOSPHOR_GRAPH__ = ")
+	require.NotContains(t, html, cosmosPlaceholder)
+	require.NotContains(t, html, "@cosmos.gl/graph")
+	require.Contains(t, html, cosmosGraphJS[:200])
+	// The bundle must stay byte-intact: the snapshot payload goes into the
+	// real </head>, never into the "</head>" literal inside the bundle.
+	require.Contains(t, html, cosmosGraphJS)
+	require.Contains(t, html, ";</script>\n</head>")
 
 	// The embedded payload must parse back into the same graph.
 	_, payload, ok := strings.Cut(html, "window.__PHOSPHOR_GRAPH__ = ")

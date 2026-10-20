@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -13,6 +14,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -66,11 +68,39 @@ func memoryGraphDBPath() string {
 	return ""
 }
 
+// cosmosPlaceholder marks where the bundled cosmos.gl runtime is injected
+// into the viewer page.
+const cosmosPlaceholder = "<!--PHOSPHOR_COSMOS_JS-->"
+
+// hydrateCosmos replaces the cosmos placeholder with the bundled runtime
+// wrapped in a script tag.
+func hydrateCosmos(page string) string {
+	// Escape the close-tag sequence so a literal inside the bundle cannot
+	// terminate the injected script tag early.
+	js := strings.ReplaceAll(cosmosGraphJS, "</script>", `<\/script>`)
+	return strings.Replace(page, cosmosPlaceholder, "<script>"+js+"</script>", 1)
+}
+
+// viewerPage returns the viewer HTML with the bundled cosmos.gl runtime
+// inlined, so both the live viewer and exported reports render with no
+// network access and no CDN dependency.
+var viewerPage = sync.OnceValues(func() (string, error) {
+	if !strings.Contains(memoryGraphHTML, cosmosPlaceholder) {
+		return "", errors.New("viewer page has no " + cosmosPlaceholder + " placeholder")
+	}
+	return hydrateCosmos(memoryGraphHTML), nil
+})
+
 // HandleMemoryGraphView serves the embedded memory graph viewer page.
 func HandleMemoryGraphView(w http.ResponseWriter, _ *http.Request) {
+	page, err := viewerPage()
+	if err != nil {
+		http.Error(w, "Failed to hydrate viewer page: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
-	io.WriteString(w, memoryGraphHTML)
+	io.WriteString(w, page)
 }
 
 // HandleMemoryGraphData builds the graph for the current memory vault on
@@ -130,13 +160,16 @@ func RenderMemoryGraphReport(ctx context.Context, dbPath string) ([]byte, error)
 	// Escape </ sequences so a "</script>" inside any entry body cannot
 	// terminate the payload tag early.
 	payload = bytes.ReplaceAll(payload, []byte("</"), []byte(`<\/`))
+	// Insert the payload into the bare template before hydrating cosmos.gl:
+	// the bundle itself contains a literal "</head>" inside a string, so
+	// replacing after injection would splice the payload into the bundle.
 	if !strings.Contains(memoryGraphHTML, "</head>") {
 		return nil, fmt.Errorf("viewer page has no </head>; cannot embed snapshot payload")
 	}
 	head := "<script>window.__PHOSPHOR_SNAPSHOT__ = true;\n" +
 		"window.__PHOSPHOR_GRAPH__ = " + string(payload) + ";</script>\n</head>"
 	page := strings.Replace(memoryGraphHTML, "</head>", head, 1)
-	return []byte(page), nil
+	return []byte(hydrateCosmos(page)), nil
 }
 
 type graphNode struct {

@@ -6,7 +6,7 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
 <title>MEMORY AURORA</title>
-<script src="https://cdn.jsdelivr.net/npm/@cosmos.gl/graph@3.5.1/dist/index.min.js"></script>
+<!--PHOSPHOR_COSMOS_JS-->
 <style>
   @font-face {
     font-family: 'Departure Mono';
@@ -153,6 +153,15 @@
   #zoomctl button { background: #0d1218; color: var(--fg); border: 1px solid var(--line);
     border-radius: 3px; width: 26px; height: 26px; cursor: pointer; font-size: 13px; }
   #zoomctl button:hover { color: #e8f2f6; border-color: var(--cool); }
+  #searchwrap { position: fixed; top: 10px; left: 50%; transform: translateX(-50%);
+    z-index: 9; display: flex; align-items: center; gap: 8px; }
+  #search { background: #0d1218; color: #e8f2f6; border: 1px solid var(--line);
+    border-radius: 3px; padding: 4px 10px; font: inherit; font-size: 12px;
+    width: 260px; letter-spacing: .08em; }
+  #search:focus { outline: none; border-color: var(--cool); }
+  #search::placeholder { color: var(--dim); }
+  #searchHits { color: var(--cool); font-size: 11px; letter-spacing: .12em;
+    white-space: nowrap; }
   /* ambient grid accents: breathing intersection dots + traced grid lines */
   .gdot { position: fixed; width: 5px; height: 5px; margin: -2px 0 0 -2px;
     z-index: 1; pointer-events: none; border-radius: 50%;
@@ -195,6 +204,10 @@
 <div id="title">┌ <b>MEMORY</b> · CONSTELLATION ┐</div>
 <div id="clock">SYS.TIME <b id="tval">--:--:--</b> <span id="status" style="color:var(--cool)"></span></div>
 <div id="legend"></div>
+<div id="searchwrap">
+  <input id="search" type="text" placeholder="SEARCH MEMORIES…" autocomplete="off" spellcheck="false">
+  <span id="searchHits"></span>
+</div>
 <div id="zoomctl">
   <button id="zin">+</button><button id="zout">−</button><button id="zfit">◎</button>
   <button id="fxb" title="HUD effects on/off">FX</button>
@@ -228,7 +241,7 @@
   </div>
 </div>
 <script>
-console.log("view.html build: cosmos v59");
+console.log("view.html build: cosmos v60");
 let fx = localStorage.getItem("phosphor-fx") !== "0" &&
   !matchMedia("(prefers-reduced-motion: reduce)").matches;
 let fxGen = 0;
@@ -605,6 +618,57 @@ function boot(g) {
   document.getElementById("zin").onclick = () => graph.setZoomLevel(graph.getZoomLevel() * 1.4);
   document.getElementById("zout").onclick = () => graph.setZoomLevel(graph.getZoomLevel() / 1.4);
   document.getElementById("zfit").onclick = () => graph.setZoomLevel(1);
+
+  // ---- search -------------------------------------------------------------
+  // Client-side scan over the payload the page already holds, so the live
+  // viewer and the exported report search identically with no server or
+  // index involved.
+  const searchBox = document.getElementById("search");
+  const searchHits = document.getElementById("searchHits");
+  const baseColors = colors.slice();
+  const hay = nodes.map(n => (n.id + " " + (n.summary || "") + " " +
+    (n.body || "") + " " + (n.tags || []).join(" ") + " " +
+    (n.thread || "") + " " + n.type).toLowerCase());
+  let bestIdx = -1;
+  function applySearch() {
+    const q = searchBox.value.trim().toLowerCase();
+    bestIdx = -1;
+    if (!q) {
+      colors.set(baseColors);
+      searchHits.textContent = "";
+    } else {
+      let hits = 0, bestScore = -1;
+      for (let i = 0; i < N; i++) {
+        const hit = hay[i].includes(q);
+        const k = i * 4;
+        colors[k] = baseColors[k] * (hit ? 1 : .14);
+        colors[k + 1] = baseColors[k + 1] * (hit ? 1 : .14);
+        colors[k + 2] = baseColors[k + 2] * (hit ? 1 : .14);
+        if (hit) {
+          hits++;
+          const score = nodes[i].trust + nodes[i].recall * .01;
+          if (score > bestScore) { bestScore = score; bestIdx = i; }
+        }
+      }
+      searchHits.textContent = hits + (hits === 1 ? " HIT" : " HITS");
+    }
+    for (const [i, el] of labelEls)
+      el.style.opacity = q && !hay[i].includes(q) ? ".25" : "1";
+    graph.setPointColors(colors);
+    graph.render();
+  }
+  searchBox.oninput = applySearch;
+  searchBox.onkeydown = e => {
+    if (e.key === "Enter" && bestIdx >= 0) focusNode(nodes[bestIdx].id);
+    else if (e.key === "Escape") { searchBox.value = ""; applySearch(); searchBox.blur(); }
+  };
+  addEventListener("keydown", e => {
+    if (e.key === "/" && document.activeElement !== searchBox) {
+      e.preventDefault();
+      searchBox.focus();
+    }
+  });
+  if (searchBox.value.trim()) applySearch();
 
   // ---- HUD effect replay --------------------------------------------------
   function fxHud() {

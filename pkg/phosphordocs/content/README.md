@@ -6,6 +6,7 @@ Search it with the `phosphor_docs` tool, or open a file below with the
 
 ## Index
 
+- [CLI Reference](phosphor://docs/CLI.md)
 - [Codebase Indexing](phosphor://docs/CODEBASE_INDEXING.md)
 - [Context Window Compaction (Auto-Summarization)](phosphor://docs/COMPACTION.md)
 - [Getting Started & Configuration](phosphor://docs/CONFIGURATION.md)
@@ -31,6 +32,7 @@ Search it with the `phosphor_docs` tool, or open a file below with the
 - [The `/stats` Slash Command](phosphor://docs/commands/STATS.md)
 - [Hooks](phosphor://docs/hooks/README.md)
 - [The Tamper Seal (Memory Integrity)](phosphor://docs/memory/INTEGRITY.md)
+- [Memory Graph Viewer](phosphor://docs/memory/MEMORYGRAPH.md)
 - [Memory System Overview](phosphor://docs/memory/OVERVIEW.md)
 - [Memory Poisoning Defenses](phosphor://docs/memory/POISONING.md)
 - [Logging Configuration](phosphor://docs/observability/LOGGING.md)
