@@ -34,13 +34,20 @@ The viewer runs in the foreground and serves the constellation view and its
 live data endpoint until interrupted by a signal (Ctrl+C). Host and port can
 be overridden with the memory-graph service entry in phosphor.json:
 
-  "services": { "memory-graph": { "host": "127.0.0.1", "port": 8644 } }`,
+  "services": { "memory-graph": { "host": "127.0.0.1", "port": 8644 } }
+
+With --report FILE the current graph is frozen into a single self-contained
+HTML file that opens offline with no server, and the command exits.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cwd, err := ResolveCwd(cmd)
 			if err != nil {
 				return fmt.Errorf("failed to resolve working directory: %w", err)
 			}
 			server.SetMemoryGraphWorkspace(cwd)
+
+			if report, _ := cmd.Flags().GetString("report"); report != "" {
+				return writeMemoryGraphReport(cmd.Context(), report)
+			}
 
 			host, port := memoryGraphHostPort(cwd)
 			addr := fmt.Sprintf("%s:%d", host, port)
@@ -82,7 +89,27 @@ be overridden with the memory-graph service entry in phosphor.json:
 		},
 	}
 
+	cmd.Flags().String("report", "", "Write a self-contained snapshot report HTML file and exit")
+
 	return cmd
+}
+
+// writeMemoryGraphReport freezes the current memory graph into a single
+// self-contained HTML file that opens offline with no server or polling.
+func writeMemoryGraphReport(ctx context.Context, path string) error {
+	dbPath := server.MemoryGraphDBPath()
+	if dbPath == "" {
+		return fmt.Errorf("no memory vault found")
+	}
+	page, err := server.RenderMemoryGraphReport(ctx, dbPath)
+	if err != nil {
+		return fmt.Errorf("failed to render memory graph report: %w", err)
+	}
+	if err := os.WriteFile(path, page, 0o644); err != nil {
+		return fmt.Errorf("failed to write report: %w", err)
+	}
+	fmt.Printf("wrote snapshot report: %s\n", path)
+	return nil
 }
 
 // memoryGraphHostPort resolves the viewer bind address from the memory-graph

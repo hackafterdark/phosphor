@@ -1,15 +1,18 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -104,6 +107,36 @@ func NewMemoryGraphHandler() http.Handler {
 		http.NotFound(w, r)
 	})
 	return mux
+}
+
+// MemoryGraphDBPath returns the path of the discovered memory vault index,
+// or "" when no vault exists.
+func MemoryGraphDBPath() string {
+	return memoryGraphDBPath()
+}
+
+// RenderMemoryGraphReport freezes the current graph into a single
+// self-contained HTML report. The page opens offline with no server and no
+// polling; its snapshot mode reads the embedded payload instead.
+func RenderMemoryGraphReport(ctx context.Context, dbPath string) ([]byte, error) {
+	graph, err := buildMemoryGraph(ctx, dbPath)
+	if err != nil {
+		return nil, err
+	}
+	payload, err := json.Marshal(graph)
+	if err != nil {
+		return nil, err
+	}
+	// Escape </ sequences so a "</script>" inside any entry body cannot
+	// terminate the payload tag early.
+	payload = bytes.ReplaceAll(payload, []byte("</"), []byte(`<\/`))
+	if !strings.Contains(memoryGraphHTML, "</head>") {
+		return nil, fmt.Errorf("viewer page has no </head>; cannot embed snapshot payload")
+	}
+	head := "<script>window.__PHOSPHOR_SNAPSHOT__ = true;\n" +
+		"window.__PHOSPHOR_GRAPH__ = " + string(payload) + ";</script>\n</head>"
+	page := strings.Replace(memoryGraphHTML, "</head>", head, 1)
+	return []byte(page), nil
 }
 
 type graphNode struct {

@@ -39,7 +39,8 @@ checking the usual per-user phosphor data locations.
 - The viewer ships with the phosphor binary: run `phosphor memorygraph` to
   start its own server (default `http://127.0.0.1:8644/view.html`),
   independent of the OpenAI API service. Host and port are configurable via
-  the `memory-graph` service entry in phosphor.json. This Python builder
-  remains for offline/standalone use.
+  the `memory-graph` service entry in phosphor.json. `phosphor memorygraph
+  --report report.html` writes a self-contained snapshot report that opens
+  offline. This Python builder remains for offline/standalone use.
 - Future: add a JS chat app on top of the same web surface so the web GUI
   is an alternative front-end to the TUI.

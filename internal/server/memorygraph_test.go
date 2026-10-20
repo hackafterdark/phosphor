@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -121,4 +122,23 @@ func TestMemoryGraphHandlers(t *testing.T) {
 	HandleMemoryGraphView(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Contains(t, rec.Body.String(), "cosmos")
+}
+func TestRenderMemoryGraphReport(t *testing.T) {
+	t.Parallel()
+	dbPath := seedMemoryDB(t)
+	page, err := RenderMemoryGraphReport(context.Background(), dbPath)
+	require.NoError(t, err)
+	html := string(page)
+	require.Contains(t, html, "window.__PHOSPHOR_SNAPSHOT__ = true;")
+	require.Contains(t, html, "window.__PHOSPHOR_GRAPH__ = ")
+
+	// The embedded payload must parse back into the same graph.
+	_, payload, ok := strings.Cut(html, "window.__PHOSPHOR_GRAPH__ = ")
+	require.True(t, ok)
+	payload, _, ok = strings.Cut(payload, ";</script>")
+	require.True(t, ok)
+	payload = strings.ReplaceAll(payload, `<\/`, `</`)
+	var g memoryGraph
+	require.NoError(t, json.Unmarshal([]byte(payload), &g))
+	require.Len(t, g.Nodes, 7)
 }
