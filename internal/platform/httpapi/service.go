@@ -271,6 +271,17 @@ func (s *Service) Start(ctx context.Context) error {
 		// Register Mermaid rendering endpoint
 		s.echoSrv.GET("/service/mermaid/render", server.HandleMermaidRender)
 		server.SetMermaidServiceEnabled(true, openaiCfg.port)
+
+		// Register memory graph viewer endpoints. The viewer page and the
+		// graph data live side by side so the page's relative graph.json
+		// polling resolves to the live endpoint.
+		s.echoSrv.GET("/service/memorygraph/view.html", server.HandleMemoryGraphView)
+		s.echoSrv.GET("/service/memorygraph/graph.json", server.HandleMemoryGraphData)
+		if len(wsList) > 0 {
+			server.SetMemoryGraphWorkspace(wsList[0].Path)
+		} else if s.workspace != "" {
+			server.SetMemoryGraphWorkspace(s.workspace)
+		}
 		// Create a DB connection and set it on the server for mermaid diagram lookups.
 		dataDir := ""
 		if s.cfgStore != nil {

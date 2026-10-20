@@ -36,6 +36,10 @@ checking the usual per-user phosphor data locations.
 - The viewer renders with cosmos.gl 3.5.1 (GPU force graph) via CDN; only
   thread/tag hub nodes carry text labels.
 - `graph.json` and `report*.html` hold raw memory entries and are git-ignored.
-- Plan of record: replace this Python builder with serving from the phosphor
-  Go binary itself, plus a JS chat app so the web GUI is an alternative
-  front-end to the TUI.
+- The embedded viewer now ships with the phosphor binary: with the
+  `openai-api` service enabled, open
+  `http://127.0.0.1:8643/service/memorygraph/view.html` (served by
+  `internal/server/memorygraph.go` on the same port as the Mermaid
+  renderer). This Python builder remains for offline/standalone use.
+- Future: add a JS chat app on top of the same web surface so the web GUI
+  is an alternative front-end to the TUI.
