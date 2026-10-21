@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"charm.land/fantasy"
+	"github.com/hackafterdark/phosphor/pkg/egress"
 	"github.com/hackafterdark/phosphor/pkg/secrets"
 	"github.com/hackafterdark/phosphor/pkg/security/urlguard"
 	"github.com/stretchr/testify/require"
@@ -67,7 +68,7 @@ func TestFetchTool_AllowsCleanQuery(t *testing.T) {
 func TestWebFetchTool_RefusesRegisteredSecretInQuery(t *testing.T) {
 	allowList = make(map[string]bool)
 
-	tool := NewWebFetchTool(t.TempDir(), nil, nil, allowAllHosts)
+	tool := NewWebFetchTool(t.TempDir(), nil, allowAllHosts)
 	input, err := json.Marshal(WebFetchParams{URL: "https://example.com/dl?sig=" + guardToken})
 	require.NoError(t, err)
 
@@ -133,4 +134,67 @@ func TestDownloadTool_RefusesRegisteredSecretInQuery(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, resp.IsError, "download must abort, got: %s", resp.Content)
 	require.Contains(t, resp.Content, urlguard.ErrMessage)
+}
+// TestSecuredHTTPClientFailsClosedOnUnknownHost pins finding #6: a client
+// built with no prompt handler must refuse raw-IP and unknown-hostname
+// destinations instead of dialing them, so no network tool can reach the
+// wire through an unsecured client.
+func TestSecuredHTTPClientFailsClosedOnUnknownHost(t *testing.T) {
+	t.Parallel()
+
+	client := NewSecuredHTTPClient(nil, nil)
+
+	t.Run("unknown hostname is blocked", func(t *testing.T) {
+		_, err := client.Get("https://trusted.example.com/")
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "no prompt handler configured")
+	})
+
+	t.Run("public raw IP is blocked", func(t *testing.T) {
+		_, err := client.Get("http://8.8.8.8/")
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "raw IP")
+	})
+
+	t.Run("bracketed IPv6 literal is blocked", func(t *testing.T) {
+		_, err := client.Get("http://[::2]:6379/")
+		require.Error(t, err)
+	})
+}
+
+// TestFetchDownloadToolsRouteThroughSecuredClient verifies the fetch and
+// download tools refuse an unapproved host even when the tool permission
+// check passed — the permission gate and the transport trust gate are
+// independent.
+func TestFetchDownloadToolsRouteThroughSecuredClient(t *testing.T) {
+	perm := &mockPermissionService{}
+	workingDir := t.TempDir()
+
+	fetchTool := NewFetchTool(perm, workingDir, nil)
+	input, err := json.Marshal(FetchParams{URL: "https://trusted.example.com/x", Format: "text"})
+	require.NoError(t, err)
+	_, err = fetchTool.Run(guardSessionCtx(), fantasy.ToolCall{
+		ID: "fetch-trust", Name: FetchToolName, Input: string(input),
+	})
+	require.Error(t, err, "fetch must fail closed on an unapproved host")
+	require.Contains(t, err.Error(), "no prompt handler configured")
+
+	dlTool := NewDownloadTool(perm, workingDir, nil)
+	dlInput, err := json.Marshal(DownloadParams{URL: "https://trusted.example.com/x", FilePath: "x.bin"})
+	require.NoError(t, err)
+	_, err = dlTool.Run(guardSessionCtx(), fantasy.ToolCall{
+		ID: "dl-trust", Name: DownloadToolName, Input: string(dlInput),
+	})
+	require.Error(t, err, "download must fail closed on an unapproved host")
+	require.Contains(t, err.Error(), "no prompt handler configured")
+}
+
+// TestWrapClientRecognizesSecuredClient pins that egress.WrapClient does not
+// double-wrap the secured client handed to the tools by the coordinator.
+func TestWrapClientRecognizesSecuredClient(t *testing.T) {
+	t.Parallel()
+
+	client := NewSecuredHTTPClient(nil, nil)
+	wrapped := egress.WrapClient(client)
+	require.Same(t, client, wrapped, "secured client must pass through WrapClient unchanged")
 }

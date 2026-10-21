@@ -55,10 +55,8 @@ func downloadDescription() string {
 
 func NewDownloadTool(permissions permission.Service, workingDir string, client *http.Client) fantasy.AgentTool {
 	if client == nil {
-		client = &http.Client{
-			Timeout:   5 * time.Minute,
-			Transport: egress.NewHTTPTransport(),
-		}
+		client = NewSecuredHTTPClient(nil, nil)
+		client.Timeout = 5 * time.Minute
 	} else {
 		client = egress.WrapClient(client)
 	}

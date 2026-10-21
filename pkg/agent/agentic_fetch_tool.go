@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"time"
 
 	"charm.land/fantasy"
 
@@ -16,6 +15,7 @@ import (
 	"github.com/hackafterdark/phosphor/pkg/egress"
 	"github.com/hackafterdark/phosphor/pkg/permission"
 	"github.com/hackafterdark/phosphor/pkg/security/externalcontent"
+	"github.com/hackafterdark/phosphor/pkg/security/urlguard"
 )
 
 //go:embed templates/agentic_fetch.md
@@ -54,10 +54,7 @@ var agenticFetchPromptTmpl []byte
 
 func (c *coordinator) agenticFetchTool(_ context.Context, client *http.Client) (fantasy.AgentTool, error) {
 	if client == nil {
-		client = &http.Client{
-			Timeout:   30 * time.Second,
-			Transport: egress.NewHTTPTransport(),
-		}
+		client = tools.NewSecuredHTTPClient(c.cfg.Config(), c.tuiAllowPrompt)
 	} else {
 		client = egress.WrapClient(client)
 	}
@@ -107,7 +104,13 @@ func (c *coordinator) agenticFetchTool(_ context.Context, client *http.Client) (
 			var fullPrompt string
 
 			if params.URL != "" {
-				// URL mode: fetch the URL content first.
+				// URL mode: fetch the URL content first. The side-channel
+				// exfiltration defense and the trust hierarchy are enforced
+				// here because this path dials directly, not through the
+				// web_fetch sub-tool.
+				if err := urlguard.Check(params.URL); err != nil {
+					return fantasy.NewTextErrorResponse(err.Error()), nil
+				}
 				content, err := tools.FetchURLAndConvert(ctx, client, params.URL)
 				if err != nil {
 					return fantasy.NewTextErrorResponse(fmt.Sprintf("Failed to fetch URL: %s", err)), nil
@@ -172,7 +175,7 @@ func (c *coordinator) agenticFetchTool(_ context.Context, client *http.Client) (
 				return fantasy.ToolResponse{}, errors.New("small model provider not configured")
 			}
 
-			webFetchTool := tools.NewWebFetchTool(tmpDir, client, c.cfg.Config(), c.tuiAllowPrompt)
+			webFetchTool := tools.NewWebFetchTool(tmpDir, c.cfg.Config(), c.tuiAllowPrompt)
 			webSearchTool := tools.NewWebSearchTool(client)
 			fetchTools := []fantasy.AgentTool{
 				webFetchTool,

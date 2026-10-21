@@ -1061,6 +1061,12 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, isSubA
 		allTools = append(allTools, agenticFetchTool)
 	}
 
+	// One secured client for every network tool (fetch, download, and via
+	// agentic_fetch the web_fetch/web_search pair). The transport enforces
+	// the IP-block policy, the resolved-address dial gate, and the layered
+	// host trust hierarchy with the TUI prompt fallback.
+	networkClient := tools.NewSecuredHTTPClient(c.cfg.Config(), c.tuiAllowPrompt)
+
 	// Get the model name for the agent
 	modelID := ""
 	if modelCfg, ok := c.cfg.Config().Models[agent.Model]; ok {
@@ -1105,10 +1111,10 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, isSubA
 		allTools,
 		tools.NewJobOutputTool(),
 		tools.NewJobKillTool(),
-		tools.NewDownloadTool(c.permissions, c.cfg.WorkingDir(), nil),
+		tools.NewDownloadTool(c.permissions, c.cfg.WorkingDir(), networkClient),
 		tools.NewEditTool(c.lspManager, c.permissions, c.history, c.filetracker, c.cfg.WorkingDir()),
 		tools.NewMultiEditTool(c.lspManager, c.permissions, c.history, c.filetracker, c.cfg.WorkingDir()),
-		tools.NewFetchTool(c.permissions, c.cfg.WorkingDir(), nil),
+		tools.NewFetchTool(c.permissions, c.cfg.WorkingDir(), networkClient),
 		tools.NewGlobTool(c.cfg.WorkingDir()),
 		tools.NewGrepTool(c.cfg.WorkingDir(), c.cfg.Config().Tools.Grep),
 		tools.NewScanSecretsTool(c.cfg.WorkingDir()),

@@ -50,10 +50,7 @@ func fetchDescription() string {
 
 func NewFetchTool(permissions permission.Service, workingDir string, client *http.Client) fantasy.AgentTool {
 	if client == nil {
-		client = &http.Client{
-			Timeout:   30 * time.Second,
-			Transport: egress.NewHTTPTransport(),
-		}
+		client = NewSecuredHTTPClient(nil, nil)
 	} else {
 		client = egress.WrapClient(client)
 	}
