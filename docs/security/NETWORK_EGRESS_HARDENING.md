@@ -31,7 +31,7 @@ Phosphor's web-fetch and web-search tools now operate under an **Adaptive Trust*
 
 ## Components
 
-### `internal/agent/tools/web_fetch.go`
+### `pkg/agent/tools/web_fetch.go`
 
 - `securityTransport` — custom `http.RoundTripper` that intercepts each request
 - `allowList` — in-memory session allow cache (cleared on session restart)
@@ -42,7 +42,7 @@ Phosphor's web-fetch and web-search tools now operate under an **Adaptive Trust*
 - `FetchURLAndConvertWithTrust` — wraps `FetchURLAndConvert` with the trust check
 - `NewWebFetchTool` — constructs tool with `allowFn` callback (TUI permission prompt)
 
-### `internal/agent/tools/web_search.go`
+### `pkg/agent/tools/web_search.go`
 
 - `NewWebSearchTool` — same security contract as `web_fetch`; panics if `client` is nil
 - `sanitizeSearchResults` — regex scrubber redacts:
@@ -51,7 +51,7 @@ Phosphor's web-fetch and web-search tools now operate under an **Adaptive Trust*
 - `randomDelay` — adds 100–150ms random delay per round-trip to stay under DDG's request-budget threshold
 - OTel span tagged with `attribute.Int("gen_ai.tool.web_search.results", len(results))`
 
-### `internal/agent/coordinator.go`
+### `pkg/agent/coordinator.go`
 
 - `tuiAllowPrompt` field added to `coordinator` struct
 - Wired in `NewCoordinator` via `c.permissions.Request` with synthetic tool-call ID (`tui:allow:<host>`)
@@ -101,8 +101,8 @@ Phosphor's `web_fetch` and `web_search` tools consult the user's `phosphor.json`
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `IPAllowList` | `[]string` | `[]` | CIDR or literal IPs allowed to be reached |
-| `AllowRawIPs` | `bool` | `false` | Opt-in for raw IP access (default: FQDN required) |
+| `IPAllowList` | `[]string` | `[]` | CIDR or literal IPs allowed to be reached (consulted only when `allow_raw_ips` is true) |
+| `AllowRawIPs` | `bool` | `false` | Gate for raw IP access; IPs are allowed only if they also match `IPAllowList` (default: FQDN required) |
 
 ### Example `phosphor.json`
 
@@ -126,9 +126,8 @@ Phosphor's `web_fetch` and `web_search` tools consult the user's `phosphor.json`
 When `securityTransport` intercepts a request to a raw IP:
 
 1. **127.0.0.1 / ::1** (localhost) → always allowed, no config needed
-2. **`IPAllowList`** → literal match or CIDR match via `matchCIDR` → allowed
-3. **`AllowRawIPs = true`** → allowed (if no CIDR match)
-4. **No match** → TUI prompt shows "WebFetch is requesting access to [host]. Allow this domain?"
+2. **`AllowRawIPs = true` + `IPAllowList`** → literal match or CIDR match via `matchCIDR` → allowed
+3. **Anything else** → the request fails closed with an error; raw IPs never reach the TUI prompt (prompts apply to hostnames only)
 
 ## Bash Network Egress Policy
 
@@ -208,10 +207,10 @@ way they would for a browser.
 
 ## Files Modified
 
-- `internal/agent/tools/web_fetch.go` — added security transport, allow lists, TUI prompt wiring
-- `internal/agent/tools/web_search.go` — added sanitization, OTel tagging, random delay, nil client panic
-- `internal/agent/coordinator.go` — added `tuiAllowPrompt` field and wiring
-- `internal/agent/agentic_fetch_tool.go` — updated call site to pass `c.tuiAllowPrompt`
+- `pkg/agent/tools/web_fetch.go` — added security transport, allow lists, TUI prompt wiring
+- `pkg/agent/tools/web_search.go` — added sanitization, OTel tagging, random delay, nil client panic
+- `pkg/agent/coordinator.go` — added `tuiAllowPrompt` field and wiring
+- `pkg/agent/agentic_fetch_tool.go` — updated call site to pass `c.tuiAllowPrompt`
 
 ## Notes
 
