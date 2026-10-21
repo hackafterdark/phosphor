@@ -87,6 +87,9 @@ func NewWriteTool(
 			if resp, blocked := vaultWriteGuard(workingDir, filePath); blocked {
 				return resp, nil
 			}
+			if err := checkSecretsAt(params.Content, filePath); err != nil {
+				return fantasy.NewTextErrorResponse(err.Error()), nil
+			}
 
 			fileInfo, err := os.Stat(filePath)
 			if err == nil {
