@@ -218,20 +218,132 @@ func (s *Shell) SetBlockFuncs(blockFuncs []BlockFunc) {
 	s.blockFuncs = blockFuncs
 }
 
-// CommandsBlocker creates a BlockFunc that blocks exact command matches
+// wrapperCommands exec their wrapped program from argv instead of being the
+// program themselves; the deny list must see through them.
+var wrapperCommands = map[string]struct{}{
+	"env": {}, "exec": {}, "command": {}, "time": {}, "timeout": {},
+	"nice": {}, "stdbuf": {}, "nohup": {}, "xargs": {}, "busybox": {},
+	"sudo": {}, "doas": {}, "pkexec": {},
+}
+
+// execPredicates are find predicates whose next argument is a program to exec.
+var execPredicates = map[string]struct{}{
+	"-exec": {}, "-execdir": {}, "-ok": {}, "-okdir": {},
+}
+
+// CommandsBlocker creates a BlockFunc that blocks commands matched against
+// the deny list after normalizing argv[0] (basename, case, .exe suffix) and
+// seeing through wrapper commands (env, xargs, timeout, busybox, ...) and
+// find's -exec/-ok predicates.
 func CommandsBlocker(cmds []string) BlockFunc {
 	bannedSet := make(map[string]struct{})
 	for _, cmd := range cmds {
-		bannedSet[cmd] = struct{}{}
+		bannedSet[normalizeBlockCommand(cmd)] = struct{}{}
 	}
 
 	return func(args []string) bool {
 		if len(args) == 0 {
 			return false
 		}
-		_, ok := bannedSet[args[0]]
-		return ok
+		for _, candidate := range executableCandidates(args) {
+			if _, ok := bannedSet[candidate]; ok {
+				return true
+			}
+		}
+		return false
 	}
+}
+
+// executableCandidates returns every program name a parsed argv may exec:
+// the head command itself, the program behind wrapper commands, the
+// unversioned form of a versioned interpreter (python3.11 → python), and any
+// program behind find's -exec/-ok predicates.
+func executableCandidates(args []string) []string {
+	var out []string
+	rest := args
+	for depth := 0; depth < 8 && len(rest) > 0; depth++ {
+		head := normalizeBlockCommand(rest[0])
+		out = append(out, head)
+		if base := versionedBaseName(head); base != "" {
+			out = append(out, base)
+		}
+		if _, isWrapper := wrapperCommands[head]; !isWrapper {
+			break
+		}
+		rest = wrappedProgram(rest[1:])
+	}
+	for i, arg := range args {
+		if _, ok := execPredicates[strings.ToLower(arg)]; ok && i+1 < len(args) {
+			c := normalizeBlockCommand(args[i+1])
+			out = append(out, c)
+			if base := versionedBaseName(c); base != "" {
+				out = append(out, base)
+			}
+		}
+	}
+	return out
+}
+
+// wrappedProgram skips wrapper flags, variable assignments, and timing or
+// priority values to find the wrapped program in argv.
+func wrappedProgram(args []string) []string {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "":
+			continue
+		case strings.HasPrefix(arg, "-"):
+			continue
+		case strings.Contains(arg, "="):
+			continue
+		case isTimingOrPriorityValue(arg):
+			continue
+		}
+		return args[i:]
+	}
+	return nil
+}
+
+// isTimingOrPriorityValue reports whether arg is a timeout duration
+// ("10", "10s", "1.5m") or a nice adjustment ("+5", "-n" values).
+func isTimingOrPriorityValue(arg string) bool {
+	s := strings.TrimPrefix(strings.TrimPrefix(arg, "+"), "-")
+	if s == "" {
+		return false
+	}
+	i := 0
+	for i < len(s) && (s[i] >= '0' && s[i] <= '9' || s[i] == '.') {
+		i++
+	}
+	if i == 0 {
+		return false
+	}
+	return i == len(s) || (i+1 == len(s) && (s[i] == 's' || s[i] == 'm' || s[i] == 'h' || s[i] == 'd'))
+}
+
+// versionedBaseName returns the unversioned name of a versioned binary
+// ("python3.11" → "python", "node20" → "node"), or "" when the argument is
+// not of that shape.
+func versionedBaseName(cmd string) string {
+	i := strings.IndexAny(cmd, "0123456789")
+	if i <= 1 {
+		return ""
+	}
+	for j := i; j < len(cmd); j++ {
+		if cmd[j] != '.' && (cmd[j] < '0' || cmd[j] > '9') {
+			return ""
+		}
+	}
+	return cmd[:i]
+}
+
+func normalizeBlockCommand(cmd string) string {
+	cmd = strings.ToLower(strings.TrimSpace(cmd))
+	cmd = strings.Replace(cmd, "\\", "/", -1)
+	if idx := strings.LastIndexByte(cmd, '/'); idx >= 0 {
+		cmd = cmd[idx+1:]
+	}
+	return strings.TrimSuffix(cmd, ".exe")
 }
 
 // ArgumentsBlocker creates a BlockFunc that blocks specific subcommand

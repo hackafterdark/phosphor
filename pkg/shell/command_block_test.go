@@ -293,10 +293,10 @@ func TestCommandsBlocker(t *testing.T) {
 			shouldBlock: false,
 		},
 		{
-			name:        "case sensitive matching",
+			name:        "case insensitive matching",
 			banned:      []string{"curl"},
 			input:       []string{"CURL", "https://example.com"},
-			shouldBlock: false,
+			shouldBlock: true,
 		},
 	}
 
@@ -454,5 +454,63 @@ func TestInlineExecutionWarnFunc_NeverBlocks(t *testing.T) {
 			require.False(t, blocker(tt.args),
 				"InlineExecutionWarnFunc should never block, got block=true for %v", tt.args)
 		})
+	}
+}
+func TestCommandsBlockerWrapperBypass(t *testing.T) {
+	t.Parallel()
+
+	blocker := CommandsBlocker([]string{"curl", "wget", "python"})
+
+	cases := []struct {
+		name        string
+		args        []string
+		shouldBlock bool
+	}{
+		{"exact match", []string{"curl", "https://example.com"}, true},
+		{"env wrapper", []string{"env", "curl", "https://example.com"}, true},
+		{"env with assignment", []string{"env", "FOO=bar", "curl", "-s", "x"}, true},
+		{"env -i wrapper", []string{"env", "-i", "wget", "http://x"}, true},
+		{"xargs wrapper", []string{"xargs", "curl", "-s"}, true},
+		{"xargs with flags", []string{"xargs", "-n1", "wget"}, true},
+		{"timeout wrapper", []string{"timeout", "10", "curl", "x"}, true},
+		{"timeout with kill flag", []string{"timeout", "-k", "5s", "wget", "x"}, true},
+		{"busybox wrapper", []string{"busybox", "wget", "http://x"}, true},
+		{"nice wrapper", []string{"nice", "-n", "10", "curl", "x"}, true},
+		{"nested wrappers", []string{"env", "timeout", "5", "curl", "x"}, true},
+		{"exe suffix", []string{"curl.exe", "x"}, true},
+		{"absolute path", []string{"/usr/bin/curl", "x"}, true},
+		{"windows path", []string{`C:\tools\curl.exe`, "x"}, true},
+		{"uppercase", []string{"CURL", "x"}, true},
+		{"find exec", []string{"find", ".", "-exec", "curl", "{}", ";"}, true},
+		{"find okdir", []string{"find", ".", "-okdir", "wget", "{}", ";"}, true},
+		{"versioned interpreter", []string{"python3.11", "-c", "import urllib"}, true},
+		{"versioned node", []string{"node20", "x.js"}, false},
+		{"unrelated command", []string{"echo", "curl"}, false},
+		{"curl as argument", []string{"echo", "x", "curl"}, false},
+		{"empty argv", nil, false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tc.shouldBlock, blocker(tc.args))
+		})
+	}
+}
+
+func TestCommandsBlockerEndToEnd(t *testing.T) {
+	tmpDir := t.TempDir()
+	s := NewShell(&Options{
+		WorkingDir: tmpDir,
+		BlockFuncs: []BlockFunc{CommandsBlocker([]string{"curl"})},
+	})
+
+	_, _, err := s.Exec(t.Context(), "env curl https://example.com")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "not allowed for security reasons")
+
+	_, _, err = s.Exec(t.Context(), "echo curl")
+	if err != nil && strings.Contains(err.Error(), "not allowed for security reasons") {
+		t.Errorf("echo must not be blocked: %v", err)
 	}
 }
