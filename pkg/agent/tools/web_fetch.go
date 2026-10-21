@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -35,8 +36,34 @@ var webFetchDescriptionTpl = template.Must(
 )
 
 // allowList is the in-memory cache of domains that have been explicitly approved.
-// Session-local: cleared when the user's session restarts.
-var allowList = map[string]bool{}
+// Session-local: cleared when the user's session restarts. Guarded by
+// allowListMu — web_fetch runs concurrently in parallel tool batches.
+var (
+	allowListMu sync.RWMutex
+	allowList   = map[string]bool{}
+)
+
+// hostInAllowList reports whether host was approved earlier in this session.
+func hostInAllowList(host string) bool {
+	allowListMu.RLock()
+	defer allowListMu.RUnlock()
+	return allowList[host]
+}
+
+// markHostAllowed records host as approved for the rest of the session.
+func markHostAllowed(host string) {
+	allowListMu.Lock()
+	defer allowListMu.Unlock()
+	allowList[host] = true
+}
+
+// resetAllowList clears the session allow list. Used by tests that need a
+// known-clean trust state.
+func resetAllowList() {
+	allowListMu.Lock()
+	defer allowListMu.Unlock()
+	allowList = map[string]bool{}
+}
 
 // securityTransport is a custom http.RoundTripper that intercepts each outgoing
 // request, validates the destination, and applies a layered trust model before
@@ -138,7 +165,7 @@ func (t *securityTransport) RoundTrip(req *http.Request) (*http.Response, error)
 			return nil, fmt.Errorf("web_fetch request to %s is blocked by user policy", lookupHost)
 		}
 		// User approved — write to the in-memory allow list so we don't re-prompt.
-		allowList[lookupHost] = true
+		markHostAllowed(lookupHost)
 	}
 
 	// Tag with allow info before the actual network call.
@@ -162,7 +189,7 @@ func recordAllowEvent(span trace.Span, source string) {
 // allow list, and global-level user allow list. Returns true if any source allows it.
 func (t *securityTransport) isAllowed(host string, span trace.Span) bool {
 	// 1. In-memory allow list (session-level, populated by user prompt).
-	if allowList[host] {
+	if hostInAllowList(host) {
 		recordAllowEvent(span, "session_allow_list")
 		return true
 	}
@@ -336,21 +363,14 @@ var webFetchDeniedCIDRs = []string{
 	"FE80::/10",      // IPv6 link-local
 }
 
-// envProxyConfigured reports whether the environment names an HTTP(S) proxy.
-// When a proxy is set, the address web_fetch dials is the proxy's, not the
-// target's, and private proxy infrastructure is the operator's own network
-// decision; the egress broker tier remains the strict path for that case.
-func envProxyConfigured() bool {
-	for _, k := range []string{"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"} {
-		if v := os.Getenv(k); v != "" {
-			return true
-		}
-		if v := os.Getenv(strings.ToLower(k)); v != "" {
-			return true
-		}
-	}
-	return false
-}
+// proxyForRequest reports the proxy decision for the request the guarded
+// dialer is about to dial. The dial target of a proxied request is the
+// proxy's address, not the target's, and private proxy infrastructure is
+// the operator's own network decision; the egress broker tier remains the
+// strict path for that case. The decision must be per-request: a global
+// "any proxy env var is set" check would also exempt direct connections
+// selected by NO_PROXY, silently disarming the DNS-rebinding defense.
+type proxyForRequest func(*http.Request) (*url.URL, error)
 
 // dialAddressAllowed validates the *resolved* socket address of a web_fetch
 // dial. The trust hierarchy judges hostnames as strings; this gate judges the
@@ -379,6 +399,12 @@ func dialAddressAllowed(address string, cfg *config.Config) bool {
 			return true
 		}
 		for _, cidr := range cfg.Tools.WebFetch.IPAllowList {
+			if lit := net.ParseIP(cidr); lit != nil {
+				if lit.Equal(ip) {
+					return true
+				}
+				continue
+			}
 			if matchCIDR(cidr, ip.String()) {
 				return true
 			}
@@ -396,11 +422,17 @@ func dialAddressAllowed(address string, cfg *config.Config) bool {
 // socket address of every web_fetch connection. ControlContext runs after the
 // kernel has dialed but before any data flows, so the address judged is the
 // address actually used — there is no re-resolution race to exploit.
-func guardedDialer(cfg *config.Config) *net.Dialer {
+// proxyCheck reports the effective proxy decision for the current request;
+// when a request is routed through a proxy the guard exempts the dial
+// (the proxy, not the target, is the socket address).
+func guardedDialer(cfg *config.Config, proxyCheck proxyForRequest) *net.Dialer {
 	return &net.Dialer{
-		ControlContext: func(_ context.Context, _, address string, _ syscall.RawConn) error {
-			if envProxyConfigured() {
-				return nil
+		ControlContext: func(ctx context.Context, _, address string, _ syscall.RawConn) error {
+			if proxyCheck != nil {
+				proxy, err := proxyCheck(ctxproxyReq(ctx))
+				if err == nil && proxy != nil {
+					return nil
+				}
 			}
 			if !dialAddressAllowed(address, cfg) {
 				host, _, _ := net.SplitHostPort(address)
@@ -415,12 +447,54 @@ func guardedDialer(cfg *config.Config) *net.Dialer {
 	}
 }
 
+// ctxproxyReq returns the request that triggered the dial so the transport's
+// Proxy function can decide. The ControlContext callback carries no request,
+// so [proxyStash] places it in the context one layer above the dialer.
+func ctxproxyReq(ctx context.Context) *http.Request {
+	if req, ok := ctx.Value(ctxProxyRequest{}).(*http.Request); ok && req != nil {
+		return req
+	}
+	// No request available: treat the connection as direct.
+	return &http.Request{URL: &url.URL{Scheme: "https", Host: "direct.invalid"}}
+}
+
+type ctxProxyRequest struct{}
+
+// proxyStash carries the current request into the dial context so the
+// guarded dialer's ControlContext can consult the transport's per-request
+// proxy decision. http.Transport dials with the request's context, so
+// stashing here is enough for the guard to see it.
+type proxyStash struct{ base http.RoundTripper }
+
+func (s proxyStash) RoundTrip(r *http.Request) (*http.Response, error) {
+	ctx := context.WithValue(r.Context(), ctxProxyRequest{}, r)
+	return s.base.RoundTrip(r.WithContext(ctx))
+}
+
 // NewWebFetchTool constructs a web fetch tool that uses the security transport
 // and invokes the TUI permission prompt when a host is not yet approved.
 func NewWebFetchTool(workingDir string, client *http.Client, cfg *config.Config, allowFn func(ctx context.Context, host string) (bool, error)) fantasy.AgentTool {
 	baseTransport := egress.NewHTTPTransport()
-	baseTransport.DialContext = guardedDialer(cfg).DialContext
-	secure := newSecurityTransport(egress.Transport(baseTransport), allowFn, cfg)
+	guarded := guardedDialer(cfg, baseTransport.Proxy)
+	baseTransport.DialContext = guarded.DialContext
+	// The guard must survive both egress paths: the inactive path dials
+	// through baseTransport (guarded above), the active path replaces it
+	// with the broker's direct transport, which needs the guard composed
+	// in explicitly.
+	guard := func(_ context.Context, _, address string) error {
+		if !dialAddressAllowed(address, cfg) {
+			host, _, _ := net.SplitHostPort(address)
+			return fmt.Errorf(
+				"web_fetch request to %s blocked (resolved address is in a denied range; DNS rebinding defense)",
+				host,
+			)
+		}
+		return nil
+	}
+	secure := newSecurityTransport(
+		egress.Transport(proxyStash{baseTransport}, egress.WithDialGuard(guard)),
+		allowFn, cfg,
+	)
 	secureClient := &http.Client{
 		Timeout:   30 * time.Second,
 		Transport: secure,
@@ -507,7 +581,7 @@ func FetchURLAndConvertWithTrust(ctx context.Context, client *http.Client, rawUR
 	}
 
 	host := stripPort(parsed.Host)
-	if !allowList[host] && !isAllowedByGlobal(host) && !isAllowedByWorkspace(host) {
+	if !hostInAllowList(host) && !isAllowedByGlobal(host) && !isAllowedByWorkspace(host) {
 		allowed, err := allowFn(ctx, host)
 		if err != nil {
 			return "", fmt.Errorf("host %s not approved by user prompt: %w", host, err)
@@ -515,7 +589,7 @@ func FetchURLAndConvertWithTrust(ctx context.Context, client *http.Client, rawUR
 		if !allowed {
 			return "", fmt.Errorf("host %s blocked by user policy", host)
 		}
-		allowList[host] = true
+		markHostAllowed(host)
 	}
 
 	span.SetAttributes(

@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"syscall"
 	"time"
 )
 
@@ -58,32 +59,72 @@ func envProxyWhenBrokerInactive(r *http.Request) (*url.URL, error) {
 	return http.ProxyFromEnvironment(r)
 }
 
+// TransportOption customizes the RoundTripper returned by [Transport].
+type TransportOption func(*RoundTripperPolicy)
+
+// WithDialGuard composes guard into the resolved-address checks of the direct
+// transport used while the broker is active. Without it, wrapping a guarded
+// base transport would silently drop the caller's dial gate on the active
+// path, because the active path replaces the base transport.
+func WithDialGuard(guard func(ctx context.Context, network, address string) error) TransportOption {
+	return func(rt *RoundTripperPolicy) {
+		rt.dialGuard = guard
+	}
+}
+
 // Transport wraps base with the broker-aware policy and sentinel resolver. A nil
 // base uses a broker-aware clone of http.DefaultTransport. The wrapper consults
 // the frozen broker state on each request, so a client constructed before the
 // coordinator arms the tier still honors it after [Start].
-func Transport(base http.RoundTripper) http.RoundTripper {
+func Transport(base http.RoundTripper, opts ...TransportOption) http.RoundTripper {
 	if base == nil {
 		base = NewHTTPTransport()
 	}
-	return &RoundTripperPolicy{
+	rt := &RoundTripperPolicy{
 		store:      Store(),
 		inner:      base,
 		direct:     newDirectTransport(),
 		policyFunc: brokerPolicy,
 	}
+	for _, opt := range opts {
+		opt(rt)
+	}
+	if rt.dialGuard != nil {
+		if tr, ok := rt.direct.(*http.Transport); ok {
+			tr.DialContext = dialPolicyAwareGuarded(rt.dialGuard)
+		}
+	}
+	return rt
 }
 
 func dialPolicyAware(ctx context.Context, network, address string) (net.Conn, error) {
-	policy, active, failed := brokerPolicy()
-	if failed {
-		return nil, ErrBrokerFailedToStart
+	return dialPolicyAwareGuarded(nil)(ctx, network, address)
+}
+
+func dialPolicyAwareGuarded(guard func(ctx context.Context, network, address string) error) func(context.Context, string, string) (net.Conn, error) {
+	return func(ctx context.Context, network, address string) (net.Conn, error) {
+		policy, active, failed := brokerPolicy()
+		if failed {
+			return nil, ErrBrokerFailedToStart
+		}
+		dialer := &net.Dialer{KeepAlive: DefaultKeepAlive}
+		if active {
+			dialer.ControlContext = func(ctx context.Context, network, address string, c syscall.RawConn) error {
+				if err := policy.ControlContext(ctx, network, address, c); err != nil {
+					return err
+				}
+				if guard != nil {
+					return guard(ctx, network, address)
+				}
+				return nil
+			}
+		} else if guard != nil {
+			dialer.ControlContext = func(ctx context.Context, network, address string, _ syscall.RawConn) error {
+				return guard(ctx, network, address)
+			}
+		}
+		return dialer.DialContext(ctx, network, address)
 	}
-	dialer := policy.Dialer()
-	if !active {
-		dialer = &net.Dialer{KeepAlive: DefaultKeepAlive}
-	}
-	return dialer.DialContext(ctx, network, address)
 }
 
 // RoundTripperPolicy is an [http.RoundTripper] that enforces the net-policy and
@@ -95,6 +136,7 @@ type RoundTripperPolicy struct {
 	store      TokenResolver
 	inner      http.RoundTripper
 	direct     http.RoundTripper
+	dialGuard  func(ctx context.Context, network, address string) error
 }
 
 // NewRoundTripper builds a broker transport over inner (nil means a broker-aware

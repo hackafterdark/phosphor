@@ -17,7 +17,7 @@ import (
 func TestWebFetchHardeningIPBlock(t *testing.T) {
 	t.Parallel()
 
-	allowList = make(map[string]bool)
+	resetAllowList()
 	client := &http.Client{Timeout: time.Second}
 
 	tr := newSecurityTransport(http.DefaultTransport, func(ctx context.Context, host string) (bool, error) {
@@ -46,7 +46,7 @@ func TestWebFetchHardeningIPBlock(t *testing.T) {
 func TestWebFetchHardeningCIDRAllow(t *testing.T) {
 	t.Parallel()
 
-	allowList = make(map[string]bool)
+	resetAllowList()
 	cfg := &config.Config{
 		Tools: config.Tools{
 			WebFetch: config.ToolWebFetch{
@@ -88,7 +88,7 @@ func TestWebFetchHardeningLocalhostAlwaysAllowed(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	allowList = make(map[string]bool)
+	resetAllowList()
 	tr := newSecurityTransport(http.DefaultTransport, func(ctx context.Context, host string) (bool, error) {
 		t.Errorf("allowFn should not be called for localhost")
 		return false, nil
@@ -119,7 +119,7 @@ func TestWebFetchHardeningLocalhostAlwaysAllowed(t *testing.T) {
 func TestWebFetchHardeningUserPromptVerified(t *testing.T) {
 	t.Parallel()
 
-	allowList = make(map[string]bool)
+	resetAllowList()
 	called := false
 	tr := newSecurityTransport(http.DefaultTransport, func(ctx context.Context, host string) (bool, error) {
 		called = true
@@ -152,7 +152,7 @@ func TestWebFetchHardeningUserPromptVerified(t *testing.T) {
 func TestWebFetchHardeningUserPromptDenyVerified(t *testing.T) {
 	t.Parallel()
 
-	allowList = make(map[string]bool)
+	resetAllowList()
 	called := false
 	tr := newSecurityTransport(http.DefaultTransport, func(ctx context.Context, host string) (bool, error) {
 		called = true
@@ -184,9 +184,6 @@ func TestWebFetchHardeningUserPromptDenyVerified(t *testing.T) {
 // TestWebFetchHardeningIPv6LiteralBlocked demonstrates bracketed IPv6 literals
 // are treated as raw IPs and fail closed without reaching the trust hierarchy.
 func TestWebFetchHardeningIPv6LiteralBlocked(t *testing.T) {
-	t.Parallel()
-
-	allowList = make(map[string]bool)
 	client := &http.Client{Timeout: time.Second}
 
 	tr := newSecurityTransport(http.DefaultTransport, func(ctx context.Context, host string) (bool, error) {
@@ -221,9 +218,6 @@ func TestWebFetchHardeningIPv6LiteralBlocked(t *testing.T) {
 // TestWebFetchHardeningIPv6LocalhostAllowed demonstrates [::1] is treated as
 // localhost and allowed through without a prompt.
 func TestWebFetchHardeningIPv6LocalhostAllowed(t *testing.T) {
-	t.Parallel()
-
-	allowList = make(map[string]bool)
 	tr := newSecurityTransport(http.DefaultTransport, func(ctx context.Context, host string) (bool, error) {
 		t.Errorf("allowFn should not be called for IPv6 localhost")
 		return false, nil
@@ -323,9 +317,9 @@ func TestWebFetchDialGateLocalhostHostnameAllowed(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	allowList = make(map[string]bool)
+	resetAllowList()
 	transport := egress.NewHTTPTransport()
-	transport.DialContext = guardedDialer(nil).DialContext
+	transport.DialContext = guardedDialer(nil, transport.Proxy).DialContext
 	client := &http.Client{
 		Timeout: time.Second,
 		Transport: newSecurityTransport(transport, func(ctx context.Context, host string) (bool, error) {

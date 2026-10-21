@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"errors"
 	"log/slog"
 	"regexp"
 	"strings"
@@ -171,11 +172,32 @@ func (a *sessionAgent) redactOutgoingMessages(msgs []fantasy.Message) []fantasy.
 			case fantasy.ToolResultPart:
 				// Text results are normally masked per-tool, but anything
 				// that reaches a result outside the redacted surfaces must
-				// still meet the last-resort mask at the wire.
-				if txt, ok := fantasy.AsToolResultOutputType[fantasy.ToolResultOutputContentText](p.Output); ok {
-					next := a.redactOutgoingText(txt.Text)
-					if next != txt.Text {
+				// still meet the last-resort mask at the wire. Error text
+				// and media-attached text ride the wire verbatim too.
+				switch out := p.Output.(type) {
+				case fantasy.ToolResultOutputContentText:
+					next := a.redactOutgoingText(out.Text)
+					if next != out.Text {
 						p.Output = fantasy.ToolResultOutputContentText{Text: next}
+						changed = true
+					}
+				case fantasy.ToolResultOutputContentError:
+					if out.Error == nil {
+						break
+					}
+					next := a.redactOutgoingText(out.Error.Error())
+					if next != out.Error.Error() {
+						p.Output = fantasy.ToolResultOutputContentError{Error: errors.New(next)}
+						changed = true
+					}
+				case fantasy.ToolResultOutputContentMedia:
+					if out.Text == "" {
+						break
+					}
+					next := a.redactOutgoingText(out.Text)
+					if next != out.Text {
+						out.Text = next
+						p.Output = out
 						changed = true
 					}
 				}
