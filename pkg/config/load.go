@@ -796,20 +796,9 @@ func (c *Config) defaultModelSelection(knownProviders []catwalk.Provider) (large
 			ReasoningEffort: defaultLargeModel.DefaultReasoningEffort,
 		}
 
-		defaultSmallModel := c.GetModel(string(p.ID), p.DefaultSmallModelID)
-		if defaultSmallModel == nil {
-			slog.Warn("Default small model %s not found for provider %s", p.DefaultSmallModelID, p.ID)
-			if len(providerConfig.Models) == 0 {
-				return largeModel, smallModel, fmt.Errorf("default small model %s not found for provider %s", p.DefaultSmallModelID, p.ID)
-			}
-			defaultSmallModel = &providerConfig.Models[0]
-		}
-		smallModel = SelectedModel{
-			Provider:        string(p.ID),
-			Model:           defaultSmallModel.ID,
-			MaxTokens:       defaultSmallModel.DefaultMaxTokens,
-			ReasoningEffort: defaultSmallModel.DefaultReasoningEffort,
-		}
+		// The small slot is intentionally left unset: small-model
+		// consumers fall back to the large model instead of guessing
+		// one from the catalog.
 		return largeModel, smallModel, err
 	}
 
@@ -923,12 +912,12 @@ func configureSelectedModels(store *ConfigStore, knownProviders []catwalk.Provid
 
 		model := c.GetModel(small.Provider, small.Model)
 		if model == nil {
-			small = defaultSmall
-			if persist {
-				if err := store.UpdatePreferredModel(ScopeGlobal, SelectedModelTypeSmall, small); err != nil {
-					return fmt.Errorf("failed to update preferred small model: %w", err)
-				}
-			}
+			// The configured small model no longer resolves (provider
+			// removed or renamed). Fall back to the large model instead
+			// of persisting a catalog guess.
+			slog.Warn("Configured small model not found, falling back to large model",
+				"provider", small.Provider, "model", small.Model)
+			small = large
 		} else {
 			if smallModelSelected.MaxTokens > 0 {
 				small.MaxTokens = smallModelSelected.MaxTokens
@@ -975,22 +964,12 @@ func configureSelectedModels(store *ConfigStore, knownProviders []catwalk.Provid
 		}
 	}
 
-	// When small isn't explicitly configured and the provider isn't a
-	// known built-in, use the large model as the small model. This
-	// prevents two different models from being requested concurrently
-	// for local/openai-compat providers.
-	if !smallModelConfigured {
-		isKnownProvider := false
-		for _, kp := range knownProviders {
-			if string(kp.ID) == small.Provider {
-				isKnownProvider = true
-				break
-			}
-		}
-		if !isKnownProvider {
-			slog.Warn("Using large model as small model for unknown provider", "provider", large.Provider, "model", large.Model)
-			small = large
-		}
+	// When small isn't configured it falls back to the large model
+	// rather than auto-selecting one from the provider catalog — the
+	// auto-pick landed on arbitrary providers users never chose.
+	if _, ok := c.Models[SelectedModelTypeSmall]; !ok {
+		slog.Info("Small model not configured, falling back to large model", "provider", large.Provider, "model", large.Model)
+		small = large
 	}
 
 	c.Models[SelectedModelTypeLarge] = large

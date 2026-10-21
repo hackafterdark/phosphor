@@ -67,7 +67,7 @@ func TestFetchTool_AllowsCleanQuery(t *testing.T) {
 func TestWebFetchTool_RefusesRegisteredSecretInQuery(t *testing.T) {
 	allowList = make(map[string]bool)
 
-	tool := NewWebFetchTool(t.TempDir(), nil, allowAllHosts)
+	tool := NewWebFetchTool(t.TempDir(), nil, nil, allowAllHosts)
 	input, err := json.Marshal(WebFetchParams{URL: "https://example.com/dl?sig=" + guardToken})
 	require.NoError(t, err)
 

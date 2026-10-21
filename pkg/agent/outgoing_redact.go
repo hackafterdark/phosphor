@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"errors"
 	"log/slog"
 	"regexp"
 	"strings"
@@ -149,17 +150,61 @@ func (a *sessionAgent) redactOutgoingMessages(msgs []fantasy.Message) []fantasy.
 		parts := make([]fantasy.MessagePart, len(msg.Content))
 		changed := false
 		for j, part := range msg.Content {
-			tp, ok := part.(fantasy.TextPart)
-			if !ok {
+			switch p := part.(type) {
+			case fantasy.TextPart:
+				next := a.redactOutgoingText(p.Text)
+				if next != p.Text {
+					p.Text = next
+					changed = true
+				}
+				parts[j] = p
+			case fantasy.ToolCallPart:
+				// Tool-call inputs (bash command lines, MCP arguments, edit
+				// bodies) are replayed verbatim on every subsequent request;
+				// a credential typed into an argument would otherwise ride
+				// the wire in plaintext forever.
+				next := a.redactOutgoingText(p.Input)
+				if next != p.Input {
+					p.Input = next
+					changed = true
+				}
+				parts[j] = p
+			case fantasy.ToolResultPart:
+				// Text results are normally masked per-tool, but anything
+				// that reaches a result outside the redacted surfaces must
+				// still meet the last-resort mask at the wire. Error text
+				// and media-attached text ride the wire verbatim too.
+				switch out := p.Output.(type) {
+				case fantasy.ToolResultOutputContentText:
+					next := a.redactOutgoingText(out.Text)
+					if next != out.Text {
+						p.Output = fantasy.ToolResultOutputContentText{Text: next}
+						changed = true
+					}
+				case fantasy.ToolResultOutputContentError:
+					if out.Error == nil {
+						break
+					}
+					next := a.redactOutgoingText(out.Error.Error())
+					if next != out.Error.Error() {
+						p.Output = fantasy.ToolResultOutputContentError{Error: errors.New(next)}
+						changed = true
+					}
+				case fantasy.ToolResultOutputContentMedia:
+					if out.Text == "" {
+						break
+					}
+					next := a.redactOutgoingText(out.Text)
+					if next != out.Text {
+						out.Text = next
+						p.Output = out
+						changed = true
+					}
+				}
+				parts[j] = p
+			default:
 				parts[j] = part
-				continue
 			}
-			next := a.redactOutgoingText(tp.Text)
-			if next != tp.Text {
-				tp.Text = next
-				changed = true
-			}
-			parts[j] = tp
 		}
 		if changed {
 			out[i].Content = parts

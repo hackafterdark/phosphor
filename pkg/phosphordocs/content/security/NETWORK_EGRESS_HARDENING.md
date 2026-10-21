@@ -31,7 +31,7 @@ Phosphor's web-fetch and web-search tools now operate under an **Adaptive Trust*
 
 ## Components
 
-### `internal/agent/tools/web_fetch.go`
+### `pkg/agent/tools/web_fetch.go`
 
 - `securityTransport` — custom `http.RoundTripper` that intercepts each request
 - `allowList` — in-memory session allow cache (cleared on session restart)
@@ -42,7 +42,7 @@ Phosphor's web-fetch and web-search tools now operate under an **Adaptive Trust*
 - `FetchURLAndConvertWithTrust` — wraps `FetchURLAndConvert` with the trust check
 - `NewWebFetchTool` — constructs tool with `allowFn` callback (TUI permission prompt)
 
-### `internal/agent/tools/web_search.go`
+### `pkg/agent/tools/web_search.go`
 
 - `NewWebSearchTool` — same security contract as `web_fetch`; panics if `client` is nil
 - `sanitizeSearchResults` — regex scrubber redacts:
@@ -51,7 +51,7 @@ Phosphor's web-fetch and web-search tools now operate under an **Adaptive Trust*
 - `randomDelay` — adds 100–150ms random delay per round-trip to stay under DDG's request-budget threshold
 - OTel span tagged with `attribute.Int("gen_ai.tool.web_search.results", len(results))`
 
-### `internal/agent/coordinator.go`
+### `pkg/agent/coordinator.go`
 
 - `tuiAllowPrompt` field added to `coordinator` struct
 - Wired in `NewCoordinator` via `c.permissions.Request` with synthetic tool-call ID (`tui:allow:<host>`)
@@ -101,8 +101,8 @@ Phosphor's `web_fetch` and `web_search` tools consult the user's `phosphor.json`
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `IPAllowList` | `[]string` | `[]` | CIDR or literal IPs allowed to be reached |
-| `AllowRawIPs` | `bool` | `false` | Opt-in for raw IP access (default: FQDN required) |
+| `IPAllowList` | `[]string` | `[]` | CIDR or literal IPs allowed to be reached (consulted only when `allow_raw_ips` is true) |
+| `AllowRawIPs` | `bool` | `false` | Gate for raw IP access; IPs are allowed only if they also match `IPAllowList` (default: FQDN required) |
 
 ### Example `phosphor.json`
 
@@ -126,9 +126,8 @@ Phosphor's `web_fetch` and `web_search` tools consult the user's `phosphor.json`
 When `securityTransport` intercepts a request to a raw IP:
 
 1. **127.0.0.1 / ::1** (localhost) → always allowed, no config needed
-2. **`IPAllowList`** → literal match or CIDR match via `matchCIDR` → allowed
-3. **`AllowRawIPs = true`** → allowed (if no CIDR match)
-4. **No match** → TUI prompt shows "WebFetch is requesting access to [host]. Allow this domain?"
+2. **`AllowRawIPs = true` + `IPAllowList`** → literal match or CIDR match via `matchCIDR` → allowed
+3. **Anything else** → the request fails closed with an error; raw IPs never reach the TUI prompt (prompts apply to hostnames only)
 
 ## Bash Network Egress Policy
 
@@ -172,30 +171,50 @@ guarantees.
 ## Security Properties
 
 - **Fail-closed**: no network requests succeed until the agent confirms the domain is trusted
-- **IP-block policy**: raw IP addresses (e.g., `10.x.x.x`, `192.168.x.x`, public IPs) are rejected — FQDNs required
+- **IP-block policy**: raw IP addresses are rejected for both IPv4 and IPv6 literal forms (e.g., `10.x.x.x`, `192.168.x.x`, `[::1]`, `[fd00::…]`) — FQDNs required
+- **Resolved-address validation**: the same IP policy is enforced at dial time on the *resolved* socket address, so an approved hostname whose DNS answer rebinds into a private, link-local, or cloud-metadata range is refused at the socket (DNS-rebinding defense). Loopback stays allowed; `IPAllowList`/`AllowRawIPs` exempt like raw IPs; when an environment proxy is configured the operator's proxy is the egress decision and the strict path remains the egress broker tier
 - **Opt-in overrides**: `AllowRawIPs` + `IPAllowList` (CIDR) allow raw IPs for local/network development
 - **Layered trust**: workspace + global allow lists + session allow list + user prompt
 - **OTel observability**: every allow/deny/event is captured as an OTel span with structured attributes
 - **Cacheable**: user approvals persist across requests (in-memory cache) but are session-local
 - **Shared transport**: both `web_fetch` and `web_search` share the same `*http.Client` → same `securityTransport`
 
-- **Fail-closed**: no network requests succeed until the agent confirms the domain is trusted
-- **IP-block policy**: raw IP addresses (e.g., `10.x.x.x`, `192.168.x.x`, public IPs) are rejected — FQDNs required
-- **Layered trust**: workspace + global allow lists + session allow list + user prompt
-- **OTel observability**: every allow/deny/event is captured as an OTel span with structured attributes
-- **Cacheable**: user approvals persist across requests (in-memory cache) but are session-local
-- **Shared transport**: both `web_fetch` and `web_search` share the same `*http.Client` → same `securityTransport`
+## TLS Trust and CA Compromise
+
+The IP-block policy and trust hierarchy govern *where* the agent may connect;
+certificate validation governs *whether the peer is who it claims to be*. The
+two layers are independent, and an AI agent depends on the second more than
+ordinary software does: the agent carries provider API keys in every request,
+fetches attacker-chosen URLs by design, and can download and execute code from
+hosts it has never seen. A compromised certificate authority — one whose
+intermediate keys leak and can sign certs for *any* domain — silently defeats
+every hostname-level defense at once (allow lists, IP blocks, FQDN
+requirements).
+
+Phosphor performs no custom certificate handling. TLS verification is delegated
+to the runtime trust store:
+
+- **Windows / macOS**: the platform certificate store, so OS security updates
+  and browser-grade revocation (CRLSets, OneCRL) cover CA compromise.
+- **Linux**: Phosphor builds with `CGO_ENABLED=0`, so Go uses its compiled-in
+  copy of the Mozilla root program. Keeping the Go toolchain patched —
+  `go.mod` pins the minimum version — is therefore part of the security
+  posture, not just a build detail.
+
+Concretely: when an intermediate CA in a trusted root program is compromised,
+the remedy is a toolchain/OS update, and users should update promptly the same
+way they would for a browser.
 
 ## Files Modified
 
-- `internal/agent/tools/web_fetch.go` — added security transport, allow lists, TUI prompt wiring
-- `internal/agent/tools/web_search.go` — added sanitization, OTel tagging, random delay, nil client panic
-- `internal/agent/coordinator.go` — added `tuiAllowPrompt` field and wiring
-- `internal/agent/agentic_fetch_tool.go` — updated call site to pass `c.tuiAllowPrompt`
+- `pkg/agent/tools/web_fetch.go` — added security transport, allow lists, TUI prompt wiring
+- `pkg/agent/tools/web_search.go` — added sanitization, OTel tagging, random delay, nil client panic
+- `pkg/agent/coordinator.go` — added `tuiAllowPrompt` field and wiring
+- `pkg/agent/agentic_fetch_tool.go` — updated call site to pass `c.tuiAllowPrompt`
 
 ## Notes
 
-- `go.mod` requires Go 1.26.4+ (running 1.25.0 locally — LSP errors may appear for tooling checks)
+- `go.mod` requires Go 1.27.3+ (patched trust store; see TLS Trust and CA Compromise above)
 - `fmt`, `net`, `strings`, `html/template`, `encoding/json`, `time`, `embed` imports are all used in body
 - `maybeDelaySearch` removed from `web_search.go` (already present in `search.go`)
 - `randomDelay` added for DDG request-budget threshold
