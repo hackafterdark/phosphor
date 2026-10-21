@@ -9,7 +9,9 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"sort"
@@ -125,6 +127,11 @@ func HandleMemoryGraphData(w http.ResponseWriter, r *http.Request) {
 
 // NewMemoryGraphHandler returns an http.Handler serving the viewer page at
 // / (and /view.html) and the graph data at /graph.json.
+//
+// The Host header is validated against loopback names: the server binds
+// loopback-only, and rejecting foreign Host values closes the DNS-rebinding
+// path where a malicious page resolves its own hostname to 127.0.0.1 and
+// reads /graph.json as same-origin.
 func NewMemoryGraphHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/view.html", HandleMemoryGraphView)
@@ -136,7 +143,21 @@ func NewMemoryGraphHandler() http.Handler {
 		}
 		http.NotFound(w, r)
 	})
-	return mux
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		host := r.Host
+		if h, _, err := net.SplitHostPort(host); err == nil {
+			host = h
+		}
+		if h, err := netip.ParseAddr(host); err == nil && h.IsLoopback() {
+			mux.ServeHTTP(w, r)
+			return
+		}
+		if host == "localhost" {
+			mux.ServeHTTP(w, r)
+			return
+		}
+		http.Error(w, "Forbidden: host not allowed", http.StatusForbidden)
+	})
 }
 
 // MemoryGraphDBPath returns the path of the discovered memory vault index,
@@ -304,6 +325,17 @@ func buildMemoryGraph(ctx context.Context, dbPath string) (*memoryGraph, error) 
 	if err := entryRows.Err(); err != nil {
 		return nil, err
 	}
+
+	// supersedes/decision targets can point at pruned entries; drop edges
+	// whose endpoints have no node so the viewer never receives a dangling
+	// link index.
+	kept := graph.Edges[:0]
+	for _, e := range graph.Edges {
+		if seen[e.Source] && seen[e.Target] {
+			kept = append(kept, e)
+		}
+	}
+	graph.Edges = kept
 
 	threads := map[string]int64{}
 	tagCounts := map[string]int64{}

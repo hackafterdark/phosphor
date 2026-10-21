@@ -126,6 +126,24 @@ func TestMemoryGraphHandlers(t *testing.T) {
 	require.NotContains(t, page, "@cosmos.gl/graph")
 	require.Contains(t, page, cosmosGraphJS[:200])
 }
+
+func TestMemoryGraphHandlerHostValidation(t *testing.T) {
+	handler := NewMemoryGraphHandler()
+	for _, host := range []string{"localhost:8644", "127.0.0.1:8644", "[::1]:8644", "localhost"} {
+		req := httptest.NewRequest(http.MethodGet, "/view.html", nil)
+		req.Host = host
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		require.Equal(t, http.StatusOK, rec.Code, "host %s should be allowed", host)
+	}
+	for _, host := range []string{"evil.example.com", "attacker.test:8644"} {
+		req := httptest.NewRequest(http.MethodGet, "/graph.json", nil)
+		req.Host = host
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		require.Equal(t, http.StatusForbidden, rec.Code, "host %s should be rejected", host)
+	}
+}
 func TestRenderMemoryGraphReport(t *testing.T) {
 	t.Parallel()
 	dbPath := seedMemoryDB(t)

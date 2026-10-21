@@ -38,19 +38,24 @@ static: it shows the graph as it existed at export time.
 The viewer defaults to `127.0.0.1:8644`. You can override it in
 `phosphor.json`:
 
-```json
+"""json
 {
   "services": {
     "memory-graph": {
+      "enabled": true,
       "host": "127.0.0.1",
       "port": 8644
     }
   }
 }
-```
+"""
 
 The viewer uses its own port so it works regardless of whether the
-OpenAI-compatible API service is enabled.
+OpenAI-compatible API service is enabled. If the "memory-graph" entry
+exists with ""enabled": false" (or omitted), "phosphor memorygraph"
+refuses to start. The viewer serves raw memory entries to any client
+that can reach the port, so only loopback hosts ("127.0.0.1", "::1",
+"localhost") are accepted.
 
 ## What the viewer shows
 
@@ -66,4 +71,4 @@ OpenAI-compatible API service is enabled.
 ## Related docs
 
 - [Memory Overview](OVERVIEW.md) — how the memory vault and index work.
-- [CLI Reference](CLI.md) — global flags and all commands.
+- [CLI Reference](../CLI.md) — global flags and all commands.

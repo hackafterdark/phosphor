@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -34,7 +35,11 @@ The viewer runs in the foreground and serves the constellation view and its
 live data endpoint until interrupted by a signal (Ctrl+C). Host and port can
 be overridden with the memory-graph service entry in phosphor.json:
 
-  "services": { "memory-graph": { "host": "127.0.0.1", "port": 8644 } }
+  "services": { "memory-graph": { "enabled": true, "host": "127.0.0.1", "port": 8644 } }
+
+The viewer serves raw memory entries to any client that can reach the
+port, so only loopback hosts are accepted. If the service entry exists
+with "enabled": false (or omitted), the command refuses to start.
 
 With --report FILE the current graph is frozen into a single self-contained
 HTML file that opens offline with no server, and the command exits.`,
@@ -49,8 +54,16 @@ HTML file that opens offline with no server, and the command exits.`,
 				return writeMemoryGraphReport(cmd.Context(), report)
 			}
 
-			host, port := memoryGraphHostPort(cwd)
-			addr := fmt.Sprintf("%s:%d", host, port)
+			host, port, err := memoryGraphHostPort(cwd)
+			if err != nil {
+				return err
+			}
+			if !isLoopbackHost(host) {
+				return fmt.Errorf(
+					"memory-graph host %q is not a loopback address; the viewer serves raw memory entries with no authentication, so only 127.0.0.1, ::1, or localhost may be bound",
+					host)
+			}
+			addr := net.JoinHostPort(host, strconv.Itoa(port))
 
 			// Bind before printing the URL so a port conflict fails fast
 			// instead of leaving the user on a dead page.
@@ -59,7 +72,13 @@ HTML file that opens offline with no server, and the command exits.`,
 				return fmt.Errorf("failed to listen on %s: %w", addr, err)
 			}
 
-			srv := &http.Server{Handler: server.NewMemoryGraphHandler()}
+			srv := &http.Server{
+				Handler:           server.NewMemoryGraphHandler(),
+				ReadHeaderTimeout: 5 * time.Second,
+				ReadTimeout:       30 * time.Second,
+				WriteTimeout:      30 * time.Second,
+				IdleTimeout:       120 * time.Second,
+			}
 
 			errCh := make(chan error, 1)
 			go func() { errCh <- srv.Serve(ln) }()
@@ -105,8 +124,13 @@ func writeMemoryGraphReport(ctx context.Context, path string) error {
 	if err != nil {
 		return fmt.Errorf("failed to render memory graph report: %w", err)
 	}
-	if err := os.WriteFile(path, page, 0o644); err != nil {
+	if err := os.WriteFile(path, page, 0o600); err != nil {
 		return fmt.Errorf("failed to write report: %w", err)
+	}
+	// os.WriteFile keeps the mode of a pre-existing file; force the
+	// snapshot private even when the destination already existed.
+	if err := os.Chmod(path, 0o600); err != nil {
+		return fmt.Errorf("failed to restrict report permissions: %w", err)
 	}
 	fmt.Printf("wrote snapshot report: %s\n", path)
 	return nil
@@ -115,13 +139,17 @@ func writeMemoryGraphReport(ctx context.Context, path string) error {
 // memoryGraphHostPort resolves the viewer bind address from the memory-graph
 // service entry in phosphor.json, falling back to the defaults when the
 // config is missing or unreadable.
-func memoryGraphHostPort(cwd string) (string, int) {
+func memoryGraphHostPort(cwd string) (string, int, error) {
 	host, port := "127.0.0.1", memoryGraphDefaultPort
 	store, err := config.Init(cwd, "", false)
 	if err != nil {
-		return host, port
+		return host, port, nil
 	}
 	if entry, ok := store.Config().Services["memory-graph"]; ok {
+		if !entry.Enabled {
+			return host, port, fmt.Errorf(
+				"memory-graph service is disabled in the config; set \"enabled\": true under services.memory-graph in phosphor.json to run the viewer")
+		}
 		if entry.Host != "" {
 			host = entry.Host
 		}
@@ -129,5 +157,14 @@ func memoryGraphHostPort(cwd string) (string, int) {
 			port = entry.Port
 		}
 	}
-	return host, port
+	return host, port, nil
+}
+
+// isLoopbackHost reports whether host is a loopback address or localhost.
+func isLoopbackHost(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }

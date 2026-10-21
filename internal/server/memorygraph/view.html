@@ -241,11 +241,17 @@
   </div>
 </div>
 <script>
-console.log("view.html build: cosmos v60");
+console.log("view.html build: cosmos v61");
 let fx = localStorage.getItem("phosphor-fx") !== "0" &&
   !matchMedia("(prefers-reduced-motion: reduce)").matches;
 let fxGen = 0;
 const GLYPHS = "▚▞░▒▓#%&@$?/\\<>|+=*";
+// Memory bodies and summaries can carry content from untrusted sources
+// (tool output, fetched pages); every value interpolated into innerHTML
+// below goes through this escape so it renders as text, never markup.
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({
+  "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+}[c]));
 function fxScramble(el, final, delay, dur, chars) {
   chars = chars || GLYPHS;
   if (!fx) { el.textContent = final; return; }
@@ -312,10 +318,24 @@ const scatter = (r, k) => center + (Math.random() - .5) * r * k;
 let liveTimer = null;
 let fxTimers = [];
 let clockStarted = false;
+let currentGraph = null;
+let bootAbort = null;
 function boot(g) {
   clearTimeout(liveTimer);
   fxTimers.forEach(clearTimeout);
   fxTimers = [];
+  fxGen++;
+  // Tear down the previous boot before rebuilding: abort its listeners,
+  // destroy its WebGL graph, and clear the generated label and HUD
+  // content, so a live refresh never leaves duplicate canvases, labels,
+  // or panels behind.
+  if (bootAbort) bootAbort.abort();
+  bootAbort = new AbortController();
+  const addEvt = (type, fn) => addEventListener(type, fn, { signal: bootAbort.signal });
+  if (currentGraph) { currentGraph.destroy(); currentGraph = null; }
+  document.getElementById("labels").replaceChildren();
+  ["#own", "#arr", "#ver", "#str"].forEach(sel =>
+    document.querySelectorAll(sel + " > :not(h2)").forEach(el => el.remove()));
   const nodes = g.nodes;
   const idx = new Map(nodes.map((n, i) => [n.id, i]));
 
@@ -501,8 +521,8 @@ function boot(g) {
       const cx = event ? event.clientX : s[0];
       const cy = event ? event.clientY : s[1];
       tip.style.display = "block";
-      tip.innerHTML = `<span class="tid">${n.id}</span><br>` +
-        (n.summary || "") + "<br>type " + n.type +
+      tip.innerHTML = `<span class="tid">${esc(n.id)}</span><br>` +
+        esc(n.summary || "") + "<br>type " + esc(n.type) +
         " · trust " + n.trust.toFixed(2) + " · recall " + n.recall;
       const tw = tip.offsetWidth, thh = tip.offsetHeight;
       let lx = cx + 14, ly = cy + 14;
@@ -533,6 +553,7 @@ function boot(g) {
   graph.render();
   graph.trackPointPositionsByIndices([...labelEls.keys()]);
   drawLabels();
+  currentGraph = graph;
 
   // ---- side panel --------------------------------------------------------
   const panel = document.getElementById("detail");
@@ -560,7 +581,7 @@ function boot(g) {
     document.getElementById("dcreated").textContent = (n.created || "—").slice(0, 10);
     document.getElementById("dupdated").textContent = (n.updated || "—").slice(0, 10);
     document.getElementById("dtags").innerHTML =
-      (n.tags || []).map(t => `<span class="tag" data-tag="${t}">#${t}</span>`).join("");
+      (n.tags || []).map(t => `<span class="tag" data-tag="${esc(t)}">#${esc(t)}</span>`).join("");
     document.querySelectorAll("#dtags .tag").forEach(el => {
       const id = "tag:" + el.dataset.tag;
       if (!idx.has(id)) return;
@@ -574,7 +595,7 @@ function boot(g) {
       document.getElementById("dbody").textContent =
         n.type + " group · " + members.length + " memories linked to this node";
       document.getElementById("drel").innerHTML = members.map(m =>
-        `<li data-id="${m.id}"><span class="k" style="color:${TYPE_COLORS[m.type] || TYPE_COLORS.unknown}">${m.type}</span> ${(m.summary || m.id).slice(0, 70)}</li>`).join("");
+        `<li data-id="${esc(m.id)}"><span class="k" style="color:${TYPE_COLORS[m.type] || TYPE_COLORS.unknown}">${esc(m.type)}</span> ${esc((m.summary || m.id).slice(0, 70))}</li>`).join("");
     } else {
       kpis.forEach(el => el.style.display = "");
       document.getElementById("dbody").textContent = n.body || n.summary || "(no body)";
@@ -582,7 +603,7 @@ function boot(g) {
         kind: e.kind, id: e.source === n.id ? e.target : e.source,
       }));
       document.getElementById("drel").innerHTML = rel.map(r =>
-        `<li data-id="${r.id}"><span class="k">${r.kind}</span> ${r.id}</li>`).join("");
+        `<li data-id="${esc(r.id)}"><span class="k">${esc(r.kind)}</span> ${esc(r.id)}</li>`).join("");
     }
     document.querySelectorAll("#drel li").forEach(li =>
       li.onclick = () => { const m = nodes[idx.get(li.dataset.id)]; if (m) openDetail(m); });
@@ -598,14 +619,14 @@ function boot(g) {
     panel.style.bottom = (hudH + 24) + "px";
   }
   layoutDetail();
-  addEventListener("resize", layoutDetail);
+  addEvt("resize", layoutDetail);
   document.getElementById("dclose").onclick = () => {
     panel.classList.remove("open");
     navStack.length = 0; currentNode = null; activeIdx = null; breathOn = false;
     graph.setConfigPartial({ outlinedPointIndices: [] });
     hideReticle();
   };
-  addEventListener("keydown", e => {
+  addEvt("keydown", e => {
     if (e.key === "Escape") {
       panel.classList.remove("open");
       navStack.length = 0; currentNode = null; activeIdx = null; breathOn = false;
@@ -662,7 +683,7 @@ function boot(g) {
     if (e.key === "Enter" && bestIdx >= 0) focusNode(nodes[bestIdx].id);
     else if (e.key === "Escape") { searchBox.value = ""; applySearch(); searchBox.blur(); }
   };
-  addEventListener("keydown", e => {
+  addEvt("keydown", e => {
     if (e.key === "/" && document.activeElement !== searchBox) {
       e.preventDefault();
       searchBox.focus();
@@ -694,7 +715,7 @@ function boot(g) {
   const seen = new Set();
   document.getElementById("legend").innerHTML = nodes
     .filter(n => !["thread", "tag"].includes(n.type) && !seen.has(n.type) && seen.add(n.type))
-    .map(n => `<span style="color:${color(n)}">${n.type}</span>`).join("");
+    .map(n => `<span style="color:${color(n)}">${esc(n.type)}</span>`).join("");
 
   const th = [...nodes.filter(n => !["thread", "tag"].includes(n.type))
     .reduce((m, n) => m.set(n.thread || "(untitled)", (m.get(n.thread || "(untitled)") || 0) + 1), new Map())]
@@ -710,15 +731,15 @@ function boot(g) {
   document.querySelector("#own h2").innerHTML =
     "THREADS <span style=\"color:var(--dim);letter-spacing:.1em\">· RELATIVE LOAD</span>";
   document.querySelector("#own").insertAdjacentHTML("beforeend",
-    "<ul>" + th.map(d => `<li class="row"><span class="nm">${d[0]}</span>` +
+    "<ul>" + th.map(d => `<li class="row"><span class="nm">${esc(d[0])}</span>` +
       `<span class="bar"><i data-fx="${Math.round(d[1] / maxc * 100)}"></i></span>` +
       `</li>`).join("") + "</ul>");
   const ownTip = document.getElementById("tip");
   document.querySelectorAll("#own .row").forEach((row, i) => {
     row.addEventListener("mousemove", e => {
       const d = th[i];
-      ownTip.innerHTML = `<span class="tid">${d[0]}</span><br>` +
-        `MEMORIES ${d[1]}<br>LATEST ${(tlatest.get(d[0]) || "—").slice(0, 10)}`;
+      ownTip.innerHTML = `<span class="tid">${esc(d[0])}</span><br>` +
+        `MEMORIES ${d[1]}<br>LATEST ${esc((tlatest.get(d[0]) || "—").slice(0, 10))}`;
       ownTip.style.display = "block";
       ownTip.style.left = (e.clientX + 14) + "px";
       ownTip.style.top = (e.clientY + 14) + "px";
@@ -764,7 +785,7 @@ function boot(g) {
   }
   drawArr();
   let arrTimer = null;
-  addEventListener("resize", () => {
+  addEvt("resize", () => {
     clearTimeout(arrTimer);
     arrTimer = setTimeout(drawArr, 150);
   });
@@ -773,13 +794,13 @@ function boot(g) {
     "TYPES <span style=\"color:var(--dim);letter-spacing:.1em\">· DISTRIBUTION</span>";
   document.querySelector("#ver").insertAdjacentHTML("beforeend",
     "<ul>" + Object.entries(g.verdicts).sort((a, b) => b[1] - a[1]).map(d =>
-      `<li class="row"><span>● ${d[0]}</span><span class="v" data-fx="${d[1]}">${d[1]}</span></li>`).join("") + "</ul>");
+      `<li class="row"><span>● ${esc(d[0])}</span><span class="v" data-fx="${d[1]}">${d[1]}</span></li>`).join("") + "</ul>");
 
   document.querySelector("#str").insertAdjacentHTML("beforeend",
     '<ul class="stream">' + g.edges.slice(-12).reverse().map(d =>
-      `<li><span class="k" data-fx="${d.kind}">${d.kind}</span> ` +
-      `<span class="jump" data-id="${d.source}">${d.source.slice(0, 10)}</span> → ` +
-      `<span class="jump" data-id="${d.target}" data-fx="${d.target.slice(0, 10)}">${d.target.slice(0, 10)}</span></li>`).join("") + "</ul>");
+      `<li><span class="k" data-fx="${esc(d.kind)}">${esc(d.kind)}</span> ` +
+      `<span class="jump" data-id="${esc(d.source)}">${esc(d.source.slice(0, 10))}</span> → ` +
+      `<span class="jump" data-id="${esc(d.target)}" data-fx="${esc(d.target.slice(0, 10))}">${esc(d.target.slice(0, 10))}</span></li>`).join("") + "</ul>");
   document.querySelectorAll("#str .jump").forEach(el =>
     el.onclick = () => focusNode(el.dataset.id));
   function focusNode(id) {
@@ -973,7 +994,7 @@ function boot(g) {
 // ---- data loading: snapshot (embedded) or live polling --------------------
 const live = !window.__PHOSPHOR_SNAPSHOT__;
 const POLL_MS = 10000;
-let liveSize = null;
+let liveKey = null;
 function status(msg) {
   const el = document.getElementById("status");
   if (el) el.textContent = msg;
@@ -984,9 +1005,13 @@ async function poll() {
     const r = await fetch("graph.json?_=" + Date.now());
     if (r.ok) {
       const text = await r.text();
-      if (text.length !== liveSize) {
-        liveSize = text.length;
-        boot(JSON.parse(text));
+      const g = JSON.parse(text);
+      // Compare on content, not byte length: equal-length edits would slip
+      // past a length check. generated changes every poll, so exclude it.
+      const key = JSON.stringify({ ...g, generated: undefined });
+      if (key !== liveKey) {
+        liveKey = key;
+        boot(g);
         status("LIVE · SYNCED");
       }
     }
@@ -997,7 +1022,7 @@ if (live) {
   if (location.protocol === "file:") {
     // static open without a server: fetch one-shot, no polling
     fetch("graph.json").then(r => r.json()).then(boot)
-      .catch(() => status("NO DATA · run: python -m http.server"));
+      .catch(() => status("NO DATA · run: phosphor memorygraph"));
   } else {
     status("LIVE");
     poll();
