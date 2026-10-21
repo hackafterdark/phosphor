@@ -25,9 +25,17 @@ order they are loaded (later files win on conflicts):
 Windows uses the same XDG logic for the global config, so the default is
 `%USERPROFILE%\.config\phosphor\phosphor.json` unless `XDG_CONFIG_HOME` is set.
 
+All files are **deep-merged per JSON key**, not replaced wholesale — a project
+file that sets only `models.large` leaves everything else in your global file
+intact. The files with the higher numbers above override the lower ones for
+any key they define.
+
 The **global data config** is where Phosphor persists things it learns at runtime
 (recently used models, per-provider settings saved from the TUI). The **project
 config** is safe to commit to a repository to share settings with your team.
+If the TUI ever writes something to the global data config that you disagree
+with (e.g. a `models.small` selection), edit or delete that key there — it
+overrides the same key in your global config.
 
 The workspace also gets a **data directory** (default `.phosphor/` at the project
 root, configurable via `options.data_directory` or `--data-dir`). It holds the
@@ -256,7 +264,9 @@ The minimum viable cloud setup:
 ```
 
 `large` is the primary coding/reasoning model; `small` handles title generation
-and lightweight sub-tasks. Model entries also accept sampling overrides
+and lightweight sub-tasks (summarization, `agentic_fetch`). If `small` is
+omitted it falls back to `large` — Phosphor never auto-selects a small model
+from another provider. Model entries also accept sampling overrides
 (`temperature`, `top_p`, `top_k`, `max_tokens`, `seed`, `min_p`,
 `repetition_penalty`, `stop`, …) plus `reasoning_effort` (OpenAI-style),
 `think` (Anthropic), and `max_thinking_tokens`.

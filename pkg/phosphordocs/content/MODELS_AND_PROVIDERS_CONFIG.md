@@ -202,7 +202,18 @@ The `models` section selects which model to use for different tasks. Phosphor us
 If `small` is omitted, it falls back to the `large` model rather than
 auto-selecting one from the provider catalog. Every consumer of the small
 slot (title generation, summarization, `agentic_fetch`) uses the large model
-until you pin `models.small` explicitly.
+until you pin `models.small` explicitly. A `models.small` whose provider or
+model no longer resolves also falls back to `large`.
+
+The list of providers and models offered in the model dialog is **not**
+stored in your config: it comes from the [Catwalk](https://catwalk.charm.land)
+catalog, fetched at runtime and cached alongside the global data config
+(`%LOCALAPPDATA%\phosphor\providers.json` on Windows,
+`~/.local/share/phosphor/providers.json` on Linux/macOS; override the source
+with `CATWALK_URL`). A known provider appears in the dialog as soon as its
+API key is available in your environment — that does **not** mean it is
+selected. `phosphor.json` only pins or overrides choices; anything you don't
+pin resolves against the catalog.
 
 ### Model Fields
 
