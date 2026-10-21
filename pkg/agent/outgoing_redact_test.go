@@ -335,3 +335,89 @@ func TestSessionAgent_OutgoingRedaction_ForceOnlyMasksThroughCallSite(t *testing
 	require.NotContains(t, textOf(out[0]), secret)
 	require.Contains(t, textOf(out[0]), "<redacted:gitleaks:")
 }
+func TestSessionAgent_RedactOutgoing_ToolCallInputMasked(t *testing.T) {
+	t.Parallel()
+
+	// A credential typed into a tool-call argument (bash command line, MCP
+	// input, edit body) is replayed verbatim on every subsequent request; the
+	// wire mask must catch it even though it is not a TextPart.
+	const secret = "AKIAIOSVPK253PIP5TGP"
+	msg := fantasy.Message{
+		Role: fantasy.MessageRoleAssistant,
+		Content: []fantasy.MessagePart{fantasy.ToolCallPart{
+			ToolCallID: "call-1",
+			ToolName:   "bash",
+			Input:      `{"command":"curl -H \"Authorization: Bearer ` + secret + `\" https://api.example.com"}`,
+		}},
+	}
+
+	a := &sessionAgent{redactOutgoingSecrets: true}
+	out := a.redactOutgoingMessages([]fantasy.Message{msg})
+
+	got := out[0].Content[0].(fantasy.ToolCallPart).Input
+	require.NotContains(t, got, secret, "tool-call input secret must be masked on the wire")
+	require.Contains(t, got, "<redacted:gitleaks:")
+
+	// The input messages must not have been mutated (fantasy owns them).
+	orig := msg.Content[0].(fantasy.ToolCallPart).Input
+	require.Contains(t, orig, secret, "input mutated")
+}
+
+func TestSessionAgent_RedactOutgoing_ToolResultTextMasked(t *testing.T) {
+	t.Parallel()
+
+	// Text that reaches a tool result outside the per-tool redacted surfaces
+	// must still meet the last-resort mask at the wire.
+	const secret = "AKIAIOSVPK253PIP5TGP"
+	msg := fantasy.Message{
+		Role: fantasy.MessageRoleTool,
+		Content: []fantasy.MessagePart{fantasy.ToolResultPart{
+			ToolCallID: "call-1",
+			Output:     fantasy.ToolResultOutputContentText{Text: "AWS_ACCESS_KEY_ID := \"" + secret + "\""},
+		}},
+	}
+
+	a := &sessionAgent{redactOutgoingSecrets: true}
+	out := a.redactOutgoingMessages([]fantasy.Message{msg})
+
+	txt, ok := fantasy.AsToolResultOutputType[fantasy.ToolResultOutputContentText](
+		out[0].Content[0].(fantasy.ToolResultPart).Output,
+	)
+	require.True(t, ok)
+	require.NotContains(t, txt.Text, secret, "tool-result text secret must be masked on the wire")
+	require.Contains(t, txt.Text, "<redacted:gitleaks:")
+
+	// The input messages must not have been mutated (fantasy owns them).
+	orig, ok := fantasy.AsToolResultOutputType[fantasy.ToolResultOutputContentText](
+		msg.Content[0].(fantasy.ToolResultPart).Output,
+	)
+	require.True(t, ok)
+	require.Contains(t, orig.Text, secret, "input mutated")
+}
+
+func TestSessionAgent_RedactOutgoing_ToolPartsDisabledIsPassthrough(t *testing.T) {
+	t.Parallel()
+
+	// With both passes off, tool-call inputs and tool results are returned
+	// verbatim (identity, not even copied).
+	const secret = "AKIAIOSVPK253PIP5TGP"
+	msg := fantasy.Message{
+		Role: fantasy.MessageRoleAssistant,
+		Content: []fantasy.MessagePart{
+			fantasy.ToolCallPart{
+				ToolCallID: "call-1",
+				ToolName:   "bash",
+				Input:      `{"command":"echo AWS_ACCESS_KEY_ID=` + secret + `"}`,
+			},
+			fantasy.ToolResultPart{
+				ToolCallID: "call-1",
+				Output:     fantasy.ToolResultOutputContentText{Text: secret},
+			},
+		},
+	}
+
+	a := &sessionAgent{}
+	in := []fantasy.Message{msg}
+	out := a.redactOutgoingMessages(in)
+	require.Equal(t, in, out)
+}

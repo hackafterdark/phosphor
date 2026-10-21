@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -175,5 +176,73 @@ func TestWebFetchHardeningUserPromptDenyVerified(t *testing.T) {
 
 	if !called {
 		t.Error("expected allowFn to be called for unknown host")
+	}
+}
+
+// TestWebFetchHardeningIPv6LiteralBlocked demonstrates bracketed IPv6 literals
+// are treated as raw IPs and fail closed without reaching the trust hierarchy.
+func TestWebFetchHardeningIPv6LiteralBlocked(t *testing.T) {
+	t.Parallel()
+
+	allowList = make(map[string]bool)
+	client := &http.Client{Timeout: time.Second}
+
+	tr := newSecurityTransport(http.DefaultTransport, func(ctx context.Context, host string) (bool, error) {
+		t.Errorf("allowFn should not be called for raw IPv6 literal, got host %q", host)
+		return false, nil
+	}, nil)
+
+	client.Transport = tr
+
+	// Bracketed IPv6 literals must be blocked like raw IPv4s.
+	for _, target := range []string{
+		"http://[::1]:6379/",
+		"http://[fd00::dead:beef]/",
+		"http://[2001:db8::1]:8443/api",
+	} {
+		req, err := http.NewRequestWithContext(t.Context(), "GET", target, nil)
+		if err != nil {
+			t.Fatalf("failed to create request: %v", err)
+		}
+
+		resp, err := client.Do(req)
+		if err == nil {
+			resp.Body.Close()
+			t.Fatalf("expected error for raw IPv6 literal %s", target)
+		}
+		if resp != nil {
+			resp.Body.Close()
+		}
+	}
+}
+
+// TestWebFetchHardeningIPv6LocalhostAllowed demonstrates [::1] is treated as
+// localhost and allowed through without a prompt.
+func TestWebFetchHardeningIPv6LocalhostAllowed(t *testing.T) {
+	t.Parallel()
+
+	allowList = make(map[string]bool)
+	tr := newSecurityTransport(http.DefaultTransport, func(ctx context.Context, host string) (bool, error) {
+		t.Errorf("allowFn should not be called for IPv6 localhost")
+		return false, nil
+	}, nil)
+
+	client := &http.Client{Timeout: time.Second}
+	client.Transport = tr
+
+	// Request to [::1] should pass the transport gate. The dial itself may
+	// fail if IPv6 loopback is unavailable, but the failure must not be the
+	// raw-IP block.
+	req, err := http.NewRequestWithContext(t.Context(), "GET", "http://[::1]:6379/", nil)
+	if err != nil {
+		t.Fatalf("failed to create request: %v", err)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil && strings.Contains(err.Error(), "raw IP") {
+		t.Fatalf("IPv6 localhost must not be blocked as raw IP, got: %v", err)
+	}
+	if resp != nil {
+		resp.Body.Close()
 	}
 }

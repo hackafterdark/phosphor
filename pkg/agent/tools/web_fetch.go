@@ -84,22 +84,26 @@ func (t *securityTransport) RoundTrip(req *http.Request) (*http.Response, error)
 	spanCtx, span := otel.StartSpan(ctx, "web_fetch network request")
 	defer span.End()
 
-	// Resolve host if it is a raw IP → fail-closed.
-	if ip := net.ParseIP(lookupHost); ip != nil {
+	// Resolve host if it is a raw IP → fail-closed. Bracketed IPv6 literals
+	// (e.g. "[::1]") must be un-escaped before parsing; net.ParseIP returns
+	// nil for the bracketed form, which would let IPv6 literals fall through
+	// to the trust hierarchy un-blocked.
+	ipHost := req.URL.Hostname()
+	if ip := net.ParseIP(ipHost); ip != nil {
 		// localhost is always allowed.
-		if lookupHost == "127.0.0.1" || lookupHost == "::1" {
+		if ipHost == "127.0.0.1" || ipHost == "::1" {
 			span.SetAttributes(
 				attribute.Bool("gen_ai.network.is_ip", true),
-				attribute.String("gen_ai.network.target", lookupHost),
+				attribute.String("gen_ai.network.target", ipHost),
 				attribute.String("gen_ai.network.source", "localhost"),
 			)
 			return t.inner.RoundTrip(req.WithContext(spanCtx))
 		}
 		// Check if the IP is in the config allow list.
-		if t.cfg != nil && isIPAllowedByConfig(t.cfg, lookupHost) {
+		if t.cfg != nil && isIPAllowedByConfig(t.cfg, ipHost) {
 			span.SetAttributes(
 				attribute.Bool("gen_ai.network.is_ip", true),
-				attribute.String("gen_ai.network.target", lookupHost),
+				attribute.String("gen_ai.network.target", ipHost),
 				attribute.String("gen_ai.network.source", "config_allow"),
 			)
 			return t.inner.RoundTrip(req.WithContext(spanCtx))
@@ -107,10 +111,10 @@ func (t *securityTransport) RoundTrip(req *http.Request) (*http.Response, error)
 		// Raw IP without allow list → fail-closed. No allowFn.
 		span.SetAttributes(
 			attribute.Bool("gen_ai.network.is_ip", true),
-			attribute.String("gen_ai.network.target", lookupHost),
+			attribute.String("gen_ai.network.target", ipHost),
 			attribute.String("gen_ai.network.source", "block"),
 		)
-		return nil, fmt.Errorf("web_fetch request to %s blocked (raw IP)", lookupHost)
+		return nil, fmt.Errorf("web_fetch request to %s blocked (raw IP)", ipHost)
 	}
 
 	// Check layered trust hierarchy.

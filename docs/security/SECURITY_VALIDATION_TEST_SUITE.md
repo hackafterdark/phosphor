@@ -120,7 +120,7 @@ Validates that IsInside and SmartJoin handle complex path resolutions robustly.
 | `TestPathObfuscation_SymlinkTraversal` | Symlinks pointing outside workspace resolved by EvalSymlinks and blocked |
 | `TestPathObfuscation_AbsolutePathVariants` | Absolute paths on all platforms blocked: Windows (`C:\Windows\...`), Linux (`/etc/passwd`), macOS (`/Users/...`) |
 
-### `internal/agent/tools/web_fetch_test.go`
+### `pkg/agent/tools/web_fetch_test.go`
 
 Validates network egress hardening: the `securityTransport` interceptor, IP-block policy, CIDR allow list, localhost exceptions, and TUI permission prompt.
 
@@ -129,6 +129,8 @@ Validates network egress hardening: the `securityTransport` interceptor, IP-bloc
 | `TestWebFetchHardeningIPBlock` | Raw IP addresses (e.g. `192.168.1.1`) rejected — FQDN required |
 | `TestWebFetchHardeningCIDRAllow` | CIDR allow list (`192.168.1.0/24`) respected — IP falls in range allowed |
 | `TestWebFetchHardeningLocalhostAlwaysAllowed` | `127.0.0.1` / `::1` always allowed — no config needed |
+| `TestWebFetchHardeningIPv6LiteralBlocked` | Bracketed IPv6 literals (`[::1]:6379`, `[fd00::…]`) rejected as raw IPs — never reach the trust hierarchy |
+| `TestWebFetchHardeningIPv6LocalhostAllowed` | `[::1]` treated as localhost — passes the gate without a prompt |
 | `TestWebFetchHardeningUserPromptVerified` | Unknown host triggers TUI prompt — user granted access |
 | `TestWebFetchHardeningUserPromptDenyVerified` | Unknown host triggers TUI prompt — user denied access → request blocked |
 

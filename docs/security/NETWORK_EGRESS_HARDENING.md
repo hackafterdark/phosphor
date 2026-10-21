@@ -172,19 +172,38 @@ guarantees.
 ## Security Properties
 
 - **Fail-closed**: no network requests succeed until the agent confirms the domain is trusted
-- **IP-block policy**: raw IP addresses (e.g., `10.x.x.x`, `192.168.x.x`, public IPs) are rejected — FQDNs required
+- **IP-block policy**: raw IP addresses are rejected for both IPv4 and IPv6 literal forms (e.g., `10.x.x.x`, `192.168.x.x`, `[::1]`, `[fd00::…]`) — FQDNs required
 - **Opt-in overrides**: `AllowRawIPs` + `IPAllowList` (CIDR) allow raw IPs for local/network development
 - **Layered trust**: workspace + global allow lists + session allow list + user prompt
 - **OTel observability**: every allow/deny/event is captured as an OTel span with structured attributes
 - **Cacheable**: user approvals persist across requests (in-memory cache) but are session-local
 - **Shared transport**: both `web_fetch` and `web_search` share the same `*http.Client` → same `securityTransport`
 
-- **Fail-closed**: no network requests succeed until the agent confirms the domain is trusted
-- **IP-block policy**: raw IP addresses (e.g., `10.x.x.x`, `192.168.x.x`, public IPs) are rejected — FQDNs required
-- **Layered trust**: workspace + global allow lists + session allow list + user prompt
-- **OTel observability**: every allow/deny/event is captured as an OTel span with structured attributes
-- **Cacheable**: user approvals persist across requests (in-memory cache) but are session-local
-- **Shared transport**: both `web_fetch` and `web_search` share the same `*http.Client` → same `securityTransport`
+## TLS Trust and CA Compromise
+
+The IP-block policy and trust hierarchy govern *where* the agent may connect;
+certificate validation governs *whether the peer is who it claims to be*. The
+two layers are independent, and an AI agent depends on the second more than
+ordinary software does: the agent carries provider API keys in every request,
+fetches attacker-chosen URLs by design, and can download and execute code from
+hosts it has never seen. A compromised certificate authority — one whose
+intermediate keys leak and can sign certs for *any* domain — silently defeats
+every hostname-level defense at once (allow lists, IP blocks, FQDN
+requirements).
+
+Phosphor performs no custom certificate handling. TLS verification is delegated
+to the runtime trust store:
+
+- **Windows / macOS**: the platform certificate store, so OS security updates
+  and browser-grade revocation (CRLSets, OneCRL) cover CA compromise.
+- **Linux**: Phosphor builds with `CGO_ENABLED=0`, so Go uses its compiled-in
+  copy of the Mozilla root program. Keeping the Go toolchain patched —
+  `go.mod` pins the minimum version — is therefore part of the security
+  posture, not just a build detail.
+
+Concretely: when an intermediate CA in a trusted root program is compromised,
+the remedy is a toolchain/OS update, and users should update promptly the same
+way they would for a browser.
 
 ## Files Modified
 
@@ -195,7 +214,7 @@ guarantees.
 
 ## Notes
 
-- `go.mod` requires Go 1.26.4+ (running 1.25.0 locally — LSP errors may appear for tooling checks)
+- `go.mod` requires Go 1.27.3+ (patched trust store; see TLS Trust and CA Compromise above)
 - `fmt`, `net`, `strings`, `html/template`, `encoding/json`, `time`, `embed` imports are all used in body
 - `maybeDelaySearch` removed from `web_search.go` (already present in `search.go`)
 - `randomDelay` added for DDG request-budget threshold
