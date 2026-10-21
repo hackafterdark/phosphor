@@ -173,6 +173,7 @@ guarantees.
 
 - **Fail-closed**: no network requests succeed until the agent confirms the domain is trusted
 - **IP-block policy**: raw IP addresses are rejected for both IPv4 and IPv6 literal forms (e.g., `10.x.x.x`, `192.168.x.x`, `[::1]`, `[fd00::…]`) — FQDNs required
+- **Resolved-address validation**: the same IP policy is enforced at dial time on the *resolved* socket address, so an approved hostname whose DNS answer rebinds into a private, link-local, or cloud-metadata range is refused at the socket (DNS-rebinding defense). Loopback stays allowed; `IPAllowList`/`AllowRawIPs` exempt like raw IPs; when an environment proxy is configured the operator's proxy is the egress decision and the strict path remains the egress broker tier
 - **Opt-in overrides**: `AllowRawIPs` + `IPAllowList` (CIDR) allow raw IPs for local/network development
 - **Layered trust**: workspace + global allow lists + session allow list + user prompt
 - **OTel observability**: every allow/deny/event is captured as an OTel span with structured attributes

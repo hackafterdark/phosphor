@@ -131,6 +131,9 @@ Validates network egress hardening: the `securityTransport` interceptor, IP-bloc
 | `TestWebFetchHardeningLocalhostAlwaysAllowed` | `127.0.0.1` / `::1` always allowed — no config needed |
 | `TestWebFetchHardeningIPv6LiteralBlocked` | Bracketed IPv6 literals (`[::1]:6379`, `[fd00::…]`) rejected as raw IPs — never reach the trust hierarchy |
 | `TestWebFetchHardeningIPv6LocalhostAllowed` | `[::1]` treated as localhost — passes the gate without a prompt |
+| `TestWebFetchDialGateResolvedAddress` | DNS-rebinding defense: hostnames resolving to private/link-local/metadata ranges refused at the socket; loopback and public addresses pass |
+| `TestWebFetchDialGateHonorsConfigOverrides` | `allow_raw_ips` and `ip_allow_list` CIDRs exempt the dial gate, matching the raw-IP policy |
+| `TestWebFetchDialGateLocalhostHostnameAllowed` | Local dev flows survive the default gate — `127.0.0.1` httptest server reachable through the guarded dialer |
 | `TestWebFetchHardeningUserPromptVerified` | Unknown host triggers TUI prompt — user granted access |
 | `TestWebFetchHardeningUserPromptDenyVerified` | Unknown host triggers TUI prompt — user denied access → request blocked |
 

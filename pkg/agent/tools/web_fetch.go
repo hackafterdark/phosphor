@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	_ "embed"
@@ -319,11 +320,107 @@ func matchCIDR(cidr, host string) bool {
 	return network.Contains(ip)
 }
 
+// webFetchDeniedCIDRs are the destination ranges refused at dial time when a
+// hostname resolves into them (DNS rebinding defense). Loopback is exempt:
+// web_fetch's raw-IP policy always allows localhost, and local dev servers are
+// legitimate hostnames.
+var webFetchDeniedCIDRs = []string{
+	"0.0.0.0/8",      // "this" network
+	"10.0.0.0/8",     // private
+	"100.64.0.0/10",  // CGNAT
+	"169.254.0.0/16", // link-local (incl. cloud metadata 169.254.169.254)
+	"172.16.0.0/12",  // private
+	"192.168.0.0/16", // private
+	"::/128",         // IPv6 unspecified
+	"FC00::/7",       // IPv6 unique-local
+	"FE80::/10",      // IPv6 link-local
+}
+
+// envProxyConfigured reports whether the environment names an HTTP(S) proxy.
+// When a proxy is set, the address web_fetch dials is the proxy's, not the
+// target's, and private proxy infrastructure is the operator's own network
+// decision; the egress broker tier remains the strict path for that case.
+func envProxyConfigured() bool {
+	for _, k := range []string{"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"} {
+		if v := os.Getenv(k); v != "" {
+			return true
+		}
+		if v := os.Getenv(strings.ToLower(k)); v != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// dialAddressAllowed validates the *resolved* socket address of a web_fetch
+// dial. The trust hierarchy judges hostnames as strings; this gate judges the
+// actual connection target, so a DNS answer that rebinds an approved hostname
+// into a private, link-local, or metadata range is refused at the socket
+// instead of silently connecting. The resolved address is held to the same
+// policy as a raw-IP literal: loopback always allowed, configured allow-list
+// (and `allow_raw_ips`) exempt, denied ranges refused, public addresses pass.
+func dialAddressAllowed(address string, cfg *config.Config) bool {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		host = address
+	}
+	ip := net.ParseIP(strings.Trim(host, "[]"))
+	if ip == nil {
+		return true
+	}
+	if v4 := ip.To4(); v4 != nil {
+		ip = v4
+	}
+	if ip.IsLoopback() {
+		return true
+	}
+	if cfg != nil {
+		if cfg.Tools.WebFetch.AllowRawIPs {
+			return true
+		}
+		for _, cidr := range cfg.Tools.WebFetch.IPAllowList {
+			if matchCIDR(cidr, ip.String()) {
+				return true
+			}
+		}
+	}
+	for _, cidr := range webFetchDeniedCIDRs {
+		if matchCIDR(cidr, ip.String()) {
+			return false
+		}
+	}
+	return true
+}
+
+// guardedDialer returns a dialer whose ControlContext validates the resolved
+// socket address of every web_fetch connection. ControlContext runs after the
+// kernel has dialed but before any data flows, so the address judged is the
+// address actually used — there is no re-resolution race to exploit.
+func guardedDialer(cfg *config.Config) *net.Dialer {
+	return &net.Dialer{
+		ControlContext: func(_ context.Context, _, address string, _ syscall.RawConn) error {
+			if envProxyConfigured() {
+				return nil
+			}
+			if !dialAddressAllowed(address, cfg) {
+				host, _, _ := net.SplitHostPort(address)
+				return fmt.Errorf(
+					"web_fetch request to %s blocked (resolved address is in a denied range; DNS rebinding defense)",
+					host,
+				)
+			}
+			return nil
+		},
+		KeepAlive: egress.DefaultKeepAlive,
+	}
+}
+
 // NewWebFetchTool constructs a web fetch tool that uses the security transport
 // and invokes the TUI permission prompt when a host is not yet approved.
-func NewWebFetchTool(workingDir string, client *http.Client, allowFn func(ctx context.Context, host string) (bool, error)) fantasy.AgentTool {
+func NewWebFetchTool(workingDir string, client *http.Client, cfg *config.Config, allowFn func(ctx context.Context, host string) (bool, error)) fantasy.AgentTool {
 	baseTransport := egress.NewHTTPTransport()
-	secure := newSecurityTransport(egress.Transport(baseTransport), allowFn, nil)
+	baseTransport.DialContext = guardedDialer(cfg).DialContext
+	secure := newSecurityTransport(egress.Transport(baseTransport), allowFn, cfg)
 	secureClient := &http.Client{
 		Timeout:   30 * time.Second,
 		Transport: secure,
