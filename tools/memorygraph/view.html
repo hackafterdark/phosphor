@@ -1,0 +1,946 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
+<title>MEMORY AURORA</title>
+<script src="https://cdn.jsdelivr.net/npm/@cosmos.gl/graph@3.5.1/dist/index.min.js"></script>
+<style>
+  @font-face {
+    font-family: 'Departure Mono';
+    src: url('https://cdn.jsdelivr.net/gh/rektdeckard/departure-mono@main/public/assets/DepartureMono-Regular.woff2') format('woff2');
+    font-weight: normal; font-style: normal; font-display: swap;
+  }
+  :root {
+    --bg: #04060a; --panel: #090d12; --line: #1c2429; --dim: #48565e;
+    --fg: #9fb3bc; --hot: #e05a4e; --cool: #4ecfa4; --gold: #d9b45a;
+  }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg);
+    font: 13px/1.6 "Departure Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    overflow: hidden; }
+  #sky { position: fixed; inset: 0; }
+  #sky canvas { background: transparent !important; }
+  /* blueprint grid, composited over the canvas so it shows regardless of
+     WebGL alpha behavior; screen-blend keeps it visible on black */
+#grid { position: fixed; inset: 0; pointer-events: none; z-index: 1;
+    mix-blend-mode: screen;
+    background-image:
+      linear-gradient(to right, #080c10 1px, transparent 1px),
+      linear-gradient(to bottom, #080c10 1px, transparent 1px);
+    background-size: 64px 64px; }
+  #grid::after { content: ""; position: absolute; inset: 0;
+    background-image:
+      linear-gradient(to right, #0e151a 1px, transparent 1px),
+      linear-gradient(to bottom, #0e151a 1px, transparent 1px);
+    background-size: 64px 64px;
+    -webkit-mask-image:
+      radial-gradient(circle 5px at 0 0, #000 98%, transparent 100%);
+    mask-image:
+      radial-gradient(circle 5px at 0 0, #000 98%, transparent 100%);
+    -webkit-mask-size: 64px 64px;
+    mask-size: 64px 64px; }
+  #labels { position: fixed; inset: 0; pointer-events: none; overflow: hidden; z-index: 2; }
+  #labels .lbl { position: absolute; white-space: nowrap; color: #5d707b;
+    font-size: 12px; transform: translate(8px, -6px); }
+  #labels .lbl.tag { color: #d9b45a; }
+  #labels .lbl.thread { color: #8fa0a8; }
+  #reticle { position: fixed; inset: 0; pointer-events: none; z-index: 3; display: none; }
+  #reticle .rbr { position: absolute; width: 9px; height: 9px; margin: -16px 0 0 -16px;
+    border: 0 solid var(--gold); }
+  #reticle .rbr.tl { border-top-width: 2px; border-left-width: 2px; }
+  #reticle .rbr.tr { border-top-width: 2px; border-right-width: 2px; margin-left: 7px; }
+  #reticle .rbr.bl { border-bottom-width: 2px; border-left-width: 2px; margin-top: 7px; }
+  #reticle .rbr.br { border-bottom-width: 2px; border-right-width: 2px; margin: 7px 0 0 7px; }
+  #reticle .rleader { position: absolute; height: 1px; background: var(--gold);
+    transform-origin: 0 0; opacity: .5; }
+  #reticle .rxy { position: absolute; color: var(--gold); font-size: 11px;
+    letter-spacing: .1em; white-space: nowrap; opacity: .6; }
+  #hud { position: fixed; inset: 0; pointer-events: none; z-index: 4;
+    display: grid; grid-template-rows: 1fr auto;
+    grid-template-columns: repeat(4, 1fr); gap: 1px; }
+  .panel { background: color-mix(in srgb, var(--panel) 88%, transparent);
+    padding: 10px 14px; overflow: hidden; position: relative;
+    pointer-events: auto;
+    border-top: 1px solid var(--line); backdrop-filter: blur(3px); }
+  .panel h2 { margin: 0 0 6px; font-size: 12px; letter-spacing: .2em; color: var(--dim);
+    font-weight: 400; display: flex; align-items: center; gap: 8px; }
+  .panel h2::before { content: "┌"; color: var(--cool); font-size: 12px; }
+  .panel h2::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+  .panel h2 em { font-style: normal; color: var(--cool); }
+  .panel h2 em::after { content: "┐"; }
+  #title { position: fixed; top: 12px; left: 16px; letter-spacing: .3em;
+    color: var(--dim); font-size: 13px; z-index: 4; }
+  #clock { position: fixed; top: 34px; left: 16px; letter-spacing: .18em;
+    color: var(--dim); font-size: 11px; z-index: 4; }
+  #clock b { color: var(--fg); font-weight: 400; }
+  #legend { position: fixed; top: 12px; right: 16px; display: flex; gap: 14px;
+    color: var(--dim); font-size: 12px; z-index: 4; }
+  #legend span::before { content: "● "; }
+  #tip { position: fixed; display: none; max-width: 420px; padding: 8px 12px;
+    background: #0d1218; border: 1px solid var(--line); color: var(--fg);
+    pointer-events: none; z-index: 8; }
+  #tip .tid { color: var(--gold); }
+  .row { display: flex; justify-content: space-between; gap: 8px; }
+  #own .row { display: grid; grid-template-columns: minmax(0, 1fr) 40%;
+    gap: 8px; align-items: center; }
+  #own .row .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #own .bar { height: 11px; }
+  #own .bar i { display: block; height: 100%; width: 0;
+    transform: skewX(-20deg);
+    background: repeating-linear-gradient(90deg,
+      var(--gold) 0 10px, transparent 10px 12px); }
+  .bar { color: var(--gold); letter-spacing: 1px; }
+  .stream li { color: var(--dim); white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis; margin: 0; padding: 0; list-style: none; }
+  .stream .k { color: var(--cool); }
+  .stream .jump { cursor: pointer; }
+  .stream .jump:hover { color: #e8f2f6; text-decoration: underline; }
+  ul, li { margin: 0; padding: 0; list-style: none; }
+
+/* ---- side info panel ---- */
+  #detail { position: fixed; right: 16px; top: 46px; bottom: 16px;
+    width: min(480px, calc(100vw - 32px));
+    background: #0a0e13; border: 1px solid var(--line); border-radius: 6px;
+    padding: 22px 24px; box-sizing: border-box;
+    display: flex; flex-direction: column;
+    transform: translateX(calc(100% + 24px)); transition: transform .25s ease;
+    pointer-events: auto; z-index: 10; box-shadow: 0 8px 40px rgba(0, 0, 0, .5); }
+  @media (max-width: 720px) {
+    #detail { left: 8px; right: 8px; width: auto; } }
+  #dscroll { flex: 1; overflow-y: auto; min-height: 0; }
+  #detail.open { transform: translateX(0); }
+  #dback { position: absolute; top: 14px; left: 16px; cursor: pointer;
+    color: var(--dim); font-size: 13px; letter-spacing: .1em; display: none; }
+  #dback:hover { color: #e8f2f6; }
+  #dkick { margin-top: 26px; }
+  #detail .kicker { font-size: 12px; letter-spacing: .25em; color: var(--dim);
+    text-transform: uppercase; }
+  #detail h1 { font-size: 17px; color: #e8f2f6; font-weight: 600; margin: 10px 0 4px;
+    line-height: 1.4; letter-spacing: .02em; }
+  #detail .id { font-size: 12px; color: var(--gold); word-break: break-all;
+    opacity: .8; margin-bottom: 14px; }
+  #detail .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+    margin: 14px 0; }
+  #detail .kpi { background: #0d1218; border: 1px solid var(--line);
+    border-radius: 4px; padding: 8px 10px; }
+  #detail .kpi .v { font-size: 18px; color: #e8f2f6; }
+  #detail .kpi .l { font-size: 11px; letter-spacing: .18em; color: var(--dim);
+    text-transform: uppercase; }
+  #detail .tags { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0; }
+  #detail .tag { color: #d9b45a; border: 1px solid #3d3322; border-radius: 10px;
+    padding: 2px 9px; font-size: 12px; cursor: pointer; }
+  #detail .tag:hover { border-color: #d9b45a; color: #f0e2bd; }
+  #detail .body { color: #b8c8d0; font-size: 14px; line-height: 1.7;
+    white-space: pre-wrap; margin-top: 12px; border-top: 1px solid var(--line);
+    padding-top: 12px; }
+  #detail .rel { margin-top: 14px; }
+  #detail .rel li { color: var(--dim); padding: 3px 0; font-size: 12px;
+    cursor: pointer; }
+  #detail .rel li:hover { color: #e8f2f6; }
+  #detail .rel .k { color: var(--cool); }
+  #detail .close { position: absolute; top: 14px; right: 16px; cursor: pointer;
+    color: var(--dim); font-size: 14px; }
+  #detail .close:hover { color: #e8f2f6; }
+  .dcorner { position: absolute; width: 10px; height: 10px; pointer-events: none; }
+  .dcorner.tl { top: 6px; left: 6px; border-top: 1px solid var(--cool); border-left: 1px solid var(--cool); }
+  .dcorner.tr { top: 6px; right: 6px; border-top: 1px solid var(--cool); border-right: 1px solid var(--cool); }
+  .dcorner.bl { bottom: 6px; left: 6px; border-bottom: 1px solid var(--cool); border-left: 1px solid var(--cool); }
+  .dcorner.br { bottom: 6px; right: 6px; border-bottom: 1px solid var(--cool); border-right: 1px solid var(--cool); }
+  #zoomctl { position: fixed; left: 16px; bottom: 16px; display: flex; gap: 6px;
+    z-index: 9; }
+  #zoomctl button { background: #0d1218; color: var(--fg); border: 1px solid var(--line);
+    border-radius: 3px; width: 26px; height: 26px; cursor: pointer; font-size: 13px; }
+  #zoomctl button:hover { color: #e8f2f6; border-color: var(--cool); }
+  /* ambient grid accents: breathing intersection dots + traced grid lines */
+  .gdot { position: fixed; width: 5px; height: 5px; margin: -2px 0 0 -2px;
+    z-index: 1; pointer-events: none; border-radius: 50%;
+    background: radial-gradient(circle, #9fe8d8 0%, rgba(78, 207, 164, .35) 55%, transparent 75%);
+    animation: gdotPulse 2.8s ease-in-out forwards; }
+  @keyframes gdotPulse {
+    0% { opacity: 0; transform: scale(.5); }
+    35% { opacity: .8; transform: scale(1); }
+    100% { opacity: 0; transform: scale(.5); } }
+  .gtrace { position: fixed; z-index: 1; pointer-events: none;
+    background: linear-gradient(90deg, transparent, #4ecfa4 30%, #4ecfa4 70%, transparent);
+    opacity: 0; }
+  .gtrace.h { height: 1px; animation: gtraceH 2.6s ease-in-out forwards; }
+  @keyframes gtraceH {
+    0% { width: 0; opacity: 0; }
+    15% { opacity: var(--gtr, .18); }
+    65% { width: 100%; opacity: var(--gtr, .18); }
+    100% { width: 100%; opacity: 0; } }
+  /* edge pulse: packet of light traveling along a graph link */
+  .epulse { position: fixed; width: 6px; height: 6px; margin: -3px 0 0 -3px;
+    z-index: 2; pointer-events: none; border-radius: 50%;
+    background: radial-gradient(circle, #e8f2f6 0%, #4ecfa4 50%, transparent 75%); }
+  /* legend swatch: smooth dim-and-restore instead of a hard blink */
+  #legend span.dim { animation: legendDim 1.6s ease-in-out; }
+  @keyframes legendDim {
+    0%, 100% { opacity: 1; }
+    45% { opacity: .12; } }
+</style>
+</head>
+<body>
+<div id="sky"></div>
+<div id="grid"></div>
+<div id="labels"></div>
+<div id="reticle">
+  <div class="rbr tl"></div><div class="rbr tr"></div>
+  <div class="rbr bl"></div><div class="rbr br"></div>
+  <div class="rleader"></div>
+  <div class="rxy"></div>
+</div>
+<div id="title">┌ <b>MEMORY</b> · CONSTELLATION ┐</div>
+<div id="clock">SYS.TIME <b id="tval">--:--:--</b> <span id="status" style="color:var(--cool)"></span></div>
+<div id="legend"></div>
+<div id="zoomctl">
+  <button id="zin">+</button><button id="zout">−</button><button id="zfit">◎</button>
+  <button id="fxb" title="HUD effects on/off">FX</button>
+</div>
+<div id="hud">
+  <div></div><div></div><div></div><div></div>
+  <div class="panel" id="own"><h2>THREADS</h2></div>
+  <div class="panel" id="arr"><h2>ARRIVALS</h2></div>
+  <div class="panel" id="ver"><h2>VERDICTS</h2></div>
+  <div class="panel" id="str"><h2>STREAM</h2></div>
+</div>
+<div id="tip"></div>
+<div id="detail">
+  <span class="dcorner tl"></span><span class="dcorner tr"></span>
+  <span class="dcorner bl"></span><span class="dcorner br"></span>
+  <span class="close" id="dclose">✕</span>
+  <span id="dback">← back</span>
+  <div class="kicker" id="dkick"></div>
+  <h1 id="dtitle"></h1>
+  <div class="id" id="did"></div>
+  <div class="grid">
+    <div class="kpi"><div class="v" id="dtrust"></div><div class="l">Trust</div></div>
+    <div class="kpi"><div class="v" id="drecall"></div><div class="l">Recall</div></div>
+    <div class="kpi"><div class="v" id="dcreated"></div><div class="l">Created</div></div>
+    <div class="kpi"><div class="v" id="dupdated"></div><div class="l">Updated</div></div>
+  </div>
+  <div class="tags" id="dtags"></div>
+  <div id="dscroll">
+    <div class="body" id="dbody"></div>
+    <ul class="rel" id="drel"></ul>
+  </div>
+</div>
+<script>
+console.log("view.html build: cosmos v59");
+let fx = localStorage.getItem("phosphor-fx") !== "0" &&
+  !matchMedia("(prefers-reduced-motion: reduce)").matches;
+let fxGen = 0;
+const GLYPHS = "▚▞░▒▓#%&@$?/\\<>|+=*";
+function fxScramble(el, final, delay, dur, chars) {
+  chars = chars || GLYPHS;
+  if (!fx) { el.textContent = final; return; }
+  const gen = fxGen;
+  setTimeout(() => {
+    const t0 = performance.now();
+    (function tick(now) {
+      if (gen !== fxGen || !fx) { el.textContent = final; return; }
+      const p = Math.min(1, (now - t0) / dur);
+      const shown = Math.floor(p * final.length);
+      let s = final.slice(0, shown);
+      for (let k = shown; k < final.length; k++)
+        s += chars[(Math.random() * chars.length) | 0];
+      el.textContent = s;
+      if (p < 1) requestAnimationFrame(tick);
+      else el.textContent = final;
+    })(performance.now());
+  }, delay);
+}
+function fxCount(el, delay) {
+  const final = el.dataset.fx;
+  if (!fx) { el.textContent = final; return; }
+  const gen = fxGen;
+  const target = parseInt(final, 10);
+  setTimeout(() => {
+    const t0 = performance.now();
+    (function tick(now) {
+      if (gen !== fxGen || !fx) { el.textContent = final; return; }
+      const p = Math.min(1, (now - t0) / 600);
+      el.textContent = Math.round(target * p);
+      if (p < 1) requestAnimationFrame(tick);
+      else el.textContent = final;
+    })(performance.now());
+  }, delay);
+}
+function fxBar(el, pct, delay) {
+  if (!fx) { el.style.width = pct + "%"; return; }
+  const gen = fxGen;
+  setTimeout(() => {
+    const t0 = performance.now();
+    (function tick(now) {
+      if (gen !== fxGen || !fx) { el.style.width = pct + "%"; return; }
+      const p = Math.min(1, (now - t0) / 500);
+      el.style.width = (pct * p) + "%";
+      if (p < 1) requestAnimationFrame(tick);
+    })(performance.now());
+  }, delay);
+}
+const TYPE_COLORS = {
+  decision: "#e05a4e", constraint: "#4ed4e0", requirement: "#4ecfa4",
+  reference: "#5a86e0", plan: "#b45ae0", preference: "#e0964e",
+  fact: "#8899a4", pattern: "#4ecfa4", environment: "#8899a4",
+  task: "#e05a4e", thread: "#8fa0a8", tag: "#d9b45a", unknown: "#48565e",
+};
+const color = d => TYPE_COLORS[d.type] || TYPE_COLORS.unknown;
+
+const SPACE = 4096;
+const center = SPACE / 2;
+const scatter = (r, k) => center + (Math.random() - .5) * r * k;
+
+// One boot() per graph payload. The live server polls graph.json and
+// re-boots on change; the snapshot report calls boot() once with its
+// embedded payload and never polls.
+let liveTimer = null;
+let fxTimers = [];
+let clockStarted = false;
+function boot(g) {
+  clearTimeout(liveTimer);
+  fxTimers.forEach(clearTimeout);
+  fxTimers = [];
+  const nodes = g.nodes;
+  const idx = new Map(nodes.map((n, i) => [n.id, i]));
+
+  // ---- typed-array payloads for cosmos.gl -------------------------------
+  const N = nodes.length;
+  const positions = new Float32Array(N * 2);
+  const colors = new Float32Array(N * 4);
+  const sizes = new Float32Array(N);
+  const clusters = new Float32Array(N);
+  const clusterPos = new Float32Array(N * 2);
+  const clusterStrength = new Float32Array(N);
+
+  // node size = connectivity: hubs grow with degree, leaves scale with
+  // degree + recall and have a readable floor
+  const degree = new Map();
+  g.edges.forEach(e => {
+    degree.set(e.source, (degree.get(e.source) || 0) + 1);
+    degree.set(e.target, (degree.get(e.target) || 0) + 1);
+  });
+
+  // hub anchors: thread ring inside, tag ring outside, each ring sorted by
+  // degree so the busiest hubs sit at the top; fixed radii in graph space
+  const ringPos = new Map();
+  const hubs = nodes
+    .filter(n => n.type === "thread" || n.type === "tag")
+    .sort((a, b) => (degree.get(b.id) || 0) - (degree.get(a.id) || 0));
+  const threads = hubs.filter(n => n.type === "thread");
+  const tags = hubs.filter(n => n.type === "tag");
+  [[threads, 650, 0], [tags, 1150, .5]].forEach(([ring, r, phase]) =>
+    ring.forEach((n, k) => {
+      const a = ((k + phase) / ring.length) * 2 * Math.PI - Math.PI / 2;
+      ringPos.set(n.id, [center + Math.cos(a) * r, center + Math.sin(a) * r]);
+    }));
+
+  const groupIndex = new Map();
+  const groupList = [];
+  nodes.forEach((n, i) => {
+    const c = color(n);
+    colors[i * 4] = parseInt(c.slice(1, 3), 16) / 255;
+    colors[i * 4 + 1] = parseInt(c.slice(3, 5), 16) / 255;
+    colors[i * 4 + 2] = parseInt(c.slice(5, 7), 16) / 255;
+    colors[i * 4 + 3] = 1;
+    const group = n.type === "thread" || n.type === "tag";
+    const deg = degree.get(n.id) || 0;
+    sizes[i] = group ? 7 + Math.sqrt(deg) * 2.2 + Math.sqrt(n.recall) * .8
+                     : 4 + Math.sqrt(deg) * 1.8 + Math.sqrt(n.recall) * .6;
+    const key = group ? n.id
+      : (n.thread ? "thread:" + n.thread : (n.tags[0] ? "tag:" + n.tags[0] : ""));
+    const home = ringPos.get(key);
+    if (home) {
+      const jitter = group ? 80 : Math.min(400, 120 + deg * 40);
+      positions[i * 2] = home[0] + (Math.random() - .5) * jitter;
+      positions[i * 2 + 1] = home[1] + (Math.random() - .5) * jitter;
+    } else {
+      positions[i * 2] = scatter(1000, 1);
+      positions[i * 2 + 1] = scatter(1000, 1);
+    }
+    if (key) {
+      if (!groupIndex.has(key)) {
+        groupIndex.set(key, groupList.length);
+        groupList.push({ key, i });
+      }
+      clusters[i] = groupIndex.get(key);
+      clusterStrength[i] = group ? 1 : .45;
+    }
+  });
+  groupList.forEach((grp, gi) => {
+    const p = ringPos.get(grp.key);
+    clusterPos[gi * 2] = p ? p[0] : center;
+    clusterPos[gi * 2 + 1] = p ? p[1] : center;
+  });
+
+  const E = g.edges.length;
+  const links = new Float32Array(E * 2);
+  g.edges.forEach((e, j) => {
+    links[j * 2] = idx.get(e.source);
+    links[j * 2 + 1] = idx.get(e.target);
+  });
+
+  // ---- labels: only group nodes get text, tracked via screen coords ------
+  const labelLayer = document.getElementById("labels");
+  const labelEls = new Map();
+  nodes.forEach((n, i) => {
+    if (n.type !== "thread" && n.type !== "tag") return;
+    const el = document.createElement("div");
+    el.className = "lbl " + n.type;
+    el.textContent = n.type === "tag" ? "#" + n.summary : n.summary;
+    labelLayer.appendChild(el);
+    labelEls.set(i, el);
+  });
+  function drawLabels() {
+    if (!graph.isReady) return;
+    const tracked = graph.getTrackedPointPositionsMap();
+    for (const [i, el] of labelEls) {
+      const pos = tracked.get(i);
+      if (!pos) { el.style.display = "none"; continue; }
+      const s = graph.spaceToScreenPosition(pos);
+      el.style.display = "block";
+      el.style.left = s[0] + "px";
+      el.style.top = s[1] + "px";
+    }
+    if (hoverIdx !== null) updateReticle(hoverIdx, tracked);
+    else if (activeIdx !== null) updateReticle(activeIdx, tracked);
+    else reticle.style.display = "none";
+  }
+  let labelsQueued = false;
+  const queueLabels = () => {
+    if (labelsQueued) return;
+    labelsQueued = true;
+    requestAnimationFrame(() => { labelsQueued = false; drawLabels(); });
+  };
+
+  let hoverIdx = null;
+  let activeIdx = null;
+  function updateReticle(i, tracked) {
+    const pos = tracked ? tracked.get(i) : graph.getTrackedPointPositionsMap().get(i);
+    if (!pos) { hideReticle(); return; }
+    const s = graph.spaceToScreenPosition(pos);
+    reticle.style.display = "block";
+    const r = 16 + (graph.getPointRadiusByIndex(i) || 4);
+    retBr.forEach(el => {
+      el.style.left = s[0] + "px";
+      el.style.top = s[1] + "px";
+      el.style.margin = (-r) + "px 0 0 " + (-r) + "px";
+    });
+    const br = retBr[1], bl = retBr[2], brc = retBr[3];
+    br.style.marginLeft = (r - 9) + "px";
+    bl.style.marginTop = (r - 9) + "px";
+    brc.style.margin = (r - 9) + "px 0 0 " + (r - 9) + "px";
+    const lx = s[0] + r + 36, ly = s[1] - r - 36;
+    retXY.style.left = lx + "px";
+    retXY.style.top = ly + "px";
+    retXY.textContent = "x:" + Math.round(s[0]) + " y:" + Math.round(s[1]);
+    const dx = lx - (s[0] + r), dy = ly - (s[1] - r);
+    retLeader.style.left = (s[0] + r) + "px";
+    retLeader.style.top = (s[1] - r) + "px";
+    retLeader.style.width = Math.hypot(dx, dy) + "px";
+    retLeader.style.transform = "rotate(" + Math.atan2(dy, dx) + "rad)";
+  }
+  function hideReticle() {
+    reticle.style.display = "none";
+    tip.style.display = "none";
+    hoverIdx = null;
+  }
+
+  // ---- graph -------------------------------------------------------------
+  const tip = document.getElementById("tip");
+  const reticle = document.getElementById("reticle");
+  const retBr = [...reticle.querySelectorAll(".rbr")];
+  const retXY = reticle.querySelector(".rxy");
+  const retLeader = reticle.querySelector(".rleader");
+  const graph = new Cosmos.Graph(document.getElementById("sky"), {
+    backgroundColor: [0, 0, 0, 0],
+    spaceSize: SPACE,
+    simulationFriction: .85,
+    simulationRepulsion: 3,
+    simulationGravity: .05,
+    simulationCluster: .2,
+    renderLinks: true,
+    linkDefaultColor: "#2a3a44",
+    linkOpacity: .5,
+    linkDefaultWidth: 1,
+    renderHoveredPointRing: true,
+    hoveredPointRingColor: "#e8f2f6",
+    outlinedPointRingColor: "#4ecfa4",
+    pointOcclusionCulling: true,
+    linkBlending: false,
+    simulationCollision: .2,
+    enableDrag: true,
+    fitViewOnInit: true,
+    fitViewPadding: .12,
+    fitViewDelay: 300,
+    fitViewDuration: 500,
+    transitionDuration: 0,
+    attribution: "",
+    onPointMouseOver: (i, pointPos, event) => {
+      const n = nodes[i];
+      graph.trackPointPositionsByIndices(
+        [...new Set([...labelEls.keys(), i, activeIdx].filter(v => v !== null))]);
+      hoverIdx = i;
+      updateReticle(i);
+      const s = graph.spaceToScreenPosition(pointPos);
+      const cx = event ? event.clientX : s[0];
+      const cy = event ? event.clientY : s[1];
+      tip.style.display = "block";
+      tip.innerHTML = `<span class="tid">${n.id}</span><br>` +
+        (n.summary || "") + "<br>type " + n.type +
+        " · trust " + n.trust.toFixed(2) + " · recall " + n.recall;
+      const tw = tip.offsetWidth, thh = tip.offsetHeight;
+      let lx = cx + 14, ly = cy + 14;
+      if (lx + tw > innerWidth - 8) lx = cx - tw - 14;
+      if (ly + thh > innerHeight - 8) ly = cy - thh - 14;
+      tip.style.left = lx + "px";
+      tip.style.top = ly + "px";
+    },
+    onPointMouseOut: () => {
+      tip.style.display = "none";
+      hoverIdx = null;
+      if (activeIdx !== null) updateReticle(activeIdx);
+      else reticle.style.display = "none";
+    },
+    onPointClick: i => openDetail(nodes[i]),
+    onZoom: queueLabels,
+    onSimulationTick: queueLabels,
+    onDrag: queueLabels,
+    onDragEnd: queueLabels,
+  });
+  graph.setPointPositions(positions);
+  graph.setPointColors(colors);
+  graph.setPointSizes(sizes);
+  graph.setPointClusters(clusters);
+  graph.setClusterPositions(clusterPos);
+  graph.setPointClusterStrength(clusterStrength);
+  graph.setLinks(links);
+  graph.render();
+  graph.trackPointPositionsByIndices([...labelEls.keys()]);
+  drawLabels();
+
+  // ---- side panel --------------------------------------------------------
+  const panel = document.getElementById("detail");
+  const relOf = n => g.edges.filter(e => e.source === n.id || e.target === n.id);
+  const kpis = ["dtrust", "drecall", "dcreated", "dupdated"].map(id =>
+    document.getElementById(id).parentElement);
+  const backBtn = document.getElementById("dback");
+  const navStack = [];
+  backBtn.onclick = () => { const prev = navStack.pop(); if (prev) openDetail(prev, true); };
+  function openDetail(n, isBack) {
+    if (!isBack && panel.classList.contains("open") && currentNode && currentNode !== n)
+      navStack.push(currentNode);
+    currentNode = n;
+    activeIdx = idx.get(n.id);
+    graph.setConfigPartial({ outlinedPointIndices: [activeIdx] });
+    graph.trackPointPositionsByIndices(
+      [...new Set([...labelEls.keys(), activeIdx])]);
+    updateReticle(activeIdx);
+    backBtn.style.display = navStack.length ? "block" : "none";
+    document.getElementById("dkick").textContent = n.type;
+    document.getElementById("dtitle").textContent = n.summary || n.id;
+    document.getElementById("did").textContent = n.id;
+    document.getElementById("dtrust").textContent = n.trust.toFixed(2);
+    document.getElementById("drecall").textContent = n.recall;
+    document.getElementById("dcreated").textContent = (n.created || "—").slice(0, 10);
+    document.getElementById("dupdated").textContent = (n.updated || "—").slice(0, 10);
+    document.getElementById("dtags").innerHTML =
+      (n.tags || []).map(t => `<span class="tag" data-tag="${t}">#${t}</span>`).join("");
+    document.querySelectorAll("#dtags .tag").forEach(el => {
+      const id = "tag:" + el.dataset.tag;
+      if (!idx.has(id)) return;
+      el.onclick = () => openDetail(nodes[idx.get(id)]);
+    });
+    if (n.type === "thread" || n.type === "tag") {
+      kpis.forEach(el => el.style.display = "none");
+      const members = relOf(n)
+        .map(e => nodes[idx.get(e.source === n.id ? e.target : e.source)])
+        .filter(m => m && m.type !== "thread" && m.type !== "tag");
+      document.getElementById("dbody").textContent =
+        n.type + " group · " + members.length + " memories linked to this node";
+      document.getElementById("drel").innerHTML = members.map(m =>
+        `<li data-id="${m.id}"><span class="k" style="color:${TYPE_COLORS[m.type] || TYPE_COLORS.unknown}">${m.type}</span> ${(m.summary || m.id).slice(0, 70)}</li>`).join("");
+    } else {
+      kpis.forEach(el => el.style.display = "");
+      document.getElementById("dbody").textContent = n.body || n.summary || "(no body)";
+      const rel = relOf(n).slice(0, 12).map(e => ({
+        kind: e.kind, id: e.source === n.id ? e.target : e.source,
+      }));
+      document.getElementById("drel").innerHTML = rel.map(r =>
+        `<li data-id="${r.id}"><span class="k">${r.kind}</span> ${r.id}</li>`).join("");
+    }
+    document.querySelectorAll("#drel li").forEach(li =>
+      li.onclick = () => { const m = nodes[idx.get(li.dataset.id)]; if (m) openDetail(m); });
+    panel.classList.add("open");
+    document.getElementById("dscroll").scrollTop = 0;
+    if (fx) fxRingBreath();
+  }
+  let currentNode = null;
+  // keep the panel's bottom edge clear of the HUD panels; height is
+  // measured live so the layout survives window/panel resizes
+  function layoutDetail() {
+    const hudH = document.querySelector("#own").offsetHeight;
+    panel.style.bottom = (hudH + 24) + "px";
+  }
+  layoutDetail();
+  addEventListener("resize", layoutDetail);
+  document.getElementById("dclose").onclick = () => {
+    panel.classList.remove("open");
+    navStack.length = 0; currentNode = null; activeIdx = null; breathOn = false;
+    graph.setConfigPartial({ outlinedPointIndices: [] });
+    hideReticle();
+  };
+  addEventListener("keydown", e => {
+    if (e.key === "Escape") {
+      panel.classList.remove("open");
+      navStack.length = 0; currentNode = null; activeIdx = null; breathOn = false;
+      graph.setConfigPartial({ outlinedPointIndices: [] });
+      hideReticle();
+    }
+  });
+
+  // ---- zoom controls ------------------------------------------------------
+  document.getElementById("zin").onclick = () => graph.setZoomLevel(graph.getZoomLevel() * 1.4);
+  document.getElementById("zout").onclick = () => graph.setZoomLevel(graph.getZoomLevel() / 1.4);
+  document.getElementById("zfit").onclick = () => graph.setZoomLevel(1);
+
+  // ---- HUD effect replay --------------------------------------------------
+  function fxHud() {
+    document.querySelectorAll("#own .bar i").forEach((el, i) =>
+      fxBar(el, +el.dataset.fx, i * 80));
+    document.querySelectorAll("#ver .v").forEach((el, i) =>
+      fxCount(el, i * 90));
+    document.querySelectorAll("#str .stream li").forEach((li, i) =>
+      li.querySelectorAll("[data-fx]").forEach(el =>
+        fxScramble(el, el.dataset.fx, i * 90, 450)));
+  }
+  const fxb = document.getElementById("fxb");
+  const syncFx = () => { fxb.style.opacity = fx ? "1" : ".4"; };
+  fxb.onclick = () => {
+    fx = !fx;
+    localStorage.setItem("phosphor-fx", fx ? "1" : "0");
+    fxGen++;
+    fxHud();
+    syncFx();
+  };
+
+  // ---- HUD chrome ---------------------------------------------------------
+  const seen = new Set();
+  document.getElementById("legend").innerHTML = nodes
+    .filter(n => !["thread", "tag"].includes(n.type) && !seen.has(n.type) && seen.add(n.type))
+    .map(n => `<span style="color:${color(n)}">${n.type}</span>`).join("");
+
+  const th = [...nodes.filter(n => !["thread", "tag"].includes(n.type))
+    .reduce((m, n) => m.set(n.thread || "(untitled)", (m.get(n.thread || "(untitled)") || 0) + 1), new Map())]
+    .sort((a, b) => b[1] - a[1]).slice(0, 8);
+  const maxc = th.length ? th[0][1] : 1;
+  const tlatest = new Map();
+  nodes.forEach(n => {
+    if (["thread", "tag"].includes(n.type)) return;
+    const t = n.thread || "(untitled)";
+    const u = n.updated || n.created || "";
+    if (u > (tlatest.get(t) || "")) tlatest.set(t, u);
+  });
+  document.querySelector("#own h2").innerHTML =
+    "THREADS <span style=\"color:var(--dim);letter-spacing:.1em\">· RELATIVE LOAD</span>";
+  document.querySelector("#own").insertAdjacentHTML("beforeend",
+    "<ul>" + th.map(d => `<li class="row"><span class="nm">${d[0]}</span>` +
+      `<span class="bar"><i data-fx="${Math.round(d[1] / maxc * 100)}"></i></span>` +
+      `</li>`).join("") + "</ul>");
+  const ownTip = document.getElementById("tip");
+  document.querySelectorAll("#own .row").forEach((row, i) => {
+    row.addEventListener("mousemove", e => {
+      const d = th[i];
+      ownTip.innerHTML = `<span class="tid">${d[0]}</span><br>` +
+        `MEMORIES ${d[1]}<br>LATEST ${(tlatest.get(d[0]) || "—").slice(0, 10)}`;
+      ownTip.style.display = "block";
+      ownTip.style.left = (e.clientX + 14) + "px";
+      ownTip.style.top = (e.clientY + 14) + "px";
+    });
+    row.addEventListener("mouseleave", () => { ownTip.style.display = "none"; });
+  });
+
+  document.querySelector("#arr h2").innerHTML =
+    "ARRIVALS <span style=\"color:var(--dim);letter-spacing:.1em\">· MISSION LOG</span>";
+  const arr = document.querySelector("#arr");
+  const MON = ["JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"];
+  const total35 = Object.values(g.arrivals).reduce((a, b) => a + b, 0);
+  arr.insertAdjacentHTML("beforeend", '<div id="arrwrap"></div>');
+  const arrwrap = arr.querySelector("#arrwrap");
+  function drawArr() {
+    const now = new Date();
+    const availH = Math.max(60, arr.clientHeight - 44);
+    const availW = Math.max(60, arr.clientWidth - 150);
+    const D = Math.min(200, availH, availW);
+    const cx0 = D / 2, cy = D / 2, R = D / 2 - 10;
+    let arrSvg = `<circle cx="${cx0}" cy="${cy}" r="${R}" fill="none" stroke="#1c2429" stroke-width="1"/>`;
+    for (let k = 0; k < 35; k++) {
+      const d = new Date(now);
+      d.setUTCDate(d.getUTCDate() - (34 - k));
+      const n = g.arrivals[d.toISOString().slice(0, 10)] || 0;
+      const a = (k / 35) * 2 * Math.PI - Math.PI / 2;
+      const cos = Math.cos(a), sin = Math.sin(a);
+      const r0 = R - 4;
+      const r1 = r0 - 3 - Math.min(18, n * 4);
+      arrSvg += `<line x1="${cx0 + cos * r0}" y1="${cy + sin * r0}" ` +
+        `x2="${cx0 + cos * r1}" y2="${cy + sin * r1}" stroke="#4ecfa4" ` +
+        `stroke-width="2" stroke-opacity="${n ? (.35 + .65 * Math.min(1, n / 5)).toFixed(2) : .15}"/>`;
+    }
+    arrSvg += `<text x="${cx0}" y="${cy + 4}" text-anchor="middle" font-size="10" fill="#48565e">` +
+      `${MON[now.getUTCMonth()]}·${String(now.getUTCDate()).padStart(2, "0")}</text>`;
+    arrwrap.innerHTML =
+      `<div style="display:flex;align-items:center;gap:16px">` +
+      `<svg width="${D}" height="${D}" style="flex:none">` + arrSvg + `</svg>` +
+      `<div style="color:var(--dim);font-size:11px;line-height:2">` +
+      `T+${String(now.getUTCDate()).padStart(3, "0")} DAYS<br>` +
+      `LOGGED <span style="color:var(--cool)">${total35}</span> MEMORIES<br>` +
+      `SIGNAL = DAILY INTAKE</div></div>`;
+  }
+  drawArr();
+  let arrTimer = null;
+  addEventListener("resize", () => {
+    clearTimeout(arrTimer);
+    arrTimer = setTimeout(drawArr, 150);
+  });
+
+  document.querySelector("#ver h2").innerHTML =
+    "TYPES <span style=\"color:var(--dim);letter-spacing:.1em\">· DISTRIBUTION</span>";
+  document.querySelector("#ver").insertAdjacentHTML("beforeend",
+    "<ul>" + Object.entries(g.verdicts).sort((a, b) => b[1] - a[1]).map(d =>
+      `<li class="row"><span>● ${d[0]}</span><span class="v" data-fx="${d[1]}">${d[1]}</span></li>`).join("") + "</ul>");
+
+  document.querySelector("#str").insertAdjacentHTML("beforeend",
+    '<ul class="stream">' + g.edges.slice(-12).reverse().map(d =>
+      `<li><span class="k" data-fx="${d.kind}">${d.kind}</span> ` +
+      `<span class="jump" data-id="${d.source}">${d.source.slice(0, 10)}</span> → ` +
+      `<span class="jump" data-id="${d.target}" data-fx="${d.target.slice(0, 10)}">${d.target.slice(0, 10)}</span></li>`).join("") + "</ul>");
+  document.querySelectorAll("#str .jump").forEach(el =>
+    el.onclick = () => focusNode(el.dataset.id));
+  function focusNode(id) {
+    const i = idx.get(id);
+    if (i === undefined) return;
+    graph.zoomToPointByIndex(i, 800, undefined, true, false);
+    openDetail(nodes[i]);
+  }
+
+  // HUD panels are built by now; start effects last
+  syncFx();
+  fxHud();
+  layoutDetail(); // re-measure now that the panels have their content
+
+  // ---- ambient effects: rare, self-cancelling, all gated by the FX flag ---
+  function fxGlitch(el, dur) {
+    const gen = fxGen;
+    const orig = el.textContent;
+    setTimeout(() => {
+      const t0 = performance.now();
+      const iv = setInterval(() => {
+        if (gen !== fxGen || !fx || performance.now() - t0 > dur) {
+          clearInterval(iv);
+          el.textContent = orig;
+          return;
+        }
+        const i = (Math.random() * orig.length) | 0;
+        el.textContent = orig.slice(0, i) +
+          GLYPHS[(Math.random() * GLYPHS.length) | 0] + orig.slice(i + 1);
+      }, 60);
+    }, 0);
+  }
+  function fxTwinkle() {
+    const i = (Math.random() * N) | 0;
+    const off = i * 4;
+    const was = [colors[off], colors[off + 1], colors[off + 2]];
+    const t0 = performance.now();
+    (function pulse(now) {
+      const p = Math.min(1, (now - t0) / 900);
+      const boost = Math.sin(p * Math.PI) * .6;
+      colors[off] = Math.min(1, was[0] + boost);
+      colors[off + 1] = Math.min(1, was[1] + boost);
+      colors[off + 2] = Math.min(1, was[2] + boost);
+      graph.setPointColors(colors);
+      if (p < 1) requestAnimationFrame(pulse);
+    })(t0);
+  }
+  function fxEdgePulse() {
+    if (!g.edges.length) return;
+    const e = g.edges[(Math.random() * g.edges.length) | 0];
+    const si = idx.get(e.source), ti = idx.get(e.target);
+    if (si === undefined || ti === undefined) return;
+    const tracked0 = [...new Set([...labelEls.keys(), activeIdx].filter(v => v !== null))];
+    graph.trackPointPositionsByIndices([...new Set([...tracked0, si, ti])]);
+    const el = document.createElement("div");
+    el.className = "epulse";
+    document.body.appendChild(el);
+    const t0 = performance.now();
+    (function fly(now) {
+      const p = Math.min(1, (now - t0) / 900);
+      const tracked = graph.getTrackedPointPositionsMap();
+      const sp = tracked.get(si), tp = tracked.get(ti);
+      if (!sp || !tp) { el.remove(); return; }
+      const a = graph.spaceToScreenPosition(sp);
+      const b = graph.spaceToScreenPosition(tp);
+      el.style.left = (a[0] + (b[0] - a[0]) * p) + "px";
+      el.style.top = (a[1] + (b[1] - a[1]) * p) + "px";
+      el.style.opacity = Math.sin(p * Math.PI).toFixed(2);
+      if (p < 1) requestAnimationFrame(fly);
+      else el.remove();
+    })(t0);
+  }
+  function fxTextGlitch(el) {
+    const gen = fxGen;
+    const orig = el.innerHTML;
+    const text = el.textContent;
+    setTimeout(() => {
+      if (gen !== fxGen || !fx) return;
+      el.textContent = text.replace(/[^ ]/g,
+        () => GLYPHS[(Math.random() * GLYPHS.length) | 0]);
+      setTimeout(() => { if (gen === fxGen && fx) el.innerHTML = orig; }, 160);
+    }, 0);
+  }
+  function fxPanelGlitch() {
+    const els = [document.getElementById("title"),
+      ...document.querySelectorAll("#hud .panel h2")];
+    fxTextGlitch(els[(Math.random() * els.length) | 0]);
+  }
+  function fxTimeGlitch() {
+    const s = tval.textContent;
+    if (!s || s.startsWith("--")) return;
+    const i = (Math.random() * s.length) | 0;
+    tval.textContent = s.slice(0, i) +
+      GLYPHS[(Math.random() * GLYPHS.length) | 0] + s.slice(i + 1);
+  }
+  function fxLegendDim() {
+    const items = [...document.querySelectorAll("#legend span")];
+    if (!items.length) return;
+    const el = items[(Math.random() * items.length) | 0];
+    // random flicker length, always quick (0.5-1.5s)
+    const dur = 0.5 + Math.random();
+    el.style.animation = `legendDim ${dur.toFixed(2)}s ease-in-out`;
+    setTimeout(() => { el.style.animation = ""; }, dur * 1000 + 100);
+  }
+  // outline-ring breathing, tied to the user's actual selection only
+  let breathOn = false;
+  function fxRingBreath() {
+    if (breathOn) return;
+    breathOn = true;
+    const hex = v => v.toString(16).padStart(2, "0");
+    (function beat(now) {
+      if (!breathOn || activeIdx === null || !fx) {
+        breathOn = false;
+        graph.setConfigPartial({ outlinedPointRingColor: "#4ecfa4" });
+        return;
+      }
+      const b = .55 + .45 * Math.sin(now / 380);
+      graph.setConfigPartial({ outlinedPointRingColor:
+        "#" + hex(Math.round(78 * b)) + hex(Math.round(207 * b)) + hex(Math.round(164 * b)) });
+      requestAnimationFrame(beat);
+    })(performance.now());
+  }
+  // grid accents run regardless of the FX flag (user-requested background FX)
+  // grid-dot accents are parked for now: they land off-grid and read as
+  // noise rather than blueprint texture. Revisit if alignment is fixed.
+  // function spawnGridDot() {
+  //   const el = document.createElement("div");
+  //   el.className = "gdot";
+  //   el.style.left = (((Math.random() * (innerWidth / 64)) | 0) + .5) * 64 + "px";
+  //   el.style.top = (((Math.random() * (innerHeight / 64)) | 0) + .5) * 64 + "px";
+  //   document.body.appendChild(el);
+  //   setTimeout(() => el.remove(), 3000);
+  // }
+  function spawnGridTrace() {
+    // horizontal scan lines only; peak brightness varies per line,
+    // .18 is the floor, capped at .32 so it never reads as foreground
+    const el = document.createElement("div");
+    el.className = "gtrace h";
+    el.style.setProperty("--gtr",
+      (.18 + Math.random() * .14).toFixed(3));
+    el.style.left = "0";
+    el.style.top = (((Math.random() * (innerHeight / 64)) | 0) + .5) * 64 + "px";
+    document.body.appendChild(el);
+    setTimeout(() => el.remove(), 2800);
+  }
+  // each effect gets its own heartbeat so pacing is predictable and one
+  // rare effect can't starve the others
+  function scheduleLoop(min, max, fn) {
+    (function loop() {
+      const id = setTimeout(() => {
+        try { fn(); } catch (err) { console.warn("ambient effect failed", err); }
+        loop();
+      }, min + Math.random() * (max - min));
+      fxTimers.push(id);
+    })();
+  }
+  // scheduleLoop(6000, 14000, spawnGridDot); // parked: see spawnGridDot
+  scheduleLoop(5000, 12000, spawnGridTrace);
+  scheduleLoop(6000, 14000, () => { if (fx) fxTwinkle(); });
+  scheduleLoop(8000, 20000, () => {
+    if (fx && labelEls.size) {
+      const lbls = [...labelEls.values()];
+      fxGlitch(lbls[(Math.random() * lbls.length) | 0], 260);
+    }
+  });
+  scheduleLoop(8000, 18000, () => { if (fx) fxEdgePulse(); });
+  scheduleLoop(10000, 22000, () => { if (fx) fxTimeGlitch(); });
+  scheduleLoop(12000, 26000, () => { if (fx) fxLegendDim(); });
+  scheduleLoop(7000, 15000, () => { if (fx) fxPanelGlitch(); });
+  // one-shot self-test: show the grid accents fire once shortly after load
+  // setTimeout(spawnGridDot, 1500); // parked: see spawnGridDot
+  fxTimers.push(setTimeout(spawnGridTrace, 2500));
+  fxTimers.push(setTimeout(() => { if (fx) fxTimeGlitch(); }, 3500));
+  if (!fx) console.info(
+    "FX off: HUD effects disabled (reduced-motion or phosphor-fx=0). " +
+    "Grid accents still run. Click the FX button to enable HUD effects.");
+
+  const tval = document.getElementById("tval");
+  const tick = () => {
+    const d = new Date();
+    const p = v => String(v).padStart(2, "0");
+    tval.textContent = p(d.getUTCHours()) + ":" + p(d.getUTCMinutes()) + ":" + p(d.getUTCSeconds());
+  };
+  tick();
+  if (!clockStarted) {
+    clockStarted = true;
+    setInterval(tick, 1000);
+  }
+}
+
+// ---- data loading: snapshot (embedded) or live polling --------------------
+const live = !window.__PHOSPHOR_SNAPSHOT__;
+const POLL_MS = 10000;
+let liveSize = null;
+function status(msg) {
+  const el = document.getElementById("status");
+  if (el) el.textContent = msg;
+}
+async function poll() {
+  if (!live) return;
+  try {
+    const r = await fetch("graph.json?_=" + Date.now());
+    if (r.ok) {
+      const text = await r.text();
+      if (text.length !== liveSize) {
+        liveSize = text.length;
+        boot(JSON.parse(text));
+        status("LIVE · SYNCED");
+      }
+    }
+  } catch { /* transient; retry on next tick */ }
+  liveTimer = setTimeout(poll, POLL_MS);
+}
+if (live) {
+  if (location.protocol === "file:") {
+    // static open without a server: fetch one-shot, no polling
+    fetch("graph.json").then(r => r.json()).then(boot)
+      .catch(() => status("NO DATA · run: python -m http.server"));
+  } else {
+    status("LIVE");
+    poll();
+  }
+} else {
+  boot(window.__PHOSPHOR_GRAPH__);
+}
+</script>
+</body>
+</html>
