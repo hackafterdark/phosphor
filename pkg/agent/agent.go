@@ -2196,6 +2196,14 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 			if systemPromptPrefix != "" {
 				prepared.Messages = append([]fantasy.Message{fantasy.NewSystemMessage(systemPromptPrefix)}, prepared.Messages...)
 			}
+			// Route the summarizer request through the same wire defenses as
+			// the main agent loop: the full history (including raw stored
+			// reasoning) rides this call, so it must meet the defang and the
+			// last-resort secret/PII mask too.
+			prepared.Messages = defangOutgoingMessages(prepared.Messages)
+			if a.outgoingRedactionEnabled() {
+				prepared.Messages = a.redactOutgoingMessages(prepared.Messages)
+			}
 			return callContext, prepared, nil
 		},
 		OnReasoningDelta: func(id string, text string) error {
@@ -2914,7 +2922,9 @@ func (a *sessionAgent) GenerateTitle(ctx context.Context, sessionID string, user
 	}
 
 	streamCall := fantasy.AgentStreamCall{
-		Prompt: userPrompt,
+		// The raw user prompt rides this call verbatim; give it the same
+		// defang and last-resort mask the main loop applies to history.
+		Prompt: a.redactOutgoingText(tools.DefangSpecialTokens(userPrompt)),
 	}
 
 	var resp *fantasy.AgentResult
