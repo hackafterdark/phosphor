@@ -1277,9 +1277,10 @@ func TestConfig_defaultModelSelection(t *testing.T) {
 		require.Equal(t, "large-model", large.Model)
 		require.Equal(t, "openai", large.Provider)
 		require.Equal(t, int64(1000), large.MaxTokens)
-		require.Equal(t, "small-model", small.Model)
-		require.Equal(t, "openai", small.Provider)
-		require.Equal(t, int64(500), small.MaxTokens)
+		// The small slot is intentionally left unset so consumers fall
+		// back to the large model instead of guessing one from the catalog.
+		require.Empty(t, small.Model)
+		require.Empty(t, small.Provider)
 	})
 	t.Run("should error if no providers configured", func(t *testing.T) {
 		knownProviders := []catwalk.Provider{
@@ -1471,9 +1472,10 @@ func TestConfig_defaultModelSelection(t *testing.T) {
 		require.Equal(t, "large-model", large.Model)
 		require.Equal(t, "openai", large.Provider)
 		require.Equal(t, int64(1000), large.MaxTokens)
-		require.Equal(t, "small-model", small.Model)
-		require.Equal(t, "openai", small.Provider)
-		require.Equal(t, int64(500), small.MaxTokens)
+		// The small slot is intentionally left unset so consumers fall
+		// back to the large model instead of guessing one from the catalog.
+		require.Empty(t, small.Model)
+		require.Empty(t, small.Provider)
 	})
 }
 
@@ -1776,9 +1778,10 @@ func TestConfig_configureSelectedModels(t *testing.T) {
 		require.Equal(t, "larger-model", large.Model)
 		require.Equal(t, "openai", large.Provider)
 		require.Equal(t, int64(2000), large.MaxTokens)
-		require.Equal(t, "small-model", small.Model)
+		// Small is unset, so it falls back to the configured large model.
+		require.Equal(t, "larger-model", small.Model)
 		require.Equal(t, "openai", small.Provider)
-		require.Equal(t, int64(500), small.MaxTokens)
+		require.Equal(t, int64(2000), small.MaxTokens)
 	})
 	t.Run("should be possible to use multiple providers", func(t *testing.T) {
 		knownProviders := []catwalk.Provider{
@@ -1841,6 +1844,51 @@ func TestConfig_configureSelectedModels(t *testing.T) {
 		require.Equal(t, "a-small-model", small.Model)
 		require.Equal(t, "anthropic", small.Provider)
 		require.Equal(t, int64(300), small.MaxTokens)
+	})
+
+	t.Run("should fall back to the large model when the small model is invalid", func(t *testing.T) {
+		knownProviders := []catwalk.Provider{
+			{
+				ID:                  "openai",
+				APIKey:              "abc",
+				DefaultLargeModelID: "large-model",
+				DefaultSmallModelID: "small-model",
+				Models: []catwalk.Model{
+					{
+						ID:               "large-model",
+						DefaultMaxTokens: 1000,
+					},
+					{
+						ID:               "small-model",
+						DefaultMaxTokens: 500,
+					},
+				},
+			},
+		}
+
+		cfg := &Config{
+			Models: map[SelectedModelType]SelectedModel{
+				"large": {
+					Model:    "large-model",
+					Provider: "openai",
+				},
+				"small": {
+					Model:    "ghost-model",
+					Provider: "ghost-provider",
+				},
+			},
+		}
+		cfg.setDefaults("/tmp", "")
+		env := env.NewFromMap(map[string]string{})
+		resolver := NewShellVariableResolver(env)
+		err := cfg.configureProviders(context.Background(), testStore(cfg), env, resolver, knownProviders)
+		require.NoError(t, err)
+
+		err = configureSelectedModels(testStore(cfg), knownProviders, false)
+		require.NoError(t, err)
+		small := cfg.Models[SelectedModelTypeSmall]
+		require.Equal(t, "large-model", small.Model)
+		require.Equal(t, "openai", small.Provider)
 	})
 
 	t.Run("should override the max tokens only", func(t *testing.T) {

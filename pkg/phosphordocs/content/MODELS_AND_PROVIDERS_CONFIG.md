@@ -199,6 +199,11 @@ The `models` section selects which model to use for different tasks. Phosphor us
 - **`large`** — Primary model for coding, reasoning, and complex tasks
 - **`small`** — Fallback model for title generation, quick responses, and sub-agents
 
+If `small` is omitted, it falls back to the `large` model rather than
+auto-selecting one from the provider catalog. Every consumer of the small
+slot (title generation, summarization, `agentic_fetch`) uses the large model
+until you pin `models.small` explicitly.
+
 ### Model Fields
 
 | Field | Type | Required | Description |
