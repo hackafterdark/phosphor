@@ -59,8 +59,15 @@ func caseInsensitiveFS(dir string) bool {
 	}
 	insensitive := false
 	if !isNetworkPath(dir) {
+		// codeql[go/path-injection] ignore -- probe-only: the workspace
+		// root is stat'ed in both case spellings solely to decide whether
+		// the filesystem ignores case. No file content is read or written,
+		// network paths are short-circuited, and any probe failure fails
+		// closed to the strict comparison.
 		if fi1, err1 := os.Stat(dir); err1 == nil {
 			if upper := strings.ToUpper(dir); upper != dir {
+				// codeql[go/path-injection] ignore -- upper-cased spelling
+				// of the same probe target; see the comment above.
 				if fi2, err2 := os.Stat(upper); err2 == nil && os.SameFile(fi1, fi2) {
 					insensitive = true
 				}
