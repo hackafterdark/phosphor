@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"charm.land/catwalk/pkg/catwalk"
@@ -151,8 +152,12 @@ type coordinator struct {
 	// switches, frozen from this workspace's config at agent construction and
 	// handed to the tool constructors and the wire mask. It is never process
 	// state: in serve mode each workspace keeps its own snapshot, so a
-	// later-built agent cannot clobber an earlier one's guards.
-	redactionPolicy *tools.Policy
+	// later-built agent cannot clobber an earlier one's guards. It is built
+	// exactly once per coordinator (redactionPolicyOnce) so asynchronous
+	// rebuilds — UpdateModels, sub-agent construction — can never swap the
+	// instance under tools that captured it at construction.
+	redactionPolicy     *tools.Policy
+	redactionPolicyOnce sync.Once
 
 	// Skills discovery results (session-start snapshot).
 	allSkills    []*skills.Skill // Pre-filter: all discovered after dedup.
@@ -941,8 +946,13 @@ func (c *coordinator) buildAgent(ctx context.Context, prompt *prompt.Prompt, age
 			redactOutgoingPII = *sec.RedactOutgoingPII
 		}
 	}
-	redactionPolicy := c.redactionPolicyFromConfig()
-	c.redactionPolicy = redactionPolicy
+	// Freeze the snapshot once per coordinator: the same instance is handed
+	// to the tools and the wire mask of every agent built here, so tools and
+	// mask can never end up on different policies or token stores.
+	c.redactionPolicyOnce.Do(func() {
+		c.redactionPolicy = c.redactionPolicyFromConfig()
+	})
+	redactionPolicy := c.redactionPolicy
 	egressOn := c.cfg.Config().ShouldEnableEgressIsolation()
 	// Arm the credential-isolation tier once, here at the same frozen snapshot
 	// boundary. Start binds the loopback broker under the operator's net-policy
