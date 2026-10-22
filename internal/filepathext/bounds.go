@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 )
 
 // IsInside reports whether absPath is located within the directory tree rooted
@@ -26,16 +27,48 @@ func IsInside(absPath, absWorkspace string) bool {
 	if insideRel(resolvedWorkspace, resolvedPath) {
 		return true
 	}
-	// Case-folded fallback for case-insensitive filesystems (Windows): the
-	// workspace and target may legitimately differ in case (e.g.
-	// C:\Users\test\Project vs C:\Users\test\project) and still denote the
-	// same directory. It is applied only on such filesystems; on case-sensitive
-	// POSIX filesystems, case-differing siblings are *different* directories
-	// and must not false-pass here.
-	if runtime.GOOS == "windows" {
+	// Case-folded fallback for case-insensitive filesystems: the workspace
+	// and target may legitimately differ in case (e.g. C:\Users\test\Project
+	// vs C:\Users\test\project) and still denote the same directory. It is
+	// applied only where the hosting filesystem ignores case — always on
+	// Windows, and probed at runtime elsewhere (the default macOS APFS layout
+	// is case-insensitive). On case-sensitive filesystems, case-differing
+	// siblings are *different* directories and must not false-pass here.
+	if caseInsensitiveFS(absWorkspace) {
 		return insideRel(strings.ToLower(resolvedWorkspace), strings.ToLower(resolvedPath))
 	}
 	return false
+}
+
+// caseProbeCache memoizes the probe result per workspace root; the property
+// belongs to the filesystem, not the path, so one probe per root is enough.
+var caseProbeCache sync.Map // string -> bool
+
+// caseInsensitiveFS reports whether the filesystem hosting dir ignores case.
+// Windows is treated as case-insensitive; everywhere else the workspace root
+// itself is probed: if dir and its fully upper-cased spelling resolve to the
+// same directory, the filesystem does not preserve case. Unknown (missing
+// dir, network path) answers conservatively as case-sensitive, which keeps
+// the bounds check strict.
+func caseInsensitiveFS(dir string) bool {
+	if runtime.GOOS == "windows" {
+		return true
+	}
+	if v, ok := caseProbeCache.Load(dir); ok {
+		return v.(bool)
+	}
+	insensitive := false
+	if !isNetworkPath(dir) {
+		if fi1, err1 := os.Stat(dir); err1 == nil {
+			if upper := strings.ToUpper(dir); upper != dir {
+				if fi2, err2 := os.Stat(upper); err2 == nil && os.SameFile(fi1, fi2) {
+					insensitive = true
+				}
+			}
+		}
+	}
+	caseProbeCache.Store(dir, insensitive)
+	return insensitive
 }
 
 // insideRel reports whether target is at or below base, using raw (case-
