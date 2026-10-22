@@ -609,6 +609,12 @@ func FetchURLAndConvertWithTrust(ctx context.Context, client *http.Client, rawUR
 
 	host := stripPort(parsed.Host)
 	if !hostInAllowList(host) && !isAllowedByGlobal(host) && !isAllowedByWorkspace(host) {
+		if allowFn == nil {
+			// Fail closed, matching securityTransport: a host nobody
+			// approved must not be fetched just because no prompt
+			// handler was configured (headless / serve mode).
+			return "", fmt.Errorf("host %s is not in any allow list and no approval handler is configured", host)
+		}
 		allowed, err := allowFn(ctx, host)
 		if err != nil {
 			return "", fmt.Errorf("host %s not approved by user prompt: %w", host, err)
