@@ -59,17 +59,18 @@ func caseInsensitiveFS(dir string) bool {
 	}
 	insensitive := false
 	if !isNetworkPath(dir) {
-		// codeql[go/path-injection] ignore -- probe-only: the workspace
-		// root is stat'ed in both case spellings solely to decide whether
-		// the filesystem ignores case. No file content is read or written,
-		// network paths are short-circuited, and any probe failure fails
-		// closed to the strict comparison.
+		// codeql[go/path-injection] ignore,reason=false-positive,justification=probe-only
+		// The workspace root is stat'ed in both case spellings solely to
+		// decide whether the filesystem ignores case. No file content is
+		// read or written, network paths are short-circuited, and any
+		// probe failure fails closed to the strict comparison.
 		fi1, err1 := os.Stat(dir)
 		if err1 == nil {
 			upper := strings.ToUpper(dir)
 			if upper != dir {
-				// codeql[go/path-injection] ignore -- upper-cased spelling
-				// of the same probe target; see the comment above.
+				// codeql[go/path-injection] ignore,reason=false-positive,justification=probe-only
+				// Upper-cased spelling of the same probe target; see the
+				// comment above.
 				fi2, err2 := os.Stat(upper)
 				if err2 == nil && os.SameFile(fi1, fi2) {
 					insensitive = true
@@ -138,10 +139,10 @@ func resolveSymlinks(absPath string) string {
 // changing. The hop cap bounds cycles through self-referential links.
 func followReparseTargets(path string) string {
 	for range 16 {
-		// codeql[go/path-injection] ignore -- Readlink is part of the
-		// containment check itself: it only reads the link target for
-		// comparison against the workspace root. No file is opened and
-		// nothing is returned to the caller.
+		// codeql[go/path-injection] ignore,reason=false-positive,justification=containment-check
+		// Readlink is part of the containment check itself: it only reads
+		// the link target for comparison against the workspace root. No
+		// file is opened and nothing is returned to the caller.
 		target, err := os.Readlink(path)
 		if err != nil || target == "" {
 			return path
