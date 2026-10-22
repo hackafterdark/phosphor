@@ -111,7 +111,7 @@ func helper() {}
 	err := os.WriteFile(filePath, []byte(code), 0o644)
 	require.NoError(t, err)
 
-	tool := NewViewTool(nil, &mockPermissionService{}, mockFileTrackerService{}, nil, workingDir)
+	tool := NewViewTool(nil, &mockPermissionService{}, mockFileTrackerService{}, nil, workingDir, nil)
 
 	input, err := json.Marshal(ViewParams{
 		FilePath:  "main.go",

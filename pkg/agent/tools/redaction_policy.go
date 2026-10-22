@@ -2,29 +2,31 @@ package tools
 
 import (
 	"strings"
-	"sync"
-	"sync/atomic"
 	"time"
+
+	"github.com/hackafterdark/phosphor/pkg/config"
 )
 
 // The secret-protection read/redaction pipeline reads its runtime switches from
-// an immutable snapshot installed once at agent construction, never from mutable
-// process state on the hot path. That is the "env snapshot" discipline: a
-// prompt-injected tool that mutates the environment or re-reads config
-// mid-session cannot silently flip these guards off, because nothing consults
-// live state per call. The sensitive-file toggle lives in its own snapshot
-// (see sensitive_files.go) and is installed alongside this one by the
-// coordinator; both are frozen at the same init boundary.
+// an immutable snapshot built once per agent and carried on the tool instances,
+// never from mutable process state on the hot path. That is the "env snapshot"
+// discipline: a prompt-injected tool that mutates the environment or re-reads
+// config mid-session cannot silently flip these guards off, because nothing
+// consults live state per call. The snapshot is per-agent (serve mode hosts
+// several workspaces concurrently, and a process-wide copy would let the
+// last-built agent clobber every other workspace's policy), and it carries the
+// sensitive-file policy, the custom rules path, and the token store alongside
+// the read-path toggles so all of them freeze at the same boundary.
 type redactionPolicy struct {
 	// secretsEnabled gates the gitleaks pass over read-path tool output (view,
 	// grep, bash, mcp, job_output). The secure default is on.
 	secretsEnabled bool
-	// codeFileFPEnabled turns on the context-aware false-positive suppression:
-	// when a scan is known to be reading source code, the low-precision
-	// generic KEY=value / "apiKey":"value" rule family is skipped while the
-	// high-precision vendor-prefix, PEM, JWT, auth-header and connection-string
-	// checks still run. On by default.
-	codeFileFPEnabled bool
+	// codeFileFalsePositiveEnabled turns on the context-aware false-positive
+	// suppression: when a scan is known to be reading source code, the
+	// low-precision generic KEY=value / "apiKey":"value" rule family is skipped
+	// while the high-precision vendor-prefix, PEM, JWT, auth-header and
+	// connection-string checks still run. On by default.
+	codeFileFalsePositiveEnabled bool
 	// tokenizationEnabled turns reversible-by-id tokenization on. Off by
 	// default: the shipped read path emits static sentinels, which are already
 	// non-reusable. When on, full-mode findings and sensitive-file values are
@@ -35,9 +37,14 @@ type redactionPolicy struct {
 	// contains the built-in "generic-" prefix.
 	genericPrefixes []string
 	genericRuleIDs  map[string]bool
-	// tokenTTL and tokenMaxEntries bound the in-process token store.
+	// tokenTTL and tokenMaxEntries bound the per-policy token store.
 	tokenTTL        time.Duration
 	tokenMaxEntries int
+	// tokens is the reversible-token store owned by this policy. Keeping it
+	// per-policy means a token minted in one workspace cannot be resolved by
+	// another workspace's tools: cross-policy restores fail closed and the
+	// token stays an inert sentinel.
+	tokens *tokenStore
 	// jsonKeyRedactionEnabled turns the structured-JSON key-drop layer on. On by
 	// default: it is a cheap, low-false-positive complement to value scanning for
 	// JSON-producing tools (MCP/CLI results), because it drops a whole field by
@@ -66,7 +73,23 @@ type redactionPolicy struct {
 	// by default: it is armed only when the operator enables egress isolation AND
 	// sealing, so shipped read output is byte-for-byte unchanged otherwise.
 	sealSentinels bool
+	// sensitiveEnabled is the master switch for path-based whole-value
+	// redaction of sensitive files. The secure default is on.
+	sensitiveEnabled bool
+	// sensitivePatterns is the effective sensitive-file pattern set: the
+	// built-in default set merged with any operator additions (they can
+	// extend, never subtract, so the .env family stays sensitive).
+	sensitivePatterns []string
+	// secretRulesPath is the workspace's custom gitleaks rules file. The
+	// detector for a path is cached process-wide (see detectorFor).
+	secretRulesPath string
 }
+
+// Policy is the immutable per-agent snapshot of the secret-protection switches.
+// Build one with NewPolicy at agent construction and pass it to the tool
+// constructors; helpers that receive a nil Policy fall back to the built-in
+// secure defaults.
+type Policy = redactionPolicy
 
 // RedactionPolicyOptions is the operator-facing knob set for the read-path
 // redaction snapshot. A nil field means "use the secure default".
@@ -87,29 +110,32 @@ type RedactionPolicyOptions struct {
 	// non-reusable sentinel. A nil field means the secure default (off), so the
 	// shipped read output is unchanged unless an operator turns the tier on.
 	SealSentinelsEnabled *bool
+	// SensitiveFilesEnabled gates path-based whole-value redaction. A nil field
+	// means the secure default (on).
+	SensitiveFilesEnabled *bool
+	// ExtraSensitiveFilePatterns extend the built-in sensitive-file pattern set.
+	ExtraSensitiveFilePatterns []string
+	// SecretRulesPath points at the workspace's custom gitleaks rules file. An
+	// empty value uses the built-in default path.
+	SecretRulesPath string
 }
-
-var redactionPolicyPtr = func() *atomic.Pointer[redactionPolicy] {
-	p := &atomic.Pointer[redactionPolicy]{}
-	p.Store(defaultRedactionPolicy())
-	return p
-}()
-
-var redactionPolicyMu sync.Mutex
 
 func defaultRedactionPolicy() *redactionPolicy {
 	return &redactionPolicy{
-		secretsEnabled:             true,
-		codeFileFPEnabled:          true,
-		tokenizationEnabled:        false,
-		genericPrefixes:            []string{"generic-"},
-		genericRuleIDs:             defaultGenericRuleIDs(),
-		tokenTTL:                   defaultTokenTTL,
-		tokenMaxEntries:            defaultTokenMaxEntries,
-		jsonKeyRedactionEnabled:    true,
-		jsonSecretKeys:             defaultJSONSecretKeys(),
-		jsonKeySuffixes:            defaultJSONKeySuffixes(),
-		learnedSecretMemoryEnabled: true,
+		secretsEnabled:               true,
+		codeFileFalsePositiveEnabled: true,
+		tokenizationEnabled:          false,
+		genericPrefixes:              []string{"generic-"},
+		genericRuleIDs:               defaultGenericRuleIDs(),
+		tokenTTL:                     defaultTokenTTL,
+		tokenMaxEntries:              defaultTokenMaxEntries,
+		jsonKeyRedactionEnabled:      true,
+		jsonSecretKeys:               defaultJSONSecretKeys(),
+		jsonKeySuffixes:              defaultJSONKeySuffixes(),
+		learnedSecretMemoryEnabled:   true,
+		sensitiveEnabled:             true,
+		sensitivePatterns:            config.DefaultSensitiveFilePatterns,
+		secretRulesPath:              defaultSecretRulesPath(),
 	}
 }
 
@@ -132,35 +158,17 @@ func defaultGenericRuleIDs() map[string]bool {
 	return m
 }
 
-// SetRedactionPolicy installs the effective read-path redaction snapshot. Call
-// it once at startup. Safe to call repeatedly and from concurrent agents; the
-// write is guarded so it composes with SetSensitiveFilePolicy. Passing the zero
-// options yields the secure defaults.
-func SetRedactionPolicy(opts RedactionPolicyOptions) {
-	redactionPolicyMu.Lock()
-	defer redactionPolicyMu.Unlock()
+// NewPolicy builds the effective redaction snapshot for one agent. The result
+// is immutable: it must be constructed once at agent construction and carried
+// on the tool instances, so no later agent build can alter this agent's
+// guards. Passing the zero options yields the secure defaults.
+func NewPolicy(opts RedactionPolicyOptions) *Policy {
 	base := defaultRedactionPolicy()
-	if p := redactionPolicyPtr.Load(); p != nil {
-		// Carry the generic-rule customizations forward across repeated sets so
-		// a later call that only changes, say, tokenization does not reset them.
-		base.genericPrefixes = append([]string{}, p.genericPrefixes...)
-		base.genericRuleIDs = make(map[string]bool, len(p.genericRuleIDs))
-		for k := range p.genericRuleIDs {
-			base.genericRuleIDs[k] = true
-		}
-		// Same for the JSON key set: the built-in names are always present, and any
-		// operator additions survive a later policy change.
-		base.jsonSecretKeys = make(map[string]bool, len(p.jsonSecretKeys))
-		for k := range p.jsonSecretKeys {
-			base.jsonSecretKeys[k] = true
-		}
-		base.jsonKeySuffixes = append([]string{}, p.jsonKeySuffixes...)
-	}
 	if opts.SecretsEnabled != nil {
 		base.secretsEnabled = *opts.SecretsEnabled
 	}
 	if opts.CodeFileFPEnabled != nil {
-		base.codeFileFPEnabled = *opts.CodeFileFPEnabled
+		base.codeFileFalsePositiveEnabled = *opts.CodeFileFPEnabled
 	}
 	if opts.TokenizationEnabled != nil {
 		base.tokenizationEnabled = *opts.TokenizationEnabled
@@ -173,6 +181,12 @@ func SetRedactionPolicy(opts RedactionPolicyOptions) {
 	}
 	if opts.SealSentinelsEnabled != nil {
 		base.sealSentinels = *opts.SealSentinelsEnabled
+	}
+	if opts.SensitiveFilesEnabled != nil {
+		base.sensitiveEnabled = *opts.SensitiveFilesEnabled
+	}
+	if len(opts.ExtraSensitiveFilePatterns) > 0 {
+		base.sensitivePatterns = mergeSensitivePatterns(opts.ExtraSensitiveFilePatterns)
 	}
 	for _, id := range opts.ExtraGenericRules {
 		if id != "" {
@@ -190,58 +204,57 @@ func SetRedactionPolicy(opts RedactionPolicyOptions) {
 	if opts.TokenMaxEntries > 0 {
 		base.tokenMaxEntries = opts.TokenMaxEntries
 	}
-	redactionPolicyPtr.Store(base)
-	secretTokens.mu.Lock()
-	secretTokens.ttl = base.tokenTTL
-	secretTokens.max = base.tokenMaxEntries
-	secretTokens.mu.Unlock()
-}
-
-// ResetRedactionPolicyForTest restores the built-in defaults and clears the
-// token store. Intended for tests only.
-func ResetRedactionPolicyForTest() {
-	redactionPolicyMu.Lock()
-	defer redactionPolicyMu.Unlock()
-	redactionPolicyPtr.Store(defaultRedactionPolicy())
-	secretTokens.Reset()
-}
-
-func currentRedactionPolicy() *redactionPolicy {
-	if p := redactionPolicyPtr.Load(); p != nil {
-		return p
+	if p := strings.TrimSpace(opts.SecretRulesPath); p != "" {
+		base.secretRulesPath = p
 	}
+	base.tokens = newTokenStore(base.tokenTTL, base.tokenMaxEntries)
+	return base
+}
+
+// defaultPolicy returns the built-in secure defaults for callers that have no
+// agent-bound policy (tests, tools constructed outside a coordinator). It is
+// fresh per call so its token store is never shared across agents.
+func defaultPolicy() *Policy {
 	return defaultRedactionPolicy()
 }
 
+// orDefault resolves a nil policy to the built-in secure defaults.
+func (p *Policy) orDefault() *Policy {
+	if p == nil {
+		return defaultPolicy()
+	}
+	return p
+}
+
 // TokenizationEnabled reports whether the reversible token layer is active.
-func TokenizationEnabled() bool { return currentRedactionPolicy().tokenizationEnabled }
+func (p *Policy) TokenizationEnabled() bool { return p.orDefault().tokenizationEnabled }
 
 // SecretsEnabled reports whether the read-path gitleaks pass is active.
-func SecretsEnabled() bool { return currentRedactionPolicy().secretsEnabled }
+func (p *Policy) SecretsEnabled() bool { return p.orDefault().secretsEnabled }
 
-func codeFileFPEnabled() bool { return currentRedactionPolicy().codeFileFPEnabled }
+func (p *Policy) codeFileFPEnabled() bool { return p.orDefault().codeFileFalsePositiveEnabled }
 
 // JSONKeyRedactionEnabled reports whether the structured-JSON key-drop layer is
 // active. The secure default is on; it is cheap and low-noise because it only
 // fires on a whole-document JSON payload and only drops fields by key name.
-func JSONKeyRedactionEnabled() bool {
-	return currentRedactionPolicy().jsonKeyRedactionEnabled
+func (p *Policy) JSONKeyRedactionEnabled() bool {
+	return p.orDefault().jsonKeyRedactionEnabled
 }
 
 // LearnedSecretMemoryEnabled reports whether the hashed learned-secret memory is
 // active. The secure default is on: it only ever upgrades a detection toward
 // scrubbing a value already judged sensitive, so it cannot introduce a false
 // block and stores no plaintext.
-func LearnedSecretMemoryEnabled() bool {
-	return currentRedactionPolicy().learnedSecretMemoryEnabled
+func (p *Policy) LearnedSecretMemoryEnabled() bool {
+	return p.orDefault().learnedSecretMemoryEnabled
 }
 
 // SealSentinelsEnabled reports whether the egress-isolation read path is armed:
 // when true a detected credential is sealed into a broker-resolvable token
 // rather than a plain sentinel. The default is off, so the shipped read output
 // is unchanged unless an operator turned the tier on at startup.
-func SealSentinelsEnabled() bool {
-	return currentRedactionPolicy().sealSentinels
+func (p *Policy) SealSentinelsEnabled() bool {
+	return p.orDefault().sealSentinels
 }
 
 // isSecretJSONKey reports whether a JSON object key names a field whose value

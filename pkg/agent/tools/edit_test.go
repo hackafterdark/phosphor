@@ -113,7 +113,7 @@ func TestEditToolWithHashline(t *testing.T) {
 	hashB := crc32.ChecksumIEEE([]byte("line B"))
 	taggedOldString := fmt.Sprintf("     2:%08x|line B", hashB)
 
-	tool := NewEditTool(nil, &mockPermissionService{}, &mockHistoryService{}, mockFileTrackerForEdit{}, workingDir)
+	tool := NewEditTool(nil, &mockPermissionService{}, &mockHistoryService{}, mockFileTrackerForEdit{}, workingDir, nil)
 	ctx := context.WithValue(context.Background(), SessionIDContextKey, "test-session")
 
 	// 1. Successful replacement using hashliness
@@ -158,7 +158,7 @@ func TestEditToolHashMismatch(t *testing.T) {
 	// Mismatching hash
 	taggedOldString := "     2:badabada|line B"
 
-	tool := NewEditTool(nil, &mockPermissionService{}, &mockHistoryService{}, mockFileTrackerForEdit{}, workingDir)
+	tool := NewEditTool(nil, &mockPermissionService{}, &mockHistoryService{}, mockFileTrackerForEdit{}, workingDir, nil)
 	ctx := context.WithValue(context.Background(), SessionIDContextKey, "test-session")
 
 	input, err := json.Marshal(EditParams{
@@ -185,7 +185,7 @@ func TestEditToolAnchorPoisoning(t *testing.T) {
 	err := os.WriteFile(filePath, []byte("line A\nline B\nline C"), 0o644)
 	require.NoError(t, err)
 
-	tool := NewEditTool(nil, &mockPermissionService{}, &mockHistoryService{}, mockFileTrackerForEdit{}, workingDir)
+	tool := NewEditTool(nil, &mockPermissionService{}, &mockHistoryService{}, mockFileTrackerForEdit{}, workingDir, nil)
 	ctx := context.WithValue(context.Background(), SessionIDContextKey, "test-session")
 
 	input, err := json.Marshal(EditParams{

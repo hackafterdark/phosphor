@@ -50,6 +50,7 @@ func NewWriteTool(
 	files history.Service,
 	filetracker filetracker.Service,
 	workingDir string,
+	policy *Policy,
 ) fantasy.AgentTool {
 	return fantasy.NewAgentTool(
 		WriteToolName,
@@ -87,7 +88,7 @@ func NewWriteTool(
 			if resp, blocked := vaultWriteGuard(workingDir, filePath); blocked {
 				return resp, nil
 			}
-			if err := checkSecretsAt(params.Content, filePath); err != nil {
+			if err := checkSecretsAt(params.Content, filePath, policy); err != nil {
 				return fantasy.NewTextErrorResponse(err.Error()), nil
 			}
 
@@ -162,7 +163,7 @@ func NewWriteTool(
 
 			// Resolve reversible tokens for a trusted sensitive target (an .env
 			// round-trip); inert for any other destination, no-op when off.
-			contentToWrite := restoreSecretTokensForWrite(params.Content, filePath)
+			contentToWrite := restoreSecretTokensForWrite(params.Content, filePath, policy)
 
 			err = os.WriteFile(filePath, []byte(contentToWrite), 0o644)
 			if err != nil {

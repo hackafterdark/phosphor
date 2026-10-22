@@ -36,7 +36,7 @@ func TestRedactSecrets_ReplacesCredentials(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-			got := redactSecrets(c.in)
+			got := redactSecrets(c.in, nil)
 			require.NotContains(t, got, c.secret, "secret leaked through redaction")
 			require.Contains(t, got, sentinelPrefix, "expected a redaction sentinel")
 		})
@@ -55,7 +55,7 @@ func TestRedactSecrets_LeavesCleanTextUnchanged(t *testing.T) {
 		"api_key := \"your_key_here\"", // low-entropy placeholder
 	}
 	for _, c := range clean {
-		require.Equal(t, c, redactSecrets(c))
+		require.Equal(t, c, redactSecrets(c, nil))
 	}
 }
 
@@ -72,11 +72,11 @@ func TestRedactSecrets_PathAllowlist(t *testing.T) {
 		"pkg/x/thing_test.go",
 	}
 	for _, p := range skip {
-		require.Equal(t, in, redactSecretsAt(in, p, "view"), "path %q should be allow-listed", p)
+		require.Equal(t, in, redactSecretsAt(in, p, "view", nil), "path %q should be allow-listed", p)
 	}
 
 	// A non-allowlisted path IS redacted.
-	require.NotContains(t, redactSecretsAt(in, "app/config.go", "view"), testAWSKeyID)
+	require.NotContains(t, redactSecretsAt(in, "app/config.go", "view", nil), testAWSKeyID)
 }
 
 // TestRedactSecrets_SentinelIsNotAUusableToken proves the emitted marker is not a
@@ -97,7 +97,7 @@ func TestViewTool_RedactsFileSecrets(t *testing.T) {
 	body := "package cfg\n\nconst Key = \"" + testAWSKeyID + "\"\n"
 	require.NoError(t, os.WriteFile(filepath.Join(workingDir, "config.go"), []byte(body), 0o644))
 
-	tool := NewViewTool(nil, &mockPermissionService{}, mockFileTrackerService{}, nil, workingDir)
+	tool := NewViewTool(nil, &mockPermissionService{}, mockFileTrackerService{}, nil, workingDir, nil)
 	input, err := json.Marshal(ViewParams{FilePath: "config.go"})
 	require.NoError(t, err)
 
@@ -119,7 +119,7 @@ func TestGrepTool_RedactsMatchedSecrets(t *testing.T) {
 	body := "package cfg\n\nconst Key = \"" + testAWSKeyID + "\"\n"
 	require.NoError(t, os.WriteFile(filepath.Join(workingDir, "config.go"), []byte(body), 0o644))
 
-	tool := NewGrepTool(workingDir, config.ToolGrep{})
+	tool := NewGrepTool(workingDir, config.ToolGrep{}, nil)
 	input, err := json.Marshal(GrepParams{Pattern: "AKIA[A-Z0-9]{10,}", Path: "."})
 	require.NoError(t, err)
 

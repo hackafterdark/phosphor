@@ -89,8 +89,8 @@ func defaultJSONKeySuffixes() []string {
 // not a single whole JSON object/array, is over the size cap, the layer is
 // disabled, or no secret-named key was present. It never errors: a parse failure
 // is simply "not JSON here", so callers can treat it as a no-op.
-func redactSecretJSONFields(text string) (string, bool) {
-	if !JSONKeyRedactionEnabled() {
+func redactSecretJSONFields(text string, pol *Policy) (string, bool) {
+	if !pol.orDefault().JSONKeyRedactionEnabled() {
 		return text, false
 	}
 	trimmed := strings.TrimSpace(text)
@@ -118,8 +118,7 @@ func redactSecretJSONFields(text string) (string, bool) {
 		return text, false
 	}
 
-	pol := currentRedactionPolicy()
-	changed := dropSecretKeys(val, pol)
+	changed := dropSecretKeys(val, pol.orDefault())
 	if !changed {
 		return text, false
 	}
@@ -187,11 +186,11 @@ func isSentinel(v any) bool {
 // surfaces call. It drops secret-named fields from a whole-JSON-document result,
 // then hands the (possibly rewritten) text to the gitleaks value pass so the two
 // layers compose. The source label is only used for logging.
-func RedactJSONForTool(text, source string) string {
+func RedactJSONForTool(text, source string, pol *Policy) string {
 	if text == "" {
 		return text
 	}
-	redacted, changed := redactSecretJSONFields(text)
+	redacted, changed := redactSecretJSONFields(text, pol)
 	if changed {
 		slog.Debug("Dropped secret fields from JSON tool result by key",
 			"source", source,

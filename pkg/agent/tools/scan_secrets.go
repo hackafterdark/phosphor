@@ -64,7 +64,7 @@ type secretFinding struct {
 	needles     []string
 }
 
-func NewScanSecretsTool(workingDir string) fantasy.AgentTool {
+func NewScanSecretsTool(workingDir string, policy *Policy) fantasy.AgentTool {
 	return fantasy.NewAgentTool(
 		ScanSecretsToolName,
 		scanSecretsDescriptionStr,
@@ -97,7 +97,7 @@ func NewScanSecretsTool(workingDir string) fantasy.AgentTool {
 				return fantasy.NewTextErrorResponse(fmt.Sprintf("path not found: %s", absSearchPath)), nil
 			}
 
-			detector, err := secretDetector()
+			detector, err := policy.orDefault().detector()
 			if err != nil {
 				return fantasy.NewTextErrorResponse("secret detection engine is unavailable"), nil
 			}

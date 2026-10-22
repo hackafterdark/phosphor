@@ -104,7 +104,7 @@ var whitelistDockerTools = []string{
 }
 
 // GetMCPTools gets all the currently available MCP tools.
-func GetMCPTools(permissions permission.Service, cfg *config.ConfigStore, wd string) []*Tool {
+func GetMCPTools(permissions permission.Service, cfg *config.ConfigStore, wd string, policy *Policy) []*Tool {
 	var result []*Tool
 	for mcpName, tools := range mcp.Tools() {
 		for _, tool := range tools {
@@ -114,6 +114,7 @@ func GetMCPTools(permissions permission.Service, cfg *config.ConfigStore, wd str
 				permissions: permissions,
 				workingDir:  wd,
 				cfg:         cfg,
+				policy:      policy,
 			})
 		}
 	}
@@ -127,6 +128,7 @@ type Tool struct {
 	cfg             *config.ConfigStore
 	permissions     permission.Service
 	workingDir      string
+	policy          *Policy
 	providerOptions fantasy.ProviderOptions
 }
 
@@ -250,7 +252,7 @@ func (m *Tool) Run(ctx context.Context, params fantasy.ToolCall) (fantasy.ToolRe
 	// credential the value scanner can see. MCP results are path-less, so they are
 	// scanned in full mode and honour the read-path secrets toggle.
 	if response.Content != "" {
-		response.Content = redactSecretsForTool(RedactJSONForTool(response.Content, "mcp"), "", "mcp")
+		response.Content = redactSecretsForTool(RedactJSONForTool(response.Content, "mcp", m.policy), "", "mcp", m.policy)
 	}
 
 	// Record the tool result on the span (opt-in per MCP semconv).

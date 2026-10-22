@@ -32,7 +32,7 @@ type JobOutputResponseMetadata struct {
 	WorkingDirectory string `json:"working_directory"`
 }
 
-func NewJobOutputTool() fantasy.AgentTool {
+func NewJobOutputTool(policy *Policy) fantasy.AgentTool {
 	return fantasy.NewAgentTool(
 		JobOutputToolName,
 		jobOutputDescription,
@@ -86,8 +86,8 @@ func NewJobOutputTool() fantasy.AgentTool {
 			// secret fields when the job emitted a bare JSON document, then scrub the
 			// value scanner's findings. Path-less, so scanned in full mode under the
 			// read-path secrets toggle.
-			output = RedactJSONForTool(output, "job_output")
-			output = redactSecretsForTool(output, "", "job_output")
+			output = RedactJSONForTool(output, "job_output", policy)
+			output = redactSecretsForTool(output, "", "job_output", policy)
 
 			metadata := JobOutputResponseMetadata{
 				ShellID:          params.ShellID,

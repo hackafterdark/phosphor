@@ -147,6 +147,13 @@ type coordinator struct {
 	currentAgent SessionAgent
 	agents       map[string]SessionAgent
 
+	// redactionPolicy is the per-agent snapshot of the secret-protection
+	// switches, frozen from this workspace's config at agent construction and
+	// handed to the tool constructors and the wire mask. It is never process
+	// state: in serve mode each workspace keeps its own snapshot, so a
+	// later-built agent cannot clobber an earlier one's guards.
+	redactionPolicy *tools.Policy
+
 	// Skills discovery results (session-start snapshot).
 	allSkills    []*skills.Skill // Pre-filter: all discovered after dedup.
 	activeSkills []*skills.Skill // Post-filter: active skills only.
@@ -925,9 +932,7 @@ func (c *coordinator) buildAgent(ctx context.Context, prompt *prompt.Prompt, age
 	sec := c.cfg.Config().Security
 	redactOutgoingSecrets := true
 	redactOutgoingPII := false
-	redactSensitiveFiles := true
 	wireSecretsForced := c.cfg.Config().ShouldForceWireSecretRedaction()
-	var sensitiveFilePatterns []string
 	if sec != nil {
 		if sec.RedactOutgoingSecrets != nil {
 			redactOutgoingSecrets = *sec.RedactOutgoingSecrets
@@ -935,34 +940,10 @@ func (c *coordinator) buildAgent(ctx context.Context, prompt *prompt.Prompt, age
 		if sec.RedactOutgoingPII != nil {
 			redactOutgoingPII = *sec.RedactOutgoingPII
 		}
-		if sec.RedactSensitiveFiles != nil {
-			redactSensitiveFiles = *sec.RedactSensitiveFiles
-		}
-		sensitiveFilePatterns = sec.SensitiveFilePatterns
 	}
-	tools.SetSensitiveFilePolicy(redactSensitiveFiles, sensitiveFilePatterns)
-	// Freeze the read-path redaction snapshot (secrets toggle, code-file FP mode,
-	// tokenization, token store bounds) once here so nothing re-derives it from
-	// mutable state during the session.
-	codeFileFP := c.cfg.Config().ShouldCodeFileFalsePositiveMode()
-	tokenize := c.cfg.Config().ShouldTokenizeSecrets()
-	jsonKeys := c.cfg.Config().ShouldRedactJSONKeys()
-	learnedMem := c.cfg.Config().ShouldLearnedSecretMemory()
-	// The sealed-sentinel read path is the opt-in egress-isolation tier. It arms
-	// only when the operator both enabled the tier and asked to seal detected
-	// secrets; otherwise the read path keeps emitting the plain non-reusable
-	// sentinel and shipped output is unchanged.
+	redactionPolicy := c.redactionPolicyFromConfig()
+	c.redactionPolicy = redactionPolicy
 	egressOn := c.cfg.Config().ShouldEnableEgressIsolation()
-	sealSentinels := egressOn && c.cfg.Config().ShouldSealDetectedSecrets()
-	tools.SetRedactionPolicy(tools.RedactionPolicyOptions{
-		CodeFileFPEnabled:          &codeFileFP,
-		TokenizationEnabled:        &tokenize,
-		JSONKeyRedactionEnabled:    &jsonKeys,
-		ExtraJSONSecretKeys:        c.cfg.Config().EffectiveJSONSecretKeys(),
-		LearnedSecretMemoryEnabled: &learnedMem,
-		SealSentinelsEnabled:       &sealSentinels,
-	})
-	tools.SetSecretRulesPath(filepath.Join(c.cfg.WorkingDir(), ".phosphor", "secret-rules.toml"))
 	// Arm the credential-isolation tier once, here at the same frozen snapshot
 	// boundary. Start binds the loopback broker under the operator's net-policy
 	// and latches whether subprocesses are routed through it. Only after the
@@ -1006,6 +987,7 @@ func (c *coordinator) buildAgent(ctx context.Context, prompt *prompt.Prompt, age
 		RedactOutgoingSecrets:  redactOutgoingSecrets,
 		RedactOutgoingPII:      redactOutgoingPII,
 		WireSecretsForced:      wireSecretsForced,
+		RedactionPolicy:        redactionPolicy,
 		WorkingDir:             c.cfg.WorkingDir(),
 		PostTurnHooks:          c.cfg.Config().Hooks[hooks.EventStop],
 		SessionEndHooks:        c.cfg.Config().Hooks[hooks.EventSessionEnd],
@@ -1035,6 +1017,44 @@ func (c *coordinator) buildAgent(ctx context.Context, prompt *prompt.Prompt, age
 	})
 
 	return result, nil
+}
+
+// redactionPolicyFromConfig freezes this workspace's secret-protection switches
+// into an immutable per-agent snapshot. Every guard on the read/write/wire path
+// derives from this one snapshot so that no later agent build — in serve mode
+// several workspaces run concurrently — can alter this agent's guards, and no
+// mid-session config or environment mutation can flip them off.
+func (c *coordinator) redactionPolicyFromConfig() *tools.Policy {
+	sec := c.cfg.Config().Security
+	redactSensitiveFiles := true
+	var sensitiveFilePatterns []string
+	if sec != nil {
+		if sec.RedactSensitiveFiles != nil {
+			redactSensitiveFiles = *sec.RedactSensitiveFiles
+		}
+		sensitiveFilePatterns = sec.SensitiveFilePatterns
+	}
+	codeFileFP := c.cfg.Config().ShouldCodeFileFalsePositiveMode()
+	tokenize := c.cfg.Config().ShouldTokenizeSecrets()
+	jsonKeys := c.cfg.Config().ShouldRedactJSONKeys()
+	learnedMem := c.cfg.Config().ShouldLearnedSecretMemory()
+	// The sealed-sentinel read path is the opt-in egress-isolation tier. It arms
+	// only when the operator both enabled the tier and asked to seal detected
+	// secrets; otherwise the read path keeps emitting the plain non-reusable
+	// sentinel and shipped output is unchanged.
+	egressOn := c.cfg.Config().ShouldEnableEgressIsolation()
+	sealSentinels := egressOn && c.cfg.Config().ShouldSealDetectedSecrets()
+	return tools.NewPolicy(tools.RedactionPolicyOptions{
+		CodeFileFPEnabled:          &codeFileFP,
+		TokenizationEnabled:        &tokenize,
+		JSONKeyRedactionEnabled:    &jsonKeys,
+		ExtraJSONSecretKeys:        c.cfg.Config().EffectiveJSONSecretKeys(),
+		LearnedSecretMemoryEnabled: &learnedMem,
+		SealSentinelsEnabled:       &sealSentinels,
+		SensitiveFilesEnabled:      &redactSensitiveFiles,
+		ExtraSensitiveFilePatterns: sensitiveFilePatterns,
+		SecretRulesPath:            filepath.Join(c.cfg.WorkingDir(), ".phosphor", "secret-rules.toml"),
+	})
 }
 
 func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, isSubAgent bool) ([]fantasy.AgentTool, error) {
@@ -1092,7 +1112,7 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, isSubA
 	allTools = append(
 		allTools,
 		tools.NewUpdateGoalTool(c.goalService),
-		tools.NewBashTool(c.permissions, c.cfg.WorkingDir(), c.cfg.Config().Tools.Bash, c.cfg.Config().Options.Attribution, modelID),
+		tools.NewBashTool(c.permissions, c.cfg.WorkingDir(), c.cfg.Config().Tools.Bash, c.cfg.Config().Options.Attribution, modelID, c.redactionPolicy),
 		tools.NewPhosphorInfoTool(c.cfg, c.lspManager, c.allSkills, c.activeSkills, c.skillTracker),
 	)
 
@@ -1109,24 +1129,24 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, isSubA
 
 	allTools = append(
 		allTools,
-		tools.NewJobOutputTool(),
+		tools.NewJobOutputTool(c.redactionPolicy),
 		tools.NewJobKillTool(),
 		tools.NewDownloadTool(c.permissions, c.cfg.WorkingDir(), networkClient),
-		tools.NewEditTool(c.lspManager, c.permissions, c.history, c.filetracker, c.cfg.WorkingDir()),
-		tools.NewMultiEditTool(c.lspManager, c.permissions, c.history, c.filetracker, c.cfg.WorkingDir()),
+		tools.NewEditTool(c.lspManager, c.permissions, c.history, c.filetracker, c.cfg.WorkingDir(), c.redactionPolicy),
+		tools.NewMultiEditTool(c.lspManager, c.permissions, c.history, c.filetracker, c.cfg.WorkingDir(), c.redactionPolicy),
 		tools.NewFetchTool(c.permissions, c.cfg.WorkingDir(), networkClient),
 		tools.NewGlobTool(c.cfg.WorkingDir()),
-		tools.NewGrepTool(c.cfg.WorkingDir(), c.cfg.Config().Tools.Grep),
-		tools.NewScanSecretsTool(c.cfg.WorkingDir()),
+		tools.NewGrepTool(c.cfg.WorkingDir(), c.cfg.Config().Tools.Grep, c.redactionPolicy),
+		tools.NewScanSecretsTool(c.cfg.WorkingDir(), c.redactionPolicy),
 		tools.NewReloadQueriesTool(c.cfg.WorkingDir()),
 		tools.NewLsTool(c.permissions, c.cfg.WorkingDir(), c.cfg.Config().Tools.Ls),
 		tools.NewSourcegraphTool(nil),
 		tools.NewPhosphorDocsTool(),
 		tools.NewTodosTool(c.sessions),
-		tools.NewViewTool(c.lspManager, c.permissions, c.filetracker, c.skillTracker, c.cfg.WorkingDir(), c.cfg.Config().Options.SkillsPaths...),
+		tools.NewViewTool(c.lspManager, c.permissions, c.filetracker, c.skillTracker, c.cfg.WorkingDir(), c.redactionPolicy, c.cfg.Config().Options.SkillsPaths...),
 		tools.NewViewNodeTool(c.cfg.WorkingDir()),
-		tools.NewWriteTool(c.lspManager, c.permissions, c.history, c.filetracker, c.cfg.WorkingDir()),
-		tools.NewAppendTool(c.lspManager, c.permissions, c.history, c.filetracker, c.cfg.WorkingDir()),
+		tools.NewWriteTool(c.lspManager, c.permissions, c.history, c.filetracker, c.cfg.WorkingDir(), c.redactionPolicy),
+		tools.NewAppendTool(c.lspManager, c.permissions, c.history, c.filetracker, c.cfg.WorkingDir(), c.redactionPolicy),
 	)
 
 	// Add LSP tools if user has configured LSPs or auto_lsp is enabled (nil or true).
@@ -1179,7 +1199,7 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, isSubA
 	}
 
 	if allowRepoTooling {
-		for _, tool := range tools.GetMCPTools(c.permissions, c.cfg, c.cfg.WorkingDir()) {
+		for _, tool := range tools.GetMCPTools(c.permissions, c.cfg, c.cfg.WorkingDir(), c.redactionPolicy) {
 			if agent.AllowedMCP == nil {
 				// No MCP restrictions
 				filteredTools = append(filteredTools, tool)
@@ -1301,16 +1321,16 @@ func (c *coordinator) buildAgentModels(ctx context.Context, isSubAgent bool) (Mo
 		}
 
 		return Model{
-				Model:      largeModel,
-				CatwalkCfg: *largeCatwalkModel,
-				ModelCfg:   largeModelCfg,
-				FlatRate:   largeProviderCfg.FlatRate,
-			}, Model{
-				Model:      smallModel,
-				CatwalkCfg: *smallCatwalkModel,
-				ModelCfg:   smallModelCfg,
-				FlatRate:   smallProviderCfg.FlatRate,
-			}, nil
+			Model:      largeModel,
+			CatwalkCfg: *largeCatwalkModel,
+			ModelCfg:   largeModelCfg,
+			FlatRate:   largeProviderCfg.FlatRate,
+		}, Model{
+			Model:      smallModel,
+			CatwalkCfg: *smallCatwalkModel,
+			ModelCfg:   smallModelCfg,
+			FlatRate:   smallProviderCfg.FlatRate,
+		}, nil
 	}
 
 	// Small model not configured — large model will be used for title generation.

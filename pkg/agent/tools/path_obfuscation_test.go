@@ -20,7 +20,7 @@ func TestPathObfuscation_ComplexTraversal(t *testing.T) {
 	workingDir := t.TempDir()
 	ctx := context.WithValue(context.Background(), SessionIDContextKey, "test-session")
 
-	tool := NewWriteTool(nil, &mockPermissionService{}, &mockHistoryService{}, mockFileTrackerService{}, workingDir)
+	tool := NewWriteTool(nil, &mockPermissionService{}, &mockHistoryService{}, mockFileTrackerService{}, workingDir, nil)
 
 	// Complex traversal patterns that should still be blocked.
 	maliciousPaths := []struct {
@@ -74,7 +74,7 @@ func TestPathObfuscation_EncodedPaths(t *testing.T) {
 	workingDir := t.TempDir()
 	ctx := context.WithValue(context.Background(), SessionIDContextKey, "test-session")
 
-	tool := NewWriteTool(nil, &mockPermissionService{}, &mockHistoryService{}, mockFileTrackerService{}, workingDir)
+	tool := NewWriteTool(nil, &mockPermissionService{}, &mockHistoryService{}, mockFileTrackerService{}, workingDir, nil)
 
 	// URL-encoded traversal patterns.
 	maliciousPaths := []struct {
@@ -125,7 +125,7 @@ func TestPathObfuscation_SymlinkTraversal(t *testing.T) {
 
 	// Writing through the symlink should be blocked because EvalSymlinks
 	// resolves it to the outside directory.
-	tool := NewWriteTool(nil, &mockPermissionService{}, &mockHistoryService{}, mockFileTrackerService{}, workingDir)
+	tool := NewWriteTool(nil, &mockPermissionService{}, &mockHistoryService{}, mockFileTrackerService{}, workingDir, nil)
 	input, err := json.Marshal(WriteParams{FilePath: "symlink_to_outside/evil.txt", Content: "pwned"})
 	require.NoError(t, err)
 
@@ -148,7 +148,7 @@ func TestPathObfuscation_AbsolutePathVariants(t *testing.T) {
 	workingDir := t.TempDir()
 	ctx := context.WithValue(context.Background(), SessionIDContextKey, "test-session")
 
-	tool := NewWriteTool(nil, &mockPermissionService{}, &mockHistoryService{}, mockFileTrackerService{}, workingDir)
+	tool := NewWriteTool(nil, &mockPermissionService{}, &mockHistoryService{}, mockFileTrackerService{}, workingDir, nil)
 
 	// Absolute paths outside workspace.
 	maliciousPaths := []struct {

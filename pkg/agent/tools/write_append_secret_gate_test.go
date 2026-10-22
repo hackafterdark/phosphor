@@ -19,7 +19,7 @@ import (
 func runWriteTool(t *testing.T, workingDir, path, content string) (fantasy.ToolResponse, error) {
 	t.Helper()
 	ctx := context.WithValue(context.Background(), SessionIDContextKey, "test-session")
-	tool := NewWriteTool(nil, &mockPermissionService{}, &mockHistoryService{}, mockFileTrackerService{}, workingDir)
+	tool := NewWriteTool(nil, &mockPermissionService{}, &mockHistoryService{}, mockFileTrackerService{}, workingDir, nil)
 	input, err := json.Marshal(WriteParams{FilePath: path, Content: content})
 	require.NoError(t, err)
 	return tool.Run(ctx, fantasy.ToolCall{ID: "test-call", Name: WriteToolName, Input: string(input)})
@@ -28,7 +28,7 @@ func runWriteTool(t *testing.T, workingDir, path, content string) (fantasy.ToolR
 func runAppendTool(t *testing.T, workingDir, path, content string) (fantasy.ToolResponse, error) {
 	t.Helper()
 	ctx := context.WithValue(context.Background(), SessionIDContextKey, "test-session")
-	tool := NewAppendTool(nil, &mockPermissionService{}, &mockHistoryService{}, mockFileTrackerService{}, workingDir)
+	tool := NewAppendTool(nil, &mockPermissionService{}, &mockHistoryService{}, mockFileTrackerService{}, workingDir, nil)
 	input, err := json.Marshal(AppendParams{FilePath: path, Content: content})
 	require.NoError(t, err)
 	return tool.Run(ctx, fantasy.ToolCall{ID: "test-call", Name: AppendToolName, Input: string(input)})

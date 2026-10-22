@@ -25,7 +25,7 @@ func TestWorkspaceHardening_WriteToolBlocksOutsidePaths(t *testing.T) {
 	workingDir := t.TempDir()
 	ctx := context.WithValue(context.Background(), SessionIDContextKey, "test-session")
 
-	tool := NewWriteTool(nil, &mockPermissionService{}, &mockHistoryService{}, mockFileTrackerService{}, workingDir)
+	tool := NewWriteTool(nil, &mockPermissionService{}, &mockHistoryService{}, mockFileTrackerService{}, workingDir, nil)
 
 	tests := []struct {
 		name string
@@ -61,7 +61,7 @@ func TestWorkspaceHardening_EditToolBlocksOutsidePaths(t *testing.T) {
 	workingDir := t.TempDir()
 	ctx := context.WithValue(context.Background(), SessionIDContextKey, "test-session")
 
-	tool := NewEditTool(nil, &mockPermissionService{}, &mockHistoryService{}, mockFileTrackerService{}, workingDir)
+	tool := NewEditTool(nil, &mockPermissionService{}, &mockHistoryService{}, mockFileTrackerService{}, workingDir, nil)
 
 	tests := []struct {
 		name string
@@ -100,7 +100,7 @@ func TestWorkspaceHardening_MultiEditToolBlocksOutsidePaths(t *testing.T) {
 	workingDir := t.TempDir()
 	ctx := context.WithValue(context.Background(), SessionIDContextKey, "test-session")
 
-	tool := NewMultiEditTool(nil, &mockPermissionService{}, &mockHistoryService{}, mockFileTrackerService{}, workingDir)
+	tool := NewMultiEditTool(nil, &mockPermissionService{}, &mockHistoryService{}, mockFileTrackerService{}, workingDir, nil)
 
 	tests := []struct {
 		name string
@@ -138,7 +138,7 @@ func TestWorkspaceHardening_AppendToolBlocksOutsidePaths(t *testing.T) {
 	workingDir := t.TempDir()
 	ctx := context.WithValue(context.Background(), SessionIDContextKey, "test-session")
 
-	tool := NewAppendTool(nil, &mockPermissionService{}, &mockHistoryService{}, mockFileTrackerService{}, workingDir)
+	tool := NewAppendTool(nil, &mockPermissionService{}, &mockHistoryService{}, mockFileTrackerService{}, workingDir, nil)
 
 	tests := []struct {
 		name string
@@ -310,7 +310,7 @@ func TestWorkspaceHardening_GrepToolBlocksOutsidePaths(t *testing.T) {
 	workingDir := t.TempDir()
 	ctx := context.WithValue(context.Background(), SessionIDContextKey, "test-session")
 
-	tool := NewGrepTool(workingDir, config.ToolGrep{})
+	tool := NewGrepTool(workingDir, config.ToolGrep{}, nil)
 
 	tests := []struct {
 		name string
@@ -406,7 +406,7 @@ func TestWorkspaceHardening_AllToolsAllowInWorkspace(t *testing.T) {
 
 	t.Run("write", func(t *testing.T) {
 		t.Parallel()
-		tool := NewWriteTool(nil, &mockPermissionService{}, &mockHistoryService{}, mockFileTrackerService{}, workingDir)
+		tool := NewWriteTool(nil, &mockPermissionService{}, &mockHistoryService{}, mockFileTrackerService{}, workingDir, nil)
 		input, err := json.Marshal(WriteParams{FilePath: "safe.txt", Content: "safe"})
 		require.NoError(t, err)
 		resp, err := tool.Run(ctx, fantasy.ToolCall{ID: "t", Name: WriteToolName, Input: string(input)})
@@ -416,7 +416,7 @@ func TestWorkspaceHardening_AllToolsAllowInWorkspace(t *testing.T) {
 
 	t.Run("edit", func(t *testing.T) {
 		t.Parallel()
-		tool := NewEditTool(nil, &mockPermissionService{}, &mockHistoryService{}, mockFileTrackerService{}, workingDir)
+		tool := NewEditTool(nil, &mockPermissionService{}, &mockHistoryService{}, mockFileTrackerService{}, workingDir, nil)
 		input, err := json.Marshal(EditParams{FilePath: "test.txt", OldString: "hello", NewString: "world"})
 		require.NoError(t, err)
 		resp, err := tool.Run(ctx, fantasy.ToolCall{ID: "t", Name: EditToolName, Input: string(input)})
@@ -454,7 +454,7 @@ func TestWorkspaceHardening_AllToolsAllowInWorkspace(t *testing.T) {
 
 	t.Run("grep", func(t *testing.T) {
 		t.Parallel()
-		tool := NewGrepTool(workingDir, config.ToolGrep{})
+		tool := NewGrepTool(workingDir, config.ToolGrep{}, nil)
 		input, err := json.Marshal(GrepParams{Pattern: "hello"})
 		require.NoError(t, err)
 		resp, err := tool.Run(ctx, fantasy.ToolCall{ID: "t", Name: GrepToolName, Input: string(input)})

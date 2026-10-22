@@ -192,8 +192,12 @@ type sessionAgent struct {
 	redactOutgoingSecrets bool
 	redactOutgoingPII     bool
 	wireSecretsForced     bool
-	notify                pubsub.Publisher[notify.Notification]
-	runComplete           pubsub.Publisher[notify.RunComplete]
+	// redactionPolicy is the per-agent frozen snapshot of the secret-protection
+	// switches, shared with this agent's tools so the wire mask and the read
+	// path cannot drift apart and a later agent build cannot alter it.
+	redactionPolicy *tools.Policy
+	notify          pubsub.Publisher[notify.Notification]
+	runComplete     pubsub.Publisher[notify.RunComplete]
 
 	// workingDir anchors the cwd hooks and the memory vault are opened against.
 	workingDir string
@@ -273,17 +277,21 @@ type sessionAgent struct {
 }
 
 type SessionAgentOptions struct {
-	LargeModel             Model
-	SmallModel             Model
-	SystemPromptPrefix     string
-	SystemPrompt           string
-	IsSubAgent             bool
-	DisableAutoSummarize   bool
-	SummarizeThreshold     float64
-	IsYolo                 bool
-	RedactOutgoingSecrets  bool
-	RedactOutgoingPII      bool
-	WireSecretsForced      bool
+	LargeModel            Model
+	SmallModel            Model
+	SystemPromptPrefix    string
+	SystemPrompt          string
+	IsSubAgent            bool
+	DisableAutoSummarize  bool
+	SummarizeThreshold    float64
+	IsYolo                bool
+	RedactOutgoingSecrets bool
+	RedactOutgoingPII     bool
+	WireSecretsForced     bool
+	// RedactionPolicy is the per-agent frozen snapshot of the secret-protection
+	// switches, shared with this agent's tools. Nil falls back to the built-in
+	// secure defaults.
+	RedactionPolicy        *tools.Policy
 	Sessions               session.Service
 	Messages               message.Service
 	GoalService            goal.Service
@@ -333,6 +341,7 @@ func NewSessionAgent(
 		redactOutgoingSecrets:  opts.RedactOutgoingSecrets,
 		redactOutgoingPII:      opts.RedactOutgoingPII,
 		wireSecretsForced:      opts.WireSecretsForced,
+		redactionPolicy:        opts.RedactionPolicy,
 		notify:                 opts.Notify,
 		runComplete:            opts.RunComplete,
 		reflectionEnabled:      csync.NewValue(opts.ReflectionEnabled),

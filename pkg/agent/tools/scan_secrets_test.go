@@ -21,7 +21,7 @@ const (
 
 func runScanSecrets(t *testing.T, workingDir string, params ScanSecretsParams) fantasy.ToolResponse {
 	t.Helper()
-	tool := NewScanSecretsTool(workingDir)
+	tool := NewScanSecretsTool(workingDir, nil)
 	input, err := json.Marshal(params)
 	require.NoError(t, err)
 	resp, err := tool.Run(t.Context(), fantasy.ToolCall{ID: "scan-1", Name: ScanSecretsToolName, Input: string(input)})

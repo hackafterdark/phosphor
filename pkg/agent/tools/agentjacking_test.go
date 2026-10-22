@@ -21,7 +21,7 @@ func TestAgentjacking_MCPContentAsPath(t *testing.T) {
 	workingDir := t.TempDir()
 	ctx := context.WithValue(context.Background(), SessionIDContextKey, "test-session")
 
-	tool := NewWriteTool(nil, &mockPermissionService{}, &mockHistoryService{}, mockFileTrackerService{}, workingDir)
+	tool := NewWriteTool(nil, &mockPermissionService{}, &mockHistoryService{}, mockFileTrackerService{}, workingDir, nil)
 
 	// Simulate MCP server returning malicious paths.
 	maliciousPaths := []struct {
@@ -110,7 +110,7 @@ root:hacked:0:0::/root:/bin/bash`
 
 	// But the write tool should block attempts to use content from that file
 	// to write outside workspace.
-	writeTool := NewWriteTool(nil, &mockPermissionService{}, &mockHistoryService{}, mockFileTrackerService{}, workingDir)
+	writeTool := NewWriteTool(nil, &mockPermissionService{}, &mockHistoryService{}, mockFileTrackerService{}, workingDir, nil)
 	input, err := json.Marshal(WriteParams{FilePath: "../etc/passwd", Content: "pwned"})
 	require.NoError(t, err)
 
@@ -134,7 +134,7 @@ func TestAgentjacking_ZerWidthCharsInPath(t *testing.T) {
 	workingDir := t.TempDir()
 	ctx := context.WithValue(context.Background(), SessionIDContextKey, "test-session")
 
-	tool := NewWriteTool(nil, &mockPermissionService{}, &mockHistoryService{}, mockFileTrackerService{}, workingDir)
+	tool := NewWriteTool(nil, &mockPermissionService{}, &mockHistoryService{}, mockFileTrackerService{}, workingDir, nil)
 
 	// Zero-width characters that might be used to obfuscate paths.
 	maliciousPaths := []struct {
@@ -178,7 +178,7 @@ func TestAgentjacking_HTMLCommentsInPath(t *testing.T) {
 	workingDir := t.TempDir()
 	ctx := context.WithValue(context.Background(), SessionIDContextKey, "test-session")
 
-	tool := NewWriteTool(nil, &mockPermissionService{}, &mockHistoryService{}, mockFileTrackerService{}, workingDir)
+	tool := NewWriteTool(nil, &mockPermissionService{}, &mockHistoryService{}, mockFileTrackerService{}, workingDir, nil)
 
 	// HTML comments that might be used to obfuscate paths.
 	maliciousPaths := []struct {

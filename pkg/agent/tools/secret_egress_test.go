@@ -42,9 +42,9 @@ const egressDetectedKey = "AKIAIOSVPK253PIP5TGP"
 // (a) A read-path finding becomes a sealed, broker-resolvable token.
 func TestEgressSeal_ReadPathEmitsResolvableSentinels(t *testing.T) {
 	useEgress(t)
-	useRedaction(t, RedactionPolicyOptions{SealSentinelsEnabled: ptrBool(true)})
+	pol := useRedaction(t, RedactionPolicyOptions{SealSentinelsEnabled: ptrBool(true)})
 
-	got := redactSecretsAt("AWS_ACCESS_KEY_ID=\""+egressDetectedKey+"\"", "deploy/app.env", "view")
+	got := redactSecretsAt("AWS_ACCESS_KEY_ID=\""+egressDetectedKey+"\"", "deploy/app.env", "view", pol)
 
 	require.NotContains(t, got, egressDetectedKey, "the plaintext credential must never survive into the transcript")
 	require.NotContains(t, got, "<redacted:gitleaks:", "the sealed tier replaces the plain sentinel, it does not append to it")
@@ -66,11 +66,11 @@ func TestEgressSeal_WriteGateIgnoresSealedTokens(t *testing.T) {
 	require.True(t, ok)
 
 	// Copying the inert handle into a file is a legitimate round-trip, not a leak.
-	require.NoError(t, checkSecretsAt("AWS_ACCESS_KEY_ID=\""+tok+"\"", "deploy/app.env"),
+	require.NoError(t, checkSecretsAt("AWS_ACCESS_KEY_ID=\""+tok+"\"", "deploy/app.env", nil),
 		"a sealed token is our own handle and must not trip the write gate")
 
 	// Control: the real credential typed verbatim is still caught.
-	require.Error(t, checkSecretsAt("AWS_ACCESS_KEY_ID=\""+egressDetectedKey+"\"", "deploy/app.env"),
+	require.Error(t, checkSecretsAt("AWS_ACCESS_KEY_ID=\""+egressDetectedKey+"\"", "deploy/app.env", nil),
 		"a credential the model typed directly has no token form and must still be blocked")
 }
 
@@ -79,10 +79,10 @@ func TestEgressSeal_DefaultOffKeepsStaticSentinels(t *testing.T) {
 	// Store seeded and enabled (proving the gate is the snapshot, not key availability),
 	// but the redaction snapshot never armed the sealed path (the shipped default).
 	useEgress(t)
-	useRedaction(t, RedactionPolicyOptions{})
-	require.False(t, SealSentinelsEnabled())
+	pol := useRedaction(t, RedactionPolicyOptions{})
+	require.False(t, pol.SealSentinelsEnabled())
 
-	got := redactSecretsAt("AWS_ACCESS_KEY_ID=\""+egressDetectedKey+"\"", "deploy/app.env", "view")
+	got := redactSecretsAt("AWS_ACCESS_KEY_ID=\""+egressDetectedKey+"\"", "deploy/app.env", "view", pol)
 	require.NotContains(t, got, egressDetectedKey)
 	require.Contains(t, got, "<redacted:gitleaks:", "off means the plain non-reusable sentinel, exactly as shipped")
 	require.NotContains(t, got, "<secret@v1.")
@@ -91,14 +91,14 @@ func TestEgressSeal_DefaultOffKeepsStaticSentinels(t *testing.T) {
 // (d) A token issued by the redaction path resolves only at the broker, end-to-end.
 func TestEgressSeal_RoundTripperResolvesAtAllowlistedHop(t *testing.T) {
 	useEgress(t)
-	useRedaction(t, RedactionPolicyOptions{SealSentinelsEnabled: ptrBool(true)})
+	pol := useRedaction(t, RedactionPolicyOptions{SealSentinelsEnabled: ptrBool(true)})
 
 	addr, stop := startEgressEcho(t)
 	defer stop()
 
 	// Produce the token the way the real read path does, then drive it through the
 	// broker transport the web tools would use when the tier is on.
-	red := redactSecretsAt("AWS_ACCESS_KEY_ID=\""+egressDetectedKey+"\"", "deploy/app.env", "view")
+	red := redactSecretsAt("AWS_ACCESS_KEY_ID=\""+egressDetectedKey+"\"", "deploy/app.env", "view", pol)
 	tok := egressSealRe.FindString(red)
 	require.NotEmpty(t, tok)
 
