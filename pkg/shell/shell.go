@@ -232,6 +232,21 @@ var execPredicates = map[string]struct{}{
 	"-exec": {}, "-execdir": {}, "-ok": {}, "-okdir": {},
 }
 
+// wrapperValueFlags lists, per wrapper, the flags that consume the following
+// argument as a value. The wrapper scan must skip those values too, or the
+// value is mistaken for the wrapped program and the real program is never
+// checked (`env -u FOO curl` would surface candidate "FOO", not "curl").
+var wrapperValueFlags = map[string]map[string]struct{}{
+	"env":     {"-u": {}, "-C": {}, "-S": {}, "--unset": {}, "--chdir": {}, "--split-string": {}},
+	"exec":    {"-a": {}},
+	"sudo":    {"-u": {}, "-g": {}, "-h": {}, "-p": {}, "-C": {}, "-r": {}, "-T": {}, "-D": {}},
+	"doas":    {"-u": {}},
+	"xargs":   {"-I": {}, "-e": {}, "-E": {}, "-s": {}, "-S": {}, "-L": {}, "-P": {}, "-n": {}},
+	"timeout": {"-k": {}, "-s": {}, "--kill-after": {}, "--signal": {}},
+	"nice":    {"-n": {}},
+	"stdbuf":  {"-o": {}, "-e": {}, "-i": {}},
+}
+
 // CommandsBlocker creates a BlockFunc that blocks commands matched against
 // the deny list after normalizing argv[0] (basename, case, .exe suffix) and
 // seeing through wrapper commands (env, xargs, timeout, busybox, ...) and
@@ -271,7 +286,7 @@ func executableCandidates(args []string) []string {
 		if _, isWrapper := wrapperCommands[head]; !isWrapper {
 			break
 		}
-		rest = wrappedProgram(rest[1:])
+		rest = wrappedProgram(rest[1:], head)
 	}
 	for i, arg := range args {
 		if _, ok := execPredicates[strings.ToLower(arg)]; ok && i+1 < len(args) {
@@ -286,14 +301,19 @@ func executableCandidates(args []string) []string {
 }
 
 // wrappedProgram skips wrapper flags, variable assignments, and timing or
-// priority values to find the wrapped program in argv.
-func wrappedProgram(args []string) []string {
+// priority values to find the wrapped program in argv. Flags listed in
+// wrapperValueFlags for the given wrapper also consume their value.
+func wrappedProgram(args []string, wrapper string) []string {
+	valueFlags := wrapperValueFlags[wrapper]
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		switch {
 		case arg == "":
 			continue
 		case strings.HasPrefix(arg, "-"):
+			if _, takesValue := valueFlags[arg]; takesValue {
+				i++ // the flag's value must not be mistaken for the program
+			}
 			continue
 		case strings.Contains(arg, "="):
 			continue
