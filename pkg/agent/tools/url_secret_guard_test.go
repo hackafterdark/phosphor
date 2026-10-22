@@ -135,6 +135,7 @@ func TestDownloadTool_RefusesRegisteredSecretInQuery(t *testing.T) {
 	require.True(t, resp.IsError, "download must abort, got: %s", resp.Content)
 	require.Contains(t, resp.Content, urlguard.ErrMessage)
 }
+
 // TestSecuredHTTPClientFailsClosedOnUnknownHost pins finding #6: a client
 // built with no prompt handler must refuse raw-IP and unknown-hostname
 // destinations instead of dialing them, so no network tool can reach the
