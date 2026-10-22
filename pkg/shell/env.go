@@ -172,11 +172,11 @@ func scrubProxyCreds(val string) string {
 	if schemeEnd < 0 {
 		return val
 	}
-	scheme := val[:schemeEnd]
-
-	// Only scrub values that look like URLs with a known scheme.
+	// Only scrub values that look like URLs with a known scheme. Schemes are
+	// case-insensitive per RFC 3986, so compare against a lowercased copy.
+	scheme := strings.ToLower(val[:schemeEnd])
 	switch scheme {
-	case "http", "https", "socks5", "socks5h":
+	case "http", "https", "socks4", "socks4a", "socks5", "socks5h":
 	default:
 		return val
 	}

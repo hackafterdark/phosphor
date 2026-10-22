@@ -214,6 +214,26 @@ func TestScrubProxyCreds_StripsUserinfo(t *testing.T) {
 			in:   "https://user%40name:p%40ss@proxy:8080/path",
 			want: "https://proxy:8080/path",
 		},
+		{
+			name: "uppercase scheme",
+			in:   "HTTP://admin:s3cret@corporate-proxy:3128",
+			want: "HTTP://corporate-proxy:3128",
+		},
+		{
+			name: "mixed-case scheme",
+			in:   "HtTpS://user:pass@proxy:8080",
+			want: "HtTpS://proxy:8080",
+		},
+		{
+			name: "socks4 with credentials",
+			in:   "socks4://user:pass@proxy:1080",
+			want: "socks4://proxy:1080",
+		},
+		{
+			name: "socks4a with credentials",
+			in:   "socks4a://user:pass@proxy:1080",
+			want: "socks4a://proxy:1080",
+		},
 	}
 
 	for _, tc := range cases {
