@@ -95,6 +95,10 @@ func resolveSymlinks(absPath string) string {
 // changing. The hop cap bounds cycles through self-referential links.
 func followReparseTargets(path string) string {
 	for range 16 {
+		// codeql[go/path-injection] ignore -- Readlink is part of the
+		// containment check itself: it only reads the link target for
+		// comparison against the workspace root. No file is opened and
+		// nothing is returned to the caller.
 		target, err := os.Readlink(path)
 		if err != nil || target == "" {
 			return path
