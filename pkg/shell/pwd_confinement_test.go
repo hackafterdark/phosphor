@@ -96,3 +96,60 @@ func TestCdAndBackInSameCommandStillWorks(t *testing.T) {
 	})
 	require.NoError(t, err)
 }
+
+func TestBareCdUsesInterpreterHome(t *testing.T) {
+	t.Parallel()
+
+	workspace := t.TempDir()
+	outside := t.TempDir()
+
+	// A bare `cd` lands in the interpreter's HOME, so the gate must read
+	// HOME from the handler env, not the process env: with HOME pointing
+	// outside the workspace, the cd must be refused.
+	var buf bytes.Buffer
+	err := Run(t.Context(), RunOptions{
+		Command:         "cd && pwd",
+		Cwd:             workspace,
+		Workspace:       workspace,
+		Stdout:          &buf,
+		DisableTempRoot: true,
+		Env:             append(os.Environ(), "HOME="+outside),
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "outside workspace")
+	require.Empty(t, buf.String(), "the outside path must never reach the transcript")
+
+	// And when HOME points inside the workspace, the bare cd is fine.
+	buf.Reset()
+	err = Run(t.Context(), RunOptions{
+		Command:   "cd && pwd",
+		Cwd:       workspace,
+		Workspace: workspace,
+		Stdout:    &buf,
+		Env:       append(os.Environ(), "HOME="+workspace),
+	})
+	require.NoError(t, err)
+}
+
+func TestCdDashUsesValidatedOldPwd(t *testing.T) {
+	t.Parallel()
+
+	workspace := t.TempDir()
+	outside := t.TempDir()
+
+	// `cd -` jumps to OLDPWD and prints it. If OLDPWD names a directory
+	// outside the workspace, the jump must be refused before the target
+	// is entered or printed.
+	var buf bytes.Buffer
+	err := Run(t.Context(), RunOptions{
+		Command:         "cd - && pwd",
+		Cwd:             workspace,
+		Workspace:       workspace,
+		Stdout:          &buf,
+		DisableTempRoot: true,
+		Env:             append(os.Environ(), "OLDPWD="+outside),
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "outside workspace")
+	require.Empty(t, buf.String(), "the outside path must never reach the transcript")
+}
