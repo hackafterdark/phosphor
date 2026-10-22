@@ -61,16 +61,19 @@ func TestIsInside(t *testing.T) {
 			expectInside: false,
 		},
 		{
+			// Case-folding only applies on case-insensitive filesystems;
+			// on case-sensitive POSIX filesystems these are different
+			// directories and must not false-pass.
 			name:         "case-different paths on case-insensitive FS",
 			path:         "/Home/User/Project/src/main.go",
 			workspace:    "/home/user/project",
-			expectInside: true,
+			expectInside: runtime.GOOS == "windows",
 		},
 		{
 			name:         "case-different workspace root",
 			path:         "/home/user/PROJECT/src/main.go",
 			workspace:    "/home/user/project",
-			expectInside: true,
+			expectInside: runtime.GOOS == "windows",
 		},
 	}
 

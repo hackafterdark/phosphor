@@ -23,7 +23,25 @@ func IsInside(absPath, absWorkspace string) bool {
 	// doesn't exist on disk, fall back to using it as-is.
 	resolvedPath := resolveSymlinks(absPath)
 	resolvedWorkspace := resolveSymlinks(absWorkspace)
-	rel, err := filepath.Rel(strings.ToLower(resolvedWorkspace), strings.ToLower(resolvedPath))
+	if insideRel(resolvedWorkspace, resolvedPath) {
+		return true
+	}
+	// Case-folded fallback for case-insensitive filesystems (Windows): the
+	// workspace and target may legitimately differ in case (e.g.
+	// C:\Users\test\Project vs C:\Users\test\project) and still denote the
+	// same directory. It is applied only on such filesystems; on case-sensitive
+	// POSIX filesystems, case-differing siblings are *different* directories
+	// and must not false-pass here.
+	if runtime.GOOS == "windows" {
+		return insideRel(strings.ToLower(resolvedWorkspace), strings.ToLower(resolvedPath))
+	}
+	return false
+}
+
+// insideRel reports whether target is at or below base, using raw (case-
+// preserving) string comparison of the two already-resolved absolute paths.
+func insideRel(base, target string) bool {
+	rel, err := filepath.Rel(base, target)
 	if err != nil {
 		return false
 	}
