@@ -39,8 +39,8 @@ const opaqueSentinel = "<redacted:sensitive-file:private-key>"
 // sensitive). The result is frozen into the per-agent redaction policy.
 func mergeSensitivePatterns(extraPatterns []string) []string {
 	patterns := config.DefaultSensitiveFilePatterns
-	merged := make([]string, 0, len(patterns)+len(extraPatterns))
-	seen := make(map[string]bool, len(patterns)+len(extraPatterns))
+	var merged []string
+	seen := make(map[string]bool)
 	for _, p := range append(append([]string{}, patterns...), extraPatterns...) {
 		if seen[p] {
 			continue
