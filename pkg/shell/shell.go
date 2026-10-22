@@ -23,6 +23,7 @@ import (
 	"sync"
 
 	"github.com/charmbracelet/x/exp/slice"
+	"github.com/hackafterdark/phosphor/internal/filepathext"
 	"github.com/hackafterdark/phosphor/internal/pathguard"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -458,12 +459,9 @@ func (s *Shell) newInterp(stdin io.Reader, stdout, stderr io.Writer) (*interp.Ru
 // working directory is reset to the original value to prevent escape.
 func (s *Shell) updateShellFromRunner(runner *interp.Runner) {
 	newCwd := runner.Dir
-	if s.workspace != "" {
-		rel, err := filepath.Rel(strings.ToLower(s.workspace), strings.ToLower(newCwd))
-		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
-			// Reset cwd to prevent escape from the workspace sandbox.
-			newCwd = s.cwd
-		}
+	if s.workspace != "" && !filepathext.IsInside(newCwd, s.workspace) {
+		// Reset cwd to prevent escape from the workspace sandbox.
+		newCwd = s.cwd
 	}
 	s.cwd = newCwd
 	s.env = s.env[:0]

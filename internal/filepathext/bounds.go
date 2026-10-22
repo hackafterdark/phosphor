@@ -47,14 +47,14 @@ func resolveSymlinks(absPath string) string {
 	}
 
 	if resolved, err := filepath.EvalSymlinks(absPath); err == nil {
-		return resolved
+		return followReparseTargets(resolved)
 	}
 
 	root := filepath.Clean(absPath)
 	var missing []string
 	for {
 		if resolved, err := filepath.EvalSymlinks(root); err == nil {
-			result := resolved
+			result := followReparseTargets(resolved)
 			for i := len(missing) - 1; i >= 0; i-- {
 				result = filepath.Join(result, missing[i])
 			}
@@ -68,6 +68,25 @@ func resolveSymlinks(absPath string) string {
 		missing = append(missing, filepath.Base(root))
 		root = parent
 	}
+}
+
+// followReparseTargets resolves reparse points that EvalSymlinks reports as
+// resolved but leaves unresolved on Windows — notably NTFS junctions and
+// mount points, which EvalSymlinks hands back unchanged. os.Readlink still
+// reports the link target for those, so follow it until the path stops
+// changing. The hop cap bounds cycles through self-referential links.
+func followReparseTargets(path string) string {
+	for range 16 {
+		target, err := os.Readlink(path)
+		if err != nil || target == "" {
+			return path
+		}
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(filepath.Dir(path), target)
+		}
+		path = filepath.Clean(target)
+	}
+	return path
 }
 
 // isNetworkPath reports whether a Windows path names a UNC resource. Checking
