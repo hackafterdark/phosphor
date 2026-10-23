@@ -108,6 +108,14 @@ func WithProxyEnv(env []string) StartOption {
 	}
 }
 
+// WithSandboxMode selects kernel-enforced sandboxing for the background
+// shell's child processes; see [Options.SandboxMode].
+func WithSandboxMode(mode string) StartOption {
+	return func(opts *Options) {
+		opts.SandboxMode = mode
+	}
+}
+
 // Start creates and starts a new background shell with the given command.
 func (m *BackgroundShellManager) Start(ctx context.Context, workingDir string, workspace string, blockFuncs []BlockFunc, command string, description string, opts ...StartOption) (*BackgroundShell, error) {
 	// Check job limit

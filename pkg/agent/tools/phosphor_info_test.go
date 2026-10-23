@@ -31,6 +31,26 @@ func TestPhosphorInfo_MinimalConfig(t *testing.T) {
 	require.NotContains(t, output, "[tools]")
 }
 
+func TestPhosphorInfo_Sandbox(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.NewTestStore(&config.Config{
+		Providers: csync.NewMap[string, config.ProviderConfig](),
+	})
+	output := buildPhosphorInfo(cfg, nil, nil, nil, nil)
+	require.Contains(t, output, "[sandbox]")
+	require.Contains(t, output, "mode = off")
+
+	cfgStrict := config.NewTestStore(&config.Config{
+		Providers: csync.NewMap[string, config.ProviderConfig](),
+		Tools: config.Tools{
+			Bash: config.ToolBash{SandboxMode: config.SandboxModeStrict},
+		},
+	})
+	output = buildPhosphorInfo(cfgStrict, nil, nil, nil, nil)
+	require.Contains(t, output, "mode = strict")
+}
+
 func TestPhosphorInfo_ConfigFiles(t *testing.T) {
 	t.Parallel()
 

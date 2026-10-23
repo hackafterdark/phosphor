@@ -56,6 +56,10 @@ type RunOptions struct {
 	ExtraTrustedRoots []string
 	// DisableTempRoot opts out of trusting the OS temporary directory.
 	DisableTempRoot bool
+	// SandboxMode selects kernel-enforced sandboxing of child processes for
+	// this execution; see [Options.SandboxMode]. Empty or "off" keeps
+	// today's behavior, which is what trusted callers such as hooks use.
+	SandboxMode string
 	// TermWidth is the terminal width in columns for PTY execution.
 	// Zero uses a default of 200.
 	TermWidth int
@@ -101,7 +105,8 @@ func Run(ctx context.Context, opts RunOptions) (err error) {
 		return err
 	}
 
-	runner, err := newRunner(opts.Cwd, opts.Env, opts.Stdin, stdout, stderr, opts.BlockFuncs, conf)
+	sbx := newSandboxPolicy(opts.SandboxMode, opts.Workspace, opts.ExtraTrustedRoots)
+	runner, err := newRunner(opts.Cwd, opts.Env, opts.Stdin, stdout, stderr, opts.BlockFuncs, conf, sbx)
 	if err != nil {
 		return fmt.Errorf("could not run command: %w", err)
 	}
@@ -200,7 +205,7 @@ func RunAndCapturePTY(ctx context.Context, opts RunOptions) (CaptureResult, erro
 // newRunner constructs an [interp.Runner] configured with the standard
 // Phosphor handler stack. Shared by the stateless [Run] entrypoint and the
 // stateful [Shell] so the two surfaces cannot drift.
-func newRunner(cwd string, env []string, stdin io.Reader, stdout, stderr io.Writer, blockFuncs []BlockFunc, conf *pathguard.Confinement) (*interp.Runner, error) {
+func newRunner(cwd string, env []string, stdin io.Reader, stdout, stderr io.Writer, blockFuncs []BlockFunc, conf *pathguard.Confinement, sbx *sandboxPolicy) (*interp.Runner, error) {
 	env = withNonInteractiveEnv(env)
 	return interp.New(
 		interp.StdIO(stdin, stdout, stderr),
@@ -210,7 +215,7 @@ func newRunner(cwd string, env []string, stdin io.Reader, stdout, stderr io.Writ
 		interp.CallHandler(confinementCallHandler(conf)),
 		interp.OpenHandler(pathOpenHandler(conf)),
 		interp.ReadDirHandler2(pathReadDirHandler(conf)),
-		execHandlerOption(blockFuncs, conf),
+		execHandlerOption(blockFuncs, conf, sbx),
 	)
 }
 
@@ -301,10 +306,10 @@ func newConfinement(workspace string, extraRoots []string, disableTempRoot bool)
 // isolation. Without isolation, shells like zsh that set up job control
 // when sourcing framework files can send SIGINT/SIGTERM to Phosphor's process
 // group and crash the parent.
-func execHandlerOption(blockFuncs []BlockFunc, conf *pathguard.Confinement) interp.RunnerOption {
-	base := processGroupExecHandler(defaultKillTimeout)
+func execHandlerOption(blockFuncs []BlockFunc, conf *pathguard.Confinement, sbx *sandboxPolicy) interp.RunnerOption {
+	base := processGroupExecHandler(defaultKillTimeout, sbx)
 	handler := base
-	for _, mw := range slices.Backward(standardHandlers(blockFuncs, conf)) {
+	for _, mw := range slices.Backward(standardHandlers(blockFuncs, conf, sbx)) {
 		handler = mw(handler)
 	}
 	return interp.ExecHandler(handler) //nolint:staticcheck // ExecHandlers always appends DefaultExecHandler which lacks process isolation.
@@ -364,11 +369,11 @@ func withNonInteractiveEnv(env []string) []string {
 //     script exec's rather than the outer path-prefixed wrapper;
 //  4. block list;
 //  5. optional Go coreutils (only when useGoCoreUtils is on).
-func standardHandlers(blockFuncs []BlockFunc, conf *pathguard.Confinement) []func(next interp.ExecHandlerFunc) interp.ExecHandlerFunc {
+func standardHandlers(blockFuncs []BlockFunc, conf *pathguard.Confinement, sbx *sandboxPolicy) []func(next interp.ExecHandlerFunc) interp.ExecHandlerFunc {
 	handlers := []func(next interp.ExecHandlerFunc) interp.ExecHandlerFunc{
 		pathConfinementHandler(conf, blockFuncs),
 		builtinHandler(conf),
-		scriptDispatchHandler(blockFuncs, conf),
+		scriptDispatchHandler(blockFuncs, conf, sbx),
 		blockHandler(blockFuncs),
 	}
 	if useGoCoreUtils {

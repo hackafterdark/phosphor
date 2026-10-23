@@ -432,7 +432,7 @@ func NewBashTool(permissions permission.Service, workingDir string, bashCfg conf
 				bgManager := shell.GetBackgroundShellManager()
 				bgManager.Cleanup()
 				// Use background context so it continues after tool returns
-				bgShell, err := bgManager.Start(ctx, execWorkingDir, absWorkingDir, blockFuncs(ctx, bashCfg), params.Command, params.Description, shell.WithTrustedRoots(bashCfg.TrustedExtraRoots), shell.WithProxyEnv(egress.SubprocessProxyEnv()))
+				bgShell, err := bgManager.Start(ctx, execWorkingDir, absWorkingDir, blockFuncs(ctx, bashCfg), params.Command, params.Description, shell.WithTrustedRoots(bashCfg.TrustedExtraRoots), shell.WithProxyEnv(egress.SubprocessProxyEnv()), shell.WithSandboxMode(bashCfg.BashSandboxMode()))
 				if err != nil {
 					return fantasy.ToolResponse{}, fmt.Errorf("error starting background shell: %w", err)
 				}
@@ -452,6 +452,9 @@ func NewBashTool(permissions permission.Service, workingDir string, bashCfg conf
 					}
 
 					stdout = formatOutput(stdout, stderr, execErr, params.Command, policy)
+					if bgShell.Shell.SandboxDegraded() {
+						stdout = shell.SandboxDegradedWarning + "\n\n" + stdout
+					}
 
 					metadata := BashResponseMetadata{
 						StartTime:        startTime.UnixMilli(),
@@ -478,6 +481,9 @@ func NewBashTool(permissions permission.Service, workingDir string, bashCfg conf
 					ShellID:          bgShell.ID,
 				}
 				response := fmt.Sprintf("Background shell started with ID: %s\n\nUse job_output tool to view output or job_kill to terminate.", bgShell.ID)
+				if bgShell.Shell.SandboxDegraded() {
+					response += "\n\n<system>" + shell.SandboxDegradedWarning + "</system>"
+				}
 				return fantasy.WithResponseMetadata(fantasy.NewTextResponse(response), metadata), nil
 			}
 
@@ -487,7 +493,7 @@ func NewBashTool(permissions permission.Service, workingDir string, bashCfg conf
 			// Start with detached context so it can survive if moved to background
 			bgManager := shell.GetBackgroundShellManager()
 			bgManager.Cleanup()
-			bgShell, err := bgManager.Start(ctx, execWorkingDir, absWorkingDir, blockFuncs(ctx, bashCfg), params.Command, params.Description, shell.WithTrustedRoots(bashCfg.TrustedExtraRoots), shell.WithProxyEnv(egress.SubprocessProxyEnv()))
+			bgShell, err := bgManager.Start(ctx, execWorkingDir, absWorkingDir, blockFuncs(ctx, bashCfg), params.Command, params.Description, shell.WithTrustedRoots(bashCfg.TrustedExtraRoots), shell.WithProxyEnv(egress.SubprocessProxyEnv()), shell.WithSandboxMode(bashCfg.BashSandboxMode()))
 			if err != nil {
 				return fantasy.ToolResponse{}, fmt.Errorf("error starting shell: %w", err)
 			}
@@ -562,6 +568,9 @@ func NewBashTool(permissions permission.Service, workingDir string, bashCfg conf
 				ShellID:          bgShell.ID,
 			}
 			response := fmt.Sprintf("Command is taking longer than expected and has been moved to background.\n\nBackground shell ID: %s\n\nUse job_output tool to view output or job_kill to terminate.", bgShell.ID)
+			if bgShell.Shell.SandboxDegraded() {
+				response += "\n\n<system>" + shell.SandboxDegradedWarning + "</system>"
+			}
 			return fantasy.WithResponseMetadata(fantasy.NewTextResponse(response), metadata), nil
 		},
 	)

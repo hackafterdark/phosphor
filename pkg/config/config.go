@@ -875,6 +875,32 @@ type ToolBash struct {
 	TrustedExtraRoots []string `json:"trusted_extra_roots,omitempty" jsonschema:"description=Additional absolute directories that bash may access alongside the workspace. The OS temporary directory is trusted by default."`
 
 	Network *ToolBashNetwork `json:"network,omitempty" jsonschema:"description=Optional opt-in network egress policy for bash commands."`
+
+	// SandboxMode selects kernel-enforced sandboxing of bash child
+	// processes. "off" (default) uses in-process guards only; "workspace"
+	// confines the filesystem kernel-side and degrades to in-process
+	// guards with a visible warning when the primitives are unavailable;
+	// "strict" refuses to exec when enforcement cannot attach.
+	SandboxMode string `json:"sandbox_mode,omitempty" jsonschema:"enum=off,enum=workspace,enum=strict,description=Kernel-enforced sandbox for bash children: off, workspace (degrade with warning), or strict (refuse if unavailable). Default off."`
+}
+
+// Sandbox modes for ToolBash.SandboxMode.
+const (
+	SandboxModeOff       = "off"
+	SandboxModeWorkspace = "workspace"
+	SandboxModeStrict    = "strict"
+)
+
+// BashSandboxMode returns the validated sandbox mode, defaulting to off.
+// Invalid values are treated as off so a typo can never silently weaken
+// strict mode; the [sandbox] report surfaces what is actually active.
+func (t ToolBash) BashSandboxMode() string {
+	switch t.SandboxMode {
+	case SandboxModeWorkspace, SandboxModeStrict:
+		return t.SandboxMode
+	default:
+		return SandboxModeOff
+	}
 }
 
 type ToolBashNetwork struct {

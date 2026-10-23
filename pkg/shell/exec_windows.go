@@ -18,6 +18,8 @@ const defaultKillTimeout = 2 * time.Second
 func isolateProcess(_ *exec.Cmd) {}
 
 // processGroupExecHandler returns interp.DefaultExecHandler on Windows.
-func processGroupExecHandler(killTimeout time.Duration) interp.ExecHandlerFunc {
+// The sandbox policy is accepted for signature parity; kernel confinement
+// on Windows arrives with the phase-3 backend and is a no-op until then.
+func processGroupExecHandler(killTimeout time.Duration, _ *sandboxPolicy) interp.ExecHandlerFunc {
 	return interp.DefaultExecHandler(killTimeout)
 }

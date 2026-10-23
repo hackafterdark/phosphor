@@ -46,7 +46,7 @@ const probeWindow = 128
 // blockFuncs is the block list used when building the nested runner for the
 // shell-source case, so deny rules apply recursively to commands invoked
 // from in-process scripts.
-func scriptDispatchHandler(blockFuncs []BlockFunc, conf *pathguard.Confinement) func(next interp.ExecHandlerFunc) interp.ExecHandlerFunc {
+func scriptDispatchHandler(blockFuncs []BlockFunc, conf *pathguard.Confinement, sbx *sandboxPolicy) func(next interp.ExecHandlerFunc) interp.ExecHandlerFunc {
 	return func(next interp.ExecHandlerFunc) interp.ExecHandlerFunc {
 		return func(ctx context.Context, args []string) error {
 			if len(args) == 0 || !isPathPrefixed(args[0]) {
@@ -79,11 +79,11 @@ func scriptDispatchHandler(blockFuncs []BlockFunc, conf *pathguard.Confinement) 
 
 			switch {
 			case hasShebang(probe):
-				return dispatchShebang(ctx, scriptPath, probe, args)
+				return dispatchShebang(ctx, scriptPath, probe, args, sbx)
 			case isBinary(probe):
 				return next(ctx, args)
 			default:
-				return runShellSource(ctx, scriptPath, args, blockFuncs, conf)
+				return runShellSource(ctx, scriptPath, args, blockFuncs, conf, sbx)
 			}
 		}
 	}
@@ -187,7 +187,7 @@ func isBinary(probe []byte) bool {
 // interpreter via os/exec, inheriting the parent runner's cwd, env, and
 // stdio. Returns interp.ExitStatus on non-zero interpreter exit so the
 // parent interpreter sees it as a normal non-zero status.
-func dispatchShebang(ctx context.Context, scriptPath string, probe []byte, args []string) error {
+func dispatchShebang(ctx context.Context, scriptPath string, probe []byte, args []string, sbx *sandboxPolicy) error {
 	sb, err := parseShebang(probe)
 	if err != nil {
 		hc := interp.HandlerCtx(ctx)
@@ -214,6 +214,9 @@ func dispatchShebang(ctx context.Context, scriptPath string, probe []byte, args 
 	cmd.Stdout = hc.Stdout
 	cmd.Stderr = hc.Stderr
 	isolateProcess(cmd)
+	if refused := confineProcess(cmd, sbx, hc.Stderr); refused != nil {
+		return refused
+	}
 
 	if err := cmd.Run(); err != nil {
 		var exitErr *exec.ExitError
@@ -391,7 +394,7 @@ func parseEnvShebang(rest string) (*shebang, error) {
 // This is the only branch that reads the full file; probeFile keeps its
 // read to probeWindow bytes so the binary/shebang paths never touch more
 // than 128 bytes of I/O.
-func runShellSource(ctx context.Context, path string, args []string, blockFuncs []BlockFunc, conf *pathguard.Confinement) error {
+func runShellSource(ctx context.Context, path string, args []string, blockFuncs []BlockFunc, conf *pathguard.Confinement, sbx *sandboxPolicy) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
@@ -411,7 +414,7 @@ func runShellSource(ctx context.Context, path string, args []string, blockFuncs 
 		interp.Dir(hc.Dir),
 		interp.CallHandler(confinementCallHandler(conf)),
 		interp.OpenHandler(pathOpenHandler(conf)),
-		execHandlerOption(blockFuncs, conf),
+		execHandlerOption(blockFuncs, conf, sbx),
 	}
 	if len(args) > 1 {
 		// Params with a leading "--" avoids any of args[1:] being
