@@ -20,7 +20,7 @@ func decodeToMap(t *testing.T, s string) map[string]any {
 func TestRedactSecretJSONFields_DropsSecretNamedKeys(t *testing.T) {
 	in := `{"user":"alice","SecretString":"s_very_secret_value","SessionToken":"tok_abc123","Credentials":{"password":"p@ssw0rd"},"PrivateKey":"-----BEGIN RSA PRIVATE KEY-----"}`
 
-	out, changed := redactSecretJSONFields(in)
+	out, changed := redactSecretJSONFields(in, nil)
 	require.True(t, changed, "a document with secret keys must report a change")
 	require.NotContains(t, out, "s_very_secret_value")
 	require.NotContains(t, out, "tok_abc123")
@@ -37,7 +37,7 @@ func TestRedactSecretJSONFields_DropsSecretNamedKeys(t *testing.T) {
 func TestRedactSecretJSONFields_NestedAndArrays(t *testing.T) {
 	in := `{"meta":{"ok":true},"items":[{"name":"a","api_key":"AKsecret123"},{"name":"b"}],"count":2}`
 
-	out, changed := redactSecretJSONFields(in)
+	out, changed := redactSecretJSONFields(in, nil)
 	require.True(t, changed)
 	require.NotContains(t, out, "AKsecret123")
 
@@ -54,13 +54,13 @@ func TestRedactSecretJSONFields_NestedAndArrays(t *testing.T) {
 func TestRedactSecretJSONFields_NonJSONIsUntouched(t *testing.T) {
 	// Ordinary command output: not JSON, must pass through byte-for-byte.
 	logs := "build ok\n22 tests passed\nwarning: something"
-	out, changed := redactSecretJSONFields(logs)
+	out, changed := redactSecretJSONFields(logs, nil)
 	require.False(t, changed)
 	require.Equal(t, logs, out)
 
 	// A line that merely starts with '{' but is not valid JSON is also left alone.
 	bad := "{not json at all"
-	out2, changed2 := redactSecretJSONFields(bad)
+	out2, changed2 := redactSecretJSONFields(bad, nil)
 	require.False(t, changed2)
 	require.Equal(t, bad, out2)
 }
@@ -68,7 +68,7 @@ func TestRedactSecretJSONFields_NonJSONIsUntouched(t *testing.T) {
 func TestRedactSecretJSONFields_TrailingGarbageIsNotReshaped(t *testing.T) {
 	// JSON glued to trailing content is not a bare document; refuse to reshape it.
 	mixed := `{"access_token":"tok_999"}` + "\ntrailing log line"
-	out, changed := redactSecretJSONFields(mixed)
+	out, changed := redactSecretJSONFields(mixed, nil)
 	require.False(t, changed, "trailing non-JSON content must veto the rewrite")
 	require.Equal(t, mixed, out, "the original bytes are preserved when we bail")
 }
@@ -77,14 +77,14 @@ func TestRedactSecretJSONFields_NoSecretKeysLeavesBytesIntact(t *testing.T) {
 	// No secret-shaped key: the document is returned verbatim, not re-marshalled,
 	// so key ordering and spacing are unchanged.
 	in := `{"sort_key":"id","cache_key":"v1","primary_key":42,"title":"hello"}`
-	out, changed := redactSecretJSONFields(in)
+	out, changed := redactSecretJSONFields(in, nil)
 	require.False(t, changed)
 	require.Equal(t, in, out)
 }
 
 func TestRedactSecretJSONFields_PreservesNumbersAndBools(t *testing.T) {
 	in := `{"port":5432,"enabled":true,"ratio":1.5,"aws_secret_access_key":"hidden","tag":"x"}`
-	out, changed := redactSecretJSONFields(in)
+	out, changed := redactSecretJSONFields(in, nil)
 	require.True(t, changed)
 	require.NotContains(t, out, "hidden")
 	m := decodeToMap(t, out)
@@ -94,16 +94,16 @@ func TestRedactSecretJSONFields_PreservesNumbersAndBools(t *testing.T) {
 }
 
 func TestRedactSecretJSONFields_DisabledIsPassthrough(t *testing.T) {
-	useRedaction(t, RedactionPolicyOptions{JSONKeyRedactionEnabled: ptrBool(false)})
+	pol := useRedaction(t, RedactionPolicyOptions{JSONKeyRedactionEnabled: ptrBool(false)})
 	in := `{"SecretString":"s_secret"}`
-	out, changed := redactSecretJSONFields(in)
+	out, changed := redactSecretJSONFields(in, pol)
 	require.False(t, changed)
 	require.Equal(t, in, out)
 }
 
 func TestRedactJSONForTool_ReportsSentinel(t *testing.T) {
 	in := `{"SecretString":"s_secret_value","user":"bob"}`
-	out := RedactJSONForTool(in, "mcp")
+	out := RedactJSONForTool(in, "mcp", nil)
 	require.NotContains(t, out, "s_secret_value")
 	require.Contains(t, out, jsonKeySentinel)
 	require.Contains(t, out, "bob", "benign fields remain visible to the model")
@@ -122,22 +122,21 @@ func TestIsSecretJSONKey(t *testing.T) {
 }
 
 func TestIsSecretJSONKey_ExtendedByConfig(t *testing.T) {
-	useRedaction(t, RedactionPolicyOptions{ExtraJSONSecretKeys: []string{"internal_blob"}})
-	pol := currentRedactionPolicy()
+	pol := useRedaction(t, RedactionPolicyOptions{ExtraJSONSecretKeys: []string{"internal_blob"}})
 	require.True(t, pol.isSecretJSONKey("internal_blob"))
 	require.True(t, pol.isSecretJSONKey("INTERNAL_BLOB"), "operator keys are matched case-insensitively")
 }
 
 func TestRedactSecretJSONFields_AlreadySentinelIsNotReCounted(t *testing.T) {
 	in := `{"SecretString":"` + jsonKeySentinel + `"}`
-	out, changed := redactSecretJSONFields(in)
+	out, changed := redactSecretJSONFields(in, nil)
 	require.False(t, changed, "an already-dropped field is not a new change")
 	require.Equal(t, in, out)
 }
 
 func TestRedactSecretJSONFields_TopLevelArray(t *testing.T) {
 	in := `[{"k":"keep","token":"tok_1"},{"k":"keep2"}]`
-	out, changed := redactSecretJSONFields(in)
+	out, changed := redactSecretJSONFields(in, nil)
 	require.True(t, changed)
 	require.NotContains(t, out, "tok_1")
 	require.Contains(t, out, "keep")
@@ -145,10 +144,10 @@ func TestRedactSecretJSONFields_TopLevelArray(t *testing.T) {
 }
 
 func TestRedactSecretJSONFields_EmptyAndOversize(t *testing.T) {
-	_, changed := redactSecretJSONFields("")
+	_, changed := redactSecretJSONFields("", nil)
 	require.False(t, changed)
 
 	huge := `{"token":"` + strings.Repeat("a", jsonKeyScanLimit+1) + `"}`
-	_, changed2 := redactSecretJSONFields(huge)
+	_, changed2 := redactSecretJSONFields(huge, nil)
 	require.False(t, changed2, "an over-cap payload is skipped rather than parsed")
 }

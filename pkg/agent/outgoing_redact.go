@@ -240,7 +240,7 @@ func (a *sessionAgent) redactOutgoingText(text string) string {
 		return text
 	}
 	if a.wireSecretsEnabled() && couldHoldSecret(text) {
-		text = tools.RedactSecretsForWire(text)
+		text = tools.RedactSecretsForWire(text, a.redactionPolicy)
 	}
 	if a.redactOutgoingPII && piiGate(text) {
 		text = maskPII(text)

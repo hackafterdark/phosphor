@@ -111,6 +111,7 @@ func NewViewTool(
 	filetracker filetracker.Service,
 	skillTracker *skills.Tracker,
 	workingDir string,
+	policy *Policy,
 	skillsPaths ...string,
 ) fantasy.AgentTool {
 	return fantasy.NewAgentTool(
@@ -246,7 +247,7 @@ func NewViewTool(
 				if outlineErr != nil {
 					return fantasy.ToolResponse{}, fmt.Errorf("failed to generate outline: %w", outlineErr)
 				}
-				outline = redactReadContent(outline, filePath, "view")
+				outline = redactReadContent(outline, filePath, "view", policy)
 				outline = DefangSpecialTokens(outline)
 				output := "<file_outline>\n" + outline + "\n</file_outline>\n"
 				return fantasy.WithResponseMetadata(
@@ -290,7 +291,7 @@ func NewViewTool(
 
 			// Scrub credentials from the file body before it is line-numbered into
 			// the response or copied into metadata, so it never enters the transcript.
-			content = redactReadContent(content, filePath, "view")
+			content = redactReadContent(content, filePath, "view", policy)
 			content = DefangSpecialTokens(content)
 
 			openInLSPs(ctx, lspManager, filePath)

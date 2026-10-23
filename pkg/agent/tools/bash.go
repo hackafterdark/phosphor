@@ -344,7 +344,7 @@ func blockFuncs(ctx context.Context, cfg config.ToolBash) []shell.BlockFunc {
 	return funcs
 }
 
-func NewBashTool(permissions permission.Service, workingDir string, bashCfg config.ToolBash, attribution *config.Attribution, modelID string) fantasy.AgentTool {
+func NewBashTool(permissions permission.Service, workingDir string, bashCfg config.ToolBash, attribution *config.Attribution, modelID string, policy *Policy) fantasy.AgentTool {
 	return fantasy.NewAgentTool(
 		BashToolName,
 		string(bashDescription(workingDir, bashCfg, attribution, modelID)),
@@ -451,7 +451,7 @@ func NewBashTool(permissions permission.Service, workingDir string, bashCfg conf
 						return fantasy.ToolResponse{}, fmt.Errorf("[Job %s] error executing command: %w", bgShell.ID, execErr)
 					}
 
-					stdout = formatOutput(stdout, stderr, execErr, params.Command)
+					stdout = formatOutput(stdout, stderr, execErr, params.Command, policy)
 
 					metadata := BashResponseMetadata{
 						StartTime:        startTime.UnixMilli(),
@@ -535,7 +535,7 @@ func NewBashTool(permissions permission.Service, workingDir string, bashCfg conf
 					return fantasy.ToolResponse{}, fmt.Errorf("[Job %s] error executing command: %w", bgShell.ID, execErr)
 				}
 
-				stdout = formatOutput(stdout, stderr, execErr, params.Command)
+				stdout = formatOutput(stdout, stderr, execErr, params.Command, policy)
 
 				metadata := BashResponseMetadata{
 					StartTime:        startTime.UnixMilli(),
@@ -568,7 +568,7 @@ func NewBashTool(permissions permission.Service, workingDir string, bashCfg conf
 }
 
 // formatOutput formats the output of a completed command with error handling
-func formatOutput(stdout, stderr string, execErr error, command string) string {
+func formatOutput(stdout, stderr string, execErr error, command string, policy *Policy) string {
 	interrupted := shell.IsInterrupt(execErr)
 	exitCode := shell.ExitCode(execErr)
 
@@ -579,8 +579,8 @@ func formatOutput(stdout, stderr string, execErr error, command string) string {
 	// (cat/source/less .env, credentials, keys): drop assignment values from the
 	// raw command data before it is combined. The detector pass (B) still runs on
 	// the whole result below, so an output the argv heuristic missed is caught there.
-	stdout = redactSensitiveOutputForCommand(stdout, command)
-	stderr = redactSensitiveOutputForCommand(stderr, command)
+	stdout = redactSensitiveOutputForCommand(stdout, command, policy)
+	stderr = redactSensitiveOutputForCommand(stderr, command, policy)
 
 	errorMessage := stderr
 	if errorMessage == "" && execErr != nil {
@@ -615,8 +615,8 @@ func formatOutput(stdout, stderr string, execErr error, command string) string {
 	// value is left byte-for-byte intact by the key-drop pass, so ordinary logs are
 	// untouched. Bash output is path-less, so it is scanned in full mode and
 	// honours the read-path secrets toggle.
-	stdout = RedactJSONForTool(stdout, "bash")
-	return redactSecretsForTool(stdout, "", "bash")
+	stdout = RedactJSONForTool(stdout, "bash", policy)
+	return redactSecretsForTool(stdout, "", "bash", policy)
 }
 
 func TruncateOutput(content string) string {

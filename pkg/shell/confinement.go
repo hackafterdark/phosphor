@@ -3,7 +3,9 @@ package shell
 import (
 	"context"
 	"log/slog"
+	"strings"
 
+	"mvdan.cc/sh/v3/expand"
 	"mvdan.cc/sh/v3/interp"
 
 	"github.com/hackafterdark/phosphor/internal/pathguard"
@@ -77,4 +79,88 @@ func isBlocked(args []string, blockFuncs []BlockFunc) bool {
 		}
 	}
 	return false
+}
+
+// confinementCallHandler returns a [interp.CallHandlerFunc] that gates the
+// interpreter's in-process builtins.
+//
+// The exec and open gates only see exec'd programs and interpreter-opened
+// files; the cd/pwd builtins are dispatched inside the interpreter and never
+// appear there. Without this gate, a `cd` whose target the static pass cannot
+// prove (relative traversal like `cd ..`, `$VAR`, or `$(...)`) can move the
+// cwd outside the workspace mid-command, and the very next `pwd` prints the
+// outside path into the transcript.
+//
+// The handler enforces two checks: the cwd itself must sit inside a trusted
+// root before *any* simple command runs, and cd's post-expansion target must
+// land inside a trusted root. A nil confinement or one without a workspace
+// root disables the gate, matching the exec/open handlers.
+func confinementCallHandler(conf *pathguard.Confinement) interp.CallHandlerFunc {
+	return func(ctx context.Context, args []string) ([]string, error) {
+		if conf == nil || conf.WorkspaceRoot == "" || len(args) == 0 {
+			return args, nil
+		}
+		hc := interp.HandlerCtx(ctx)
+		if err := conf.DirBlocked(hc.Dir); err != nil {
+			slog.InfoContext(ctx, "Command blocked by workspace path confinement",
+				"command", args[0],
+				"workspace", conf.WorkspaceRoot,
+				"reason", err.Error(),
+			)
+			return args, err
+		}
+		if args[0] == "cd" {
+			if len(args) == 1 {
+				// cd with no target lands in the interpreter's HOME, which
+				// a command can override (`HOME=... cd`), so resolve it from
+				// the handler env rather than the process env. HOME is
+				// normally never a trusted root; bounds-check it explicitly.
+				if home, ok := envValue(hc.Env, "HOME"); ok {
+					if err := conf.Blocked([]string{"cd", home}, hc.Dir); err != nil {
+						return args, err
+					}
+				}
+				return args, nil
+			}
+			for _, arg := range args[1:] {
+				if arg == "-" {
+					// `cd -` jumps to OLDPWD and prints it. OLDPWD can only
+					// name a directory a previous (gated) cd accepted under
+					// this interpreter, but validate it anyway: the run may
+					// have started at an externally provided Dir, and
+					// printing an outside target is itself a transcript leak.
+					if oldpwd, ok := envValue(hc.Env, "OLDPWD"); ok {
+						if err := conf.Blocked([]string{"cd", oldpwd}, hc.Dir); err != nil {
+							return args, err
+						}
+					}
+					continue
+				}
+				if strings.HasPrefix(arg, "-") {
+					// Flag (e.g. `cd -L target`); the target itself is
+					// validated on the next iteration.
+					continue
+				}
+				if err := conf.Blocked([]string{"cd", arg}, hc.Dir); err != nil {
+					slog.InfoContext(ctx, "cd target blocked by workspace path confinement",
+						"target", arg,
+						"workspace", conf.WorkspaceRoot,
+						"reason", err.Error(),
+					)
+					return args, err
+				}
+			}
+		}
+		return args, nil
+	}
+}
+
+// envValue returns the interpreter environment's value for name, if it is a
+// set scalar. The interpreter env (not the process env) is authoritative:
+// commands can override variables inline (`HOME=/tmp cd`).
+func envValue(env expand.Environ, name string) (string, bool) {
+	if vr := env.Get(name); vr.IsSet() && vr.Kind == expand.String {
+		return vr.Str, true
+	}
+	return "", false
 }

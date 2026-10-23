@@ -122,7 +122,7 @@ func escapeRegexPattern(pattern string) string {
 	return escaped
 }
 
-func NewGrepTool(workingDir string, config config.ToolGrep) fantasy.AgentTool {
+func NewGrepTool(workingDir string, config config.ToolGrep, policy *Policy) fantasy.AgentTool {
 	return fantasy.NewAgentTool(
 		GrepToolName,
 		grepDescription(),
@@ -191,7 +191,7 @@ func NewGrepTool(workingDir string, config config.ToolGrep) fantasy.AgentTool {
 						// inside a .env keeps its key but loses its value, so the generic
 						// detector downstream is not the only thing standing between an
 						// opaque custom key and the transcript.
-						lineText = redactSensitiveLine(lineText, match.path)
+						lineText = redactSensitiveLine(lineText, match.path, policy)
 						if len(lineText) > maxGrepContentWidth {
 							lineText = lineText[:maxGrepContentWidth] + "..."
 						}
@@ -210,7 +210,7 @@ func NewGrepTool(workingDir string, config config.ToolGrep) fantasy.AgentTool {
 				}
 			}
 
-			redacted := redactSecretsForTool(output.String(), "", "grep")
+			redacted := redactSecretsForTool(output.String(), "", "grep", policy)
 			return fantasy.WithResponseMetadata(
 				fantasy.NewTextResponse(redacted),
 				GrepResponseMetadata{

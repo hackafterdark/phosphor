@@ -61,16 +61,20 @@ func TestIsInside(t *testing.T) {
 			expectInside: false,
 		},
 		{
+			// Case-folding only applies on case-insensitive filesystems.
+			// These roots do not exist on disk, so the probe conservatively
+			// treats them as case-sensitive (strict) everywhere except
+			// Windows, where the filesystem is case-insensitive by contract.
 			name:         "case-different paths on case-insensitive FS",
 			path:         "/Home/User/Project/src/main.go",
 			workspace:    "/home/user/project",
-			expectInside: true,
+			expectInside: runtime.GOOS == "windows",
 		},
 		{
 			name:         "case-different workspace root",
 			path:         "/home/user/PROJECT/src/main.go",
 			workspace:    "/home/user/project",
-			expectInside: true,
+			expectInside: runtime.GOOS == "windows",
 		},
 	}
 
@@ -100,6 +104,37 @@ func TestIsInside_RealPaths(t *testing.T) {
 
 	sibling := IsInside(filepath.Join(os.TempDir()), tmpDir)
 	require.False(t, sibling, "parent of workspace should be outside")
+}
+
+func TestIsInside_CaseInsensitiveFilesystems(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+
+	// Re-spell the workspace root in a different case. On a case-insensitive
+	// filesystem (Windows, default macOS APFS) this denotes the same
+	// directory and must pass the bounds check; on a case-sensitive one it is
+	// a different path and must not.
+	flipped := flipCase(tmpDir)
+	require.NotEqual(t, tmpDir, flipped)
+
+	inside := IsInside(filepath.Join(flipped, "sub", "main.go"), tmpDir)
+	require.Equal(t, caseInsensitiveFS(tmpDir), inside,
+		"case folding must match the hosting filesystem's case behavior")
+}
+
+// flipCase flips the case of the first ASCII letter in p.
+func flipCase(p string) string {
+	for i := 0; i < len(p); i++ {
+		c := p[i]
+		if c >= 'A' && c <= 'Z' {
+			return p[:i] + string(c+32) + p[i+1:]
+		}
+		if c >= 'a' && c <= 'z' {
+			return p[:i] + string(c-32) + p[i+1:]
+		}
+	}
+	return p
 }
 
 func TestIsInside_UncPaths(t *testing.T) {

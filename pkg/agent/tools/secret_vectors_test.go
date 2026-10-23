@@ -74,7 +74,7 @@ func TestCheckSecrets_Vectors(t *testing.T) {
 		t.Run(v.name, func(t *testing.T) {
 			t.Parallel()
 
-			err := checkSecretsAt(v.content, v.path)
+			err := checkSecretsAt(v.content, v.path, nil)
 			require.Error(t, err, "expected %q to be blocked", v.name)
 			require.Contains(t, err.Error(), "Security violation")
 			// The matched credential must never be echoed back to the model.
@@ -109,16 +109,16 @@ func TestCheckSecrets_Allowlists(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-			require.NoError(t, checkSecretsAt(withSecret, c.path))
+			require.NoError(t, checkSecretsAt(withSecret, c.path, nil))
 		})
 	}
 
 	// Empty content never trips the gate.
-	require.NoError(t, checkSecretsAt("", "app.go"))
+	require.NoError(t, checkSecretsAt("", "app.go", nil))
 
 	// The inline gitleaks opt-out comment suppresses a finding in scannable code.
 	optOut := "// gitleaks:allow generic-api-key\napi_key := \"AIzaSyD125JKPSG25JQ253PIP5TG25P25K\""
-	require.NoError(t, checkSecretsAt(optOut, "services/client.go"))
+	require.NoError(t, checkSecretsAt(optOut, "services/client.go", nil))
 }
 
 // TestCheckSecrets_Negatives proves ordinary source code is not falsely blocked.
@@ -135,7 +135,7 @@ func TestCheckSecrets_Negatives(t *testing.T) {
 	for _, content := range negatives {
 		t.Run(strings.Trim(content, "\""), func(t *testing.T) {
 			t.Parallel()
-			require.NoError(t, checkSecretsAt(content, "src/app.go"))
+			require.NoError(t, checkSecretsAt(content, "src/app.go", nil))
 		})
 	}
 }
@@ -145,11 +145,11 @@ func TestCheckSecrets_Negatives(t *testing.T) {
 func TestCheckSecrets_DelegatesToPath(t *testing.T) {
 	t.Parallel()
 
-	err := checkSecrets("AWS_ACCESS_KEY_ID := \"AKIAIOSVPK253PIP5TGP\"")
+	err := checkSecrets("AWS_ACCESS_KEY_ID := \"AKIAIOSVPK253PIP5TGP\"", nil)
 	require.Error(t, err)
 	require.NotContains(t, err.Error(), "AKIAIOSVPK253PIP5TGP")
 
 	// A fixture path that would be skipped via checkSecretsAt is still scanned
 	// here because there is no path to allowlist against.
-	require.Error(t, checkSecrets("AWS_ACCESS_KEY_ID := \"AKIAIOSVPK253PIP5TGP\""))
+	require.Error(t, checkSecrets("AWS_ACCESS_KEY_ID := \"AKIAIOSVPK253PIP5TGP\"", nil))
 }

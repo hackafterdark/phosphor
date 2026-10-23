@@ -227,7 +227,7 @@ func TestMultiEditToolWithHashline(t *testing.T) {
 	hash2 := crc32.ChecksumIEEE([]byte("line 2"))
 	taggedOldString := fmt.Sprintf("     2:%08x|line 2", hash2)
 
-	tool := NewMultiEditTool(nil, &mockPermissionService{}, &mockHistoryService{}, mockFileTrackerForEdit{}, workingDir)
+	tool := NewMultiEditTool(nil, &mockPermissionService{}, &mockHistoryService{}, mockFileTrackerForEdit{}, workingDir, nil)
 	ctx := context.WithValue(context.Background(), SessionIDContextKey, "test-session")
 
 	input, err := json.Marshal(MultiEditParams{
@@ -263,7 +263,7 @@ func TestMultiEditToolHashMismatch(t *testing.T) {
 
 	taggedOldString := "     2:badabada|line 2"
 
-	tool := NewMultiEditTool(nil, &mockPermissionService{}, &mockHistoryService{}, mockFileTrackerForEdit{}, workingDir)
+	tool := NewMultiEditTool(nil, &mockPermissionService{}, &mockHistoryService{}, mockFileTrackerForEdit{}, workingDir, nil)
 	ctx := context.WithValue(context.Background(), SessionIDContextKey, "test-session")
 
 	input, err := json.Marshal(MultiEditParams{
@@ -294,7 +294,7 @@ func TestMultiEditToolAnchorPoisoning(t *testing.T) {
 	err := os.WriteFile(filePath, []byte("line 1\nline 2\nline 3\n"), 0o644)
 	require.NoError(t, err)
 
-	tool := NewMultiEditTool(nil, &mockPermissionService{}, &mockHistoryService{}, mockFileTrackerForEdit{}, workingDir)
+	tool := NewMultiEditTool(nil, &mockPermissionService{}, &mockHistoryService{}, mockFileTrackerForEdit{}, workingDir, nil)
 	ctx := context.WithValue(context.Background(), SessionIDContextKey, "test-session")
 
 	input, err := json.Marshal(MultiEditParams{

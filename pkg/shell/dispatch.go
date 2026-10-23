@@ -409,6 +409,7 @@ func runShellSource(ctx context.Context, path string, args []string, blockFuncs 
 		interp.Interactive(false),
 		interp.Env(hc.Env),
 		interp.Dir(hc.Dir),
+		interp.CallHandler(confinementCallHandler(conf)),
 		interp.OpenHandler(pathOpenHandler(conf)),
 		execHandlerOption(blockFuncs, conf),
 	}

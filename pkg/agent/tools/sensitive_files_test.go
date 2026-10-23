@@ -11,18 +11,18 @@ import (
 // whole-value rule (A), such as committed .env templates.
 const awsKeyForTest = "AKIAIOSVPK253PIP5TGP"
 
-// usePolicy installs a sensitive-file policy for the duration of a test and
-// restores the previous one after, so tests that flip the master switch or add
-// globs do not leak into their neighbours.
-func usePolicy(t *testing.T, enabled bool, extras []string) {
+// usePolicy builds a sensitive-file policy for one test. The policy is
+// immutable and owned by the test, so nothing leaks into its neighbours.
+func usePolicy(t *testing.T, enabled bool, extras []string) *Policy {
 	t.Helper()
-	prev := sensitivePolicy.Load()
-	t.Cleanup(func() { sensitivePolicy.Store(prev) })
-	SetSensitiveFilePolicy(enabled, extras)
+	return NewPolicy(RedactionPolicyOptions{
+		SensitiveFilesEnabled:      &enabled,
+		ExtraSensitiveFilePatterns: extras,
+	})
 }
 
 func TestClassifySensitiveFile(t *testing.T) {
-	usePolicy(t, true, nil)
+	pol := usePolicy(t, true, nil)
 
 	cases := []struct {
 		name      string
@@ -45,7 +45,7 @@ func TestClassifySensitiveFile(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			tier, shape := classifySensitiveFile(c.path)
+			tier, shape := classifySensitiveFile(c.path, pol)
 			require.Equal(t, c.wantTier, tier, "tier")
 			require.Equal(t, c.wantShape, shape, "shape")
 		})
@@ -53,7 +53,7 @@ func TestClassifySensitiveFile(t *testing.T) {
 }
 
 func TestRedactSensitiveContentByPath_DotenvKeepsKeys(t *testing.T) {
-	usePolicy(t, true, nil)
+	pol := usePolicy(t, true, nil)
 
 	in := "" +
 		"# a comment mentioning KEY=value must stay\n" +
@@ -62,7 +62,7 @@ func TestRedactSensitiveContentByPath_DotenvKeepsKeys(t *testing.T) {
 		"export STRIPE_API_KEY=sk_live_abc123def456\n" +
 		"EMPTY_OK=\n" +
 		"  INDENTED_KEY=  spaced value here\n"
-	out := redactSensitiveContentByPath(in, ".env")
+	out := redactSensitiveContentByPath(in, ".env", pol)
 
 	// Keys survive, values become the sentinel.
 	require.Contains(t, out, "DATABASE_URL="+valueSentinel)
@@ -76,7 +76,7 @@ func TestRedactSensitiveContentByPath_DotenvKeepsKeys(t *testing.T) {
 }
 
 func TestRedactSensitiveContentByPath_JSON(t *testing.T) {
-	usePolicy(t, true, nil)
+	pol := usePolicy(t, true, nil)
 
 	in := "{\n" +
 		"  \"type\": \"service_account\",\n" +
@@ -85,7 +85,7 @@ func TestRedactSensitiveContentByPath_JSON(t *testing.T) {
 		"  \"private_key\": \"-----BEGIN PRIVATE KEY-----\\nMIIFAKE\\n\",\n" +
 		"  \"client_email\": \"svc@proj.iam.gcp\"\n" +
 		"}\n"
-	out := redactSensitiveContentByPath(in, "svc/my-service-account.json")
+	out := redactSensitiveContentByPath(in, "svc/my-service-account.json", pol)
 
 	// Structure and keys stay; the numeric field stays (it is not a value string).
 	require.Contains(t, out, "\"type\":")
@@ -99,27 +99,27 @@ func TestRedactSensitiveContentByPath_JSON(t *testing.T) {
 }
 
 func TestRedactSensitiveContentByPath_JSONColonInKeyIsSafe(t *testing.T) {
-	usePolicy(t, true, nil)
+	pol := usePolicy(t, true, nil)
 
 	// A colon inside the key token must not be mistaken for the key/value split.
 	in := "{ \"time:zone\": \"utc\", \"token\": \"sekret123\" }"
-	out := redactSensitiveContentByPath(in, "secrets.json")
+	out := redactSensitiveContentByPath(in, "secrets.json", pol)
 	require.NotContains(t, out, "sekret123")
 	// The key that itself contains a colon is preserved verbatim.
 	require.Contains(t, out, "\"time:zone\"")
 }
 
 func TestRedactSensitiveContentByPath_Opaque(t *testing.T) {
-	usePolicy(t, true, nil)
+	pol := usePolicy(t, true, nil)
 
 	in := "-----BEGIN RSA PRIVATE KEY-----\nMIIEvGtleBase64Blob==\n-----END RSA PRIVATE KEY-----\n"
-	out := redactSensitiveContentByPath(in, "~/.ssh/id_rsa")
+	out := redactSensitiveContentByPath(in, "~/.ssh/id_rsa", pol)
 	require.Equal(t, opaqueSentinel+"\n", out)
 	require.NotContains(t, out, "MIIEvGtleBase64Blob")
 }
 
 func TestRedactSensitive_MixedAllowlist(t *testing.T) {
-	usePolicy(t, true, nil)
+	pol := usePolicy(t, true, nil)
 
 	in := "" +
 		"use flake\n" +
@@ -127,7 +127,7 @@ func TestRedactSensitive_MixedAllowlist(t *testing.T) {
 		"export NODE_ENV=development\n" +
 		"export LOG_LEVEL=debug\n" +
 		"export GITHUB_TOKEN=ghp_secret_value_1234567890\n"
-	out := redactSensitiveContentByPath(in, ".envrc")
+	out := redactSensitiveContentByPath(in, ".envrc", pol)
 
 	// Non-secret shell setup stays visible for the agent.
 	require.Contains(t, out, "use flake")
@@ -140,7 +140,7 @@ func TestRedactSensitive_MixedAllowlist(t *testing.T) {
 }
 
 func TestRedactSensitive_Template_ExemptFromA_BStillRuns(t *testing.T) {
-	usePolicy(t, true, nil)
+	pol := usePolicy(t, true, nil)
 
 	// A committed template keeps its informative placeholders (exempt from the
 	// blunt whole-value rule A) but a real key dropped into it is scrubbed by the
@@ -150,7 +150,7 @@ func TestRedactSensitive_Template_ExemptFromA_BStillRuns(t *testing.T) {
 		"LOG_FORMAT=pretty\n" +
 		"YOUR_API_KEY=your_key_here\n" +
 		"AWS_ACCESS_KEY_ID=" + awsKeyForTest + "\n"
-	out := redactReadContent(in, "docs/.env.example", "view")
+	out := redactReadContent(in, "docs/.env.example", "view", pol)
 
 	// (A) is skipped: the placeholders/informative values are still there.
 	require.Contains(t, out, "LOG_FORMAT=pretty")
@@ -162,18 +162,18 @@ func TestRedactSensitive_Template_ExemptFromA_BStillRuns(t *testing.T) {
 }
 
 func TestRedactSensitive_DisabledIsPassthrough(t *testing.T) {
-	usePolicy(t, false, nil)
+	pol := usePolicy(t, false, nil)
 
 	in := "SECRET_VALUE=supersecret123456\n"
-	out := redactSensitiveContentByPath(in, ".env")
+	out := redactSensitiveContentByPath(in, ".env", pol)
 	require.Equal(t, in, out)
 }
 
 func TestSensitiveFile_ExtraPatternsExtend(t *testing.T) {
-	usePolicy(t, true, []string{"*.tfvars", "config/*.vault"})
+	pol := usePolicy(t, true, []string{"*.tfvars", "config/*.vault"})
 
 	// Operator-added dotenv files become sensitive with the dotenv shape.
-	out := redactSensitiveContentByPath("VAULT_TOKEN=s.1234567890abc\n", "config/prod.vault")
+	out := redactSensitiveContentByPath("VAULT_TOKEN=s.1234567890abc\n", "config/prod.vault", pol)
 	require.Contains(t, out, "VAULT_TOKEN="+valueSentinel)
 	require.NotContains(t, out, "s.1234567890abc")
 }
@@ -182,17 +182,18 @@ func TestSensitiveFile_PathGlobMatchesWholePath(t *testing.T) {
 	// .tfvars is not in the default set, so only the operator's slash-bearing
 	// glob can make these sensitive, and only when the whole path lines up.
 	usePolicy(t, true, []string{"deploy/prod/*.tfvars"})
+	pol := usePolicy(t, true, []string{"deploy/prod/*.tfvars"})
 
-	require.Contains(t, redactSensitiveContentByPath("A=1\n", "deploy/prod/x.tfvars"), "A="+valueSentinel)
-	require.Equal(t, "A=1\n", redactSensitiveContentByPath("A=1\n", "deploy/dev/x.tfvars"))
+	require.Contains(t, redactSensitiveContentByPath("A=1\n", "deploy/prod/x.tfvars", pol), "A="+valueSentinel)
+	require.Equal(t, "A=1\n", redactSensitiveContentByPath("A=1\n", "deploy/dev/x.tfvars", pol))
 }
 
 func TestRedactSensitiveOutputForCommand(t *testing.T) {
-	usePolicy(t, true, nil)
+	pol := usePolicy(t, true, nil)
 
 	// `cat .env` exposes path-less bytes, but the argv reveals the sensitive
 	// reference, so the whole-value rule is applied to the output.
-	out := redactSensitiveOutputForCommand("DB_URL=postgres://u:p@h/db\nPUBLIC=1\n", "cat .env")
+	out := redactSensitiveOutputForCommand("DB_URL=postgres://u:p@h/db\nPUBLIC=1\n", "cat .env", pol)
 	require.Contains(t, out, "DB_URL="+valueSentinel)
 	require.NotContains(t, out, "postgres://u:p@h/db")
 
@@ -200,13 +201,13 @@ func TestRedactSensitiveOutputForCommand(t *testing.T) {
 	// its output happens to contain KEY=value-shaped lines (this is the whole
 	// point of gating (A) on the path rather than the content).
 	benign := "SECRET_HACK=notactuallysecret\n"
-	require.Equal(t, benign, redactSensitiveOutputForCommand(benign, "cat README.md"))
+	require.Equal(t, benign, redactSensitiveOutputForCommand(benign, "cat README.md", pol))
 
 	// An opaque reference redacts the whole body.
-	require.Contains(t, redactSensitiveOutputForCommand("-----BEGIN PRIVATE KEY-----\nMIIFAKE\n", "cat server.pem"), opaqueSentinel)
+	require.Contains(t, redactSensitiveOutputForCommand("-----BEGIN PRIVATE KEY-----\nMIIFAKE\n", "cat server.pem", pol), opaqueSentinel)
 
 	// Flag-shaped tokens are ignored, real path tokens still count.
-	require.Contains(t, redactSensitiveOutputForCommand("TOK=abc\n", "grep -R --include=* . .env"), "TOK="+valueSentinel)
+	require.Contains(t, redactSensitiveOutputForCommand("TOK=abc\n", "grep -R --include=* . .env", pol), "TOK="+valueSentinel)
 }
 
 func TestContentScanExcluded_DotenvTemplatesStillScanned(t *testing.T) {
@@ -217,6 +218,6 @@ func TestContentScanExcluded_DotenvTemplatesStillScanned(t *testing.T) {
 	require.True(t, contentScanExcluded("docs/RUNBOOK.md"))
 	require.True(t, contentScanExcluded("pkg/x/testdata/fixture.go"))
 
-	out := redactSecretsAt("AWS_ACCESS_KEY_ID="+awsKeyForTest, "config/.env.example", "view")
+	out := redactSecretsAt("AWS_ACCESS_KEY_ID="+awsKeyForTest, "config/.env.example", "view", nil)
 	require.NotContains(t, out, awsKeyForTest)
 }

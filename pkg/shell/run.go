@@ -207,6 +207,7 @@ func newRunner(cwd string, env []string, stdin io.Reader, stdout, stderr io.Writ
 		interp.Interactive(false),
 		interp.Env(expand.ListEnviron(env...)),
 		interp.Dir(cwd),
+		interp.CallHandler(confinementCallHandler(conf)),
 		interp.OpenHandler(pathOpenHandler(conf)),
 		interp.ReadDirHandler2(pathReadDirHandler(conf)),
 		execHandlerOption(blockFuncs, conf),

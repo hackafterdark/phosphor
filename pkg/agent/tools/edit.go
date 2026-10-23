@@ -101,6 +101,7 @@ type editContext struct {
 	workingDir  string
 	lspManager  *lsp.Manager
 	fuzzyCache  *fuzzyCache
+	policy      *Policy
 }
 
 func NewEditTool(
@@ -109,6 +110,7 @@ func NewEditTool(
 	files history.Service,
 	filetracker filetracker.Service,
 	workingDir string,
+	policy *Policy,
 ) fantasy.AgentTool {
 	cache := newFuzzyCache()
 	return fantasy.NewAgentTool(
@@ -154,6 +156,7 @@ func NewEditTool(
 				workingDir:  workingDir,
 				lspManager:  lspManager,
 				fuzzyCache:  cache,
+				policy:      policy,
 			}
 
 			preDiags := getDiagnosticsList(params.FilePath, lspManager)
@@ -211,7 +214,7 @@ func NewEditTool(
 }
 
 func createNewFile(edit editContext, filePath, content string, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
-	if err := checkSecretsAt(content, filePath); err != nil {
+	if err := checkSecretsAt(content, filePath, edit.policy); err != nil {
 		return fantasy.NewTextErrorResponse(err.Error()), nil
 	}
 	if err := validateEditOutput(content); err != nil {
@@ -280,7 +283,7 @@ func createNewFile(edit editContext, filePath, content string, call fantasy.Tool
 	// sensitive target (an .env the agent is legitimately round-tripping); for any
 	// other destination the tokens are left as inert sentinels. No-op unless
 	// tokenization is on.
-	content = restoreSecretTokensForWrite(content, filePath)
+	content = restoreSecretTokensForWrite(content, filePath, edit.policy)
 
 	err = os.WriteFile(filePath, []byte(content), 0o644)
 	if err != nil {
@@ -452,7 +455,7 @@ func deleteContent(edit editContext, filePath, oldString string, replaceAll bool
 	// Resolve reversible tokens for a trusted sensitive target before line-ending
 	// normalisation so a restored multi-line value is normalised too. No-op for
 	// non-trusted targets and when tokenization is off.
-	finalContentToWrite = restoreSecretTokensForWrite(finalContentToWrite, filePath)
+	finalContentToWrite = restoreSecretTokensForWrite(finalContentToWrite, filePath, edit.policy)
 
 	if isCrlf {
 		finalContentToWrite, _ = fsext.ToWindowsLineEndings(finalContentToWrite)
@@ -519,7 +522,7 @@ func deleteContent(edit editContext, filePath, oldString string, replaceAll bool
 }
 
 func replaceContent(edit editContext, filePath, oldString, newString string, replaceAll bool, useHashline bool, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
-	if err := checkSecretsAt(newString, filePath); err != nil {
+	if err := checkSecretsAt(newString, filePath, edit.policy); err != nil {
 		return fantasy.NewTextErrorResponse(err.Error()), nil
 	}
 
@@ -682,7 +685,7 @@ func replaceContent(edit editContext, filePath, oldString, newString string, rep
 	// Resolve reversible tokens for a trusted sensitive target before line-ending
 	// normalisation so a restored multi-line value is normalised too. No-op for
 	// non-trusted targets and when tokenization is off.
-	finalContentToWrite = restoreSecretTokensForWrite(finalContentToWrite, filePath)
+	finalContentToWrite = restoreSecretTokensForWrite(finalContentToWrite, filePath, edit.policy)
 
 	if isCrlf {
 		finalContentToWrite, _ = fsext.ToWindowsLineEndings(finalContentToWrite)

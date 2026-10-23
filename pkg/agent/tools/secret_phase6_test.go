@@ -10,14 +10,11 @@ import (
 	"github.com/zricethezav/gitleaks/v8/report"
 )
 
-// useRedaction installs a read-path redaction snapshot for one test and restores
-// the previous state (and clears the token store) on cleanup. These tests mutate
-// process-global state, so they intentionally do not run in parallel.
-func useRedaction(t *testing.T, opts RedactionPolicyOptions) {
+// useRedaction builds a per-test redaction snapshot. The policy is immutable
+// and owned by the test, so no cleanup or process-global reset is needed.
+func useRedaction(t *testing.T, opts RedactionPolicyOptions) *Policy {
 	t.Helper()
-	ResetRedactionPolicyForTest()
-	t.Cleanup(ResetRedactionPolicyForTest)
-	SetRedactionPolicy(opts)
+	return NewPolicy(opts)
 }
 
 func ptrBool(b bool) *bool { return &b }
@@ -60,10 +57,10 @@ func TestFilterFindings_CodeFileDropsGenericOnly(t *testing.T) {
 		{RuleID: "curl-auth-header"},
 	}
 
-	full := filterFindings(append([]report.Finding{}, in...), ScanFull)
+	full := filterFindings(append([]report.Finding{}, in...), ScanFull, nil)
 	require.Len(t, full, len(in), "full mode keeps everything")
 
-	got := filterFindings(append([]report.Finding{}, in...), ScanCodeFile)
+	got := filterFindings(append([]report.Finding{}, in...), ScanCodeFile, nil)
 	kept := map[string]bool{}
 	for _, f := range got {
 		kept[f.RuleID] = true
@@ -77,7 +74,7 @@ func TestFilterFindings_CodeFileDropsGenericOnly(t *testing.T) {
 
 func TestFilterFindings_FullModeIsIdentity(t *testing.T) {
 	in := []report.Finding{{RuleID: "generic-api-key"}, {RuleID: "jwt"}}
-	out := filterFindings(in, ScanFull)
+	out := filterFindings(in, ScanFull, nil)
 	require.Len(t, out, 2)
 }
 
@@ -88,9 +85,8 @@ func TestIsGenericRule(t *testing.T) {
 	require.False(t, pol.isGenericRule("aws-access-token"))
 	require.False(t, pol.isGenericRule(""), "empty is never generic")
 
-	SetRedactionPolicy(RedactionPolicyOptions{ExtraGenericRules: []string{"weird-internal-token"}})
-	t.Cleanup(ResetRedactionPolicyForTest)
-	require.True(t, currentRedactionPolicy().isGenericRule("weird-internal-token"))
+	extended := NewPolicy(RedactionPolicyOptions{ExtraGenericRules: []string{"weird-internal-token"}})
+	require.True(t, extended.isGenericRule("weird-internal-token"))
 }
 
 // The concrete end-to-end expression of code-file FP mode: a generic KEY=value
@@ -108,14 +104,14 @@ func TestCodeFileMode_SuppressesGenericKeepsVendor(t *testing.T) {
 
 	code := "func main() {\n\tconst apiKey = \"Ab3d5Ef7G9H1J3K5L7N9P1Q3R5S7T9V1W3\"\n\tconst aws = \"AKIAIOSVPK253PIP5TGP\"\n}\n"
 
-	gotCode := redactSecretsAt(code, "src/config.go", "view")
+	gotCode := redactSecretsAt(code, "src/config.go", "view", nil)
 	require.Contains(t, gotCode, "Ab3d5Ef7G9H1J3K5L7N9P1Q3R5S7T9V1W3",
 		"the generic KEY=value hit is FP noise on code and must survive code-file mode")
 	require.NotContains(t, gotCode, "AKIAIOSVPK253PIP5TGP",
 		"the high-precision AWS key must still be redacted in code-file mode")
 
 	// The same bytes read as a config file (full mode) redact both.
-	gotFull := redactSecretsAt(code, "deploy/config.json", "view")
+	gotFull := redactSecretsAt(code, "deploy/config.json", "view", nil)
 	require.NotContains(t, gotFull, "Ab3d5Ef7G9H1J3K5L7N9P1Q3R5S7T9V1W3")
 	require.NotContains(t, gotFull, "AKIAIOSVPK253PIP5TGP")
 }
@@ -125,7 +121,7 @@ func TestCodeFileMode_DisabledScansGeneric(t *testing.T) {
 	useRedaction(t, RedactionPolicyOptions{CodeFileFPEnabled: ptrBool(false)})
 
 	code := "const apiKey = \"Ab3d5Ef7G9H1J3K5L7N9P1Q3R5S7T9V1W3\"\n"
-	got := redactSecretsAt(code, "src/config.go", "view")
+	got := redactSecretsAt(code, "src/config.go", "view", NewPolicy(RedactionPolicyOptions{CodeFileFPEnabled: ptrBool(false)}))
 	require.NotContains(t, got, "Ab3d5Ef7G9H1J3K5L7N9P1Q3R5S7T9V1W3")
 }
 
@@ -198,73 +194,74 @@ func TestTokenStore_ResetClears(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestRedact_AtIssuesTokensWhenEnabled(t *testing.T) {
-	useRedaction(t, RedactionPolicyOptions{TokenizationEnabled: ptrBool(true)})
+	pol := useRedaction(t, RedactionPolicyOptions{TokenizationEnabled: ptrBool(true)})
 
-	got := redactSecretsAt("AWS_ACCESS_KEY_ID=\"AKIAIOSVPK253PIP5TGP\"", "deploy/app.env", "view")
+	got := redactSecretsAt("AWS_ACCESS_KEY_ID=\"AKIAIOSVPK253PIP5TGP\"", "deploy/app.env", "view", pol)
 	require.NotContains(t, got, "AKIAIOSVPK253PIP5TGP")
 	require.Contains(t, got, "<secret:", "full-mode findings become tokens")
 
 	// The token resolves back to the original credential.
-	out, n := secretTokens.Restore(got)
+	out, n := pol.tokens.Restore(got)
 	require.Greater(t, n, 0)
 	require.Contains(t, out, "AKIAIOSVPK253PIP5TGP")
 }
 
 func TestRedact_AtStaticSentinelsWhenDisabled(t *testing.T) {
 	// Tokenization off (the shipped default) keeps the byte-identical sentinel.
-	got := redactSecretsAt("AWS_ACCESS_KEY_ID=\"AKIAIOSVPK253PIP5TGP\"", "deploy/app.env", "view")
+	got := redactSecretsAt("AWS_ACCESS_KEY_ID=\"AKIAIOSVPK253PIP5TGP\"", "deploy/app.env", "view", nil)
 	require.NotContains(t, got, "AKIAIOSVPK253PIP5TGP")
 	require.Contains(t, got, "<redacted:gitleaks:", "default path emits the static sentinel")
 	require.NotContains(t, got, "<secret:")
 }
 
 func TestRedact_SensitiveDotenvRoundTrips(t *testing.T) {
-	useRedaction(t, RedactionPolicyOptions{TokenizationEnabled: ptrBool(true)})
+	pol := useRedaction(t, RedactionPolicyOptions{TokenizationEnabled: ptrBool(true)})
 
 	in := "DATABASE_URL=postgres://u:p@h/db\nLOG_LEVEL=debug\n"
-	red := redactSensitiveContentByPath(in, ".env")
+	red := redactSensitiveContentByPath(in, ".env", pol)
 	require.NotContains(t, red, "postgres://u:p@h/db")
 	require.Contains(t, red, "DATABASE_URL=")
 	require.Contains(t, red, "<secret:dotenv:", "dotenv values become reversible tokens")
 
 	// Writing that read output back to a trusted .env restores the real values.
-	restored := restoreSecretTokensForWrite(red, ".env")
+	restored := restoreSecretTokensForWrite(red, ".env", pol)
 	require.Contains(t, restored, "postgres://u:p@h/db")
 	require.Contains(t, restored, "LOG_LEVEL=debug")
 }
 
 func TestRestore_OnlyForTrustedTargets(t *testing.T) {
-	useRedaction(t, RedactionPolicyOptions{TokenizationEnabled: ptrBool(true)})
+	pol := useRedaction(t, RedactionPolicyOptions{TokenizationEnabled: ptrBool(true)})
 
-	tok := secretTokens.Issue("dotenv", "super-secret-value")
+	tok := pol.tokens.Issue("dotenv", "super-secret-value")
 
 	// A non-trusted destination keeps the inert token.
-	require.Equal(t, tok, restoreSecretTokensForWrite(tok, "src/handler.go"))
-	require.Equal(t, tok, restoreSecretTokensForWrite(tok, "README.md"))
+	require.Equal(t, tok, restoreSecretTokensForWrite(tok, "src/handler.go", pol))
+	require.Equal(t, tok, restoreSecretTokensForWrite(tok, "README.md", pol))
 
 	// A trusted sensitive destination gets the plaintext back.
-	require.Equal(t, "super-secret-value", restoreSecretTokensForWrite(tok, ".env"))
-	require.Equal(t, "super-secret-value", restoreSecretTokensForWrite(tok, "deploy/.env.production"))
-	require.Equal(t, "super-secret-value", restoreSecretTokensForWrite(tok, ".envrc"))
+	require.Equal(t, "super-secret-value", restoreSecretTokensForWrite(tok, ".env", pol))
+	require.Equal(t, "super-secret-value", restoreSecretTokensForWrite(tok, "deploy/.env.production", pol))
+	require.Equal(t, "super-secret-value", restoreSecretTokensForWrite(tok, ".envrc", pol))
 }
 
 func TestRestore_NoOpWhenTokenizationOff(t *testing.T) {
 	// Even a trusted target is left untouched when tokenization is disabled, so
 	// shipped writes are byte-identical to before this feature existed.
-	tok := secretTokens.Issue("dotenv", "value-abc")
-	require.Equal(t, tok, restoreSecretTokensForWrite(tok, ".env"))
+	pol := useRedaction(t, RedactionPolicyOptions{})
+	tok := pol.tokens.Issue("dotenv", "value-abc")
+	require.Equal(t, tok, restoreSecretTokensForWrite(tok, ".env", pol))
 }
 
 func TestCheckSecrets_IgnoresOurTokensButBlocksTypedSecrets(t *testing.T) {
 	// A token we issued is inert text and must never block a legitimate write.
-	require.NoError(t, checkSecretsAt("API_TOKEN=<secret:aws-access-token:sec_ABCDEF>", ".env"))
+	require.NoError(t, checkSecretsAt("API_TOKEN=<secret:aws-access-token:sec_ABCDEF>", ".env", nil))
 
 	// A credential the model typed verbatim is still caught.
-	require.Error(t, checkSecretsAt("AWS_ACCESS_KEY_ID=\"AKIAIOSVPK253PIP5TGP\"", "app.go"))
+	require.Error(t, checkSecretsAt("AWS_ACCESS_KEY_ID=\"AKIAIOSVPK253PIP5TGP\"", "app.go", nil))
 
 	// Token + a real typed secret: stripping the token must not hide the secret.
 	require.Error(t, checkSecretsAt(
-		"API_TOKEN=<secret:generic-api-key:sec_XYZ>\nAWS_ACCESS_KEY_ID=\"AKIAIOSVPK253PIP5TGP\"", "app.go"))
+		"API_TOKEN=<secret:generic-api-key:sec_XYZ>\nAWS_ACCESS_KEY_ID=\"AKIAIOSVPK253PIP5TGP\"", "app.go", nil))
 }
 
 func TestStripTokens(t *testing.T) {
@@ -288,12 +285,12 @@ func TestSanitizeTokenKind(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestRedactSecretsForTool_HonoursReadToggle(t *testing.T) {
-	useRedaction(t, RedactionPolicyOptions{SecretsEnabled: ptrBool(false)})
+	pol := useRedaction(t, RedactionPolicyOptions{SecretsEnabled: ptrBool(false)})
 
 	in := "AWS_ACCESS_KEY_ID=\"AKIAIOSVPK253PIP5TGP\""
-	require.Equal(t, in, redactSecretsForTool(in, "app.go", "view"),
+	require.Equal(t, in, redactSecretsForTool(in, "app.go", "view", pol),
 		"the read-path surface must not scan when the toggle is off")
 
 	// The provider-boundary entrypoint is unconditional regardless of the toggle.
-	require.NotContains(t, redactSecrets(in), "AKIAIOSVPK253PIP5TGP")
+	require.NotContains(t, redactSecrets(in, pol), "AKIAIOSVPK253PIP5TGP")
 }

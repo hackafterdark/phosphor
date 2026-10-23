@@ -92,6 +92,12 @@ func newSecurityTransport(inner http.RoundTripper, allowFn func(ctx context.Cont
 	}
 }
 
+// Unwrap exposes the inner transport so egress.WrapClient recognizes an
+// already-secured client and does not wrap it again.
+func (t *securityTransport) Unwrap() http.RoundTripper {
+	return t.inner
+}
+
 // RoundTrip intercepts each request, validates the host against the trust
 // hierarchy (deny list → workspace allow list → global allow list → user prompt),
 // then delegates to the inner transport.
@@ -147,6 +153,18 @@ func (t *securityTransport) RoundTrip(req *http.Request) (*http.Response, error)
 
 	// Check layered trust hierarchy.
 	if !t.isAllowed(lookupHost, span) {
+		// No prompt handler: fail closed rather than run untrusted code
+		// with an unresolved host trust decision.
+		if t.allowFn == nil {
+			span.SetAttributes(
+				attribute.String("gen_ai.network.target", lookupHost),
+				attribute.String("gen_ai.network.reason", "no_prompt_handler"),
+			)
+			return nil, fmt.Errorf(
+				"web_fetch request to %s blocked (host not in any allow list and no prompt handler configured)",
+				lookupHost,
+			)
+		}
 		// Fall back to user prompt.
 		allowed, err := t.allowFn(spanCtx, lookupHost)
 		if err != nil {
@@ -471,9 +489,12 @@ func (s proxyStash) RoundTrip(r *http.Request) (*http.Response, error) {
 	return s.base.RoundTrip(r.WithContext(ctx))
 }
 
-// NewWebFetchTool constructs a web fetch tool that uses the security transport
-// and invokes the TUI permission prompt when a host is not yet approved.
-func NewWebFetchTool(workingDir string, client *http.Client, cfg *config.Config, allowFn func(ctx context.Context, host string) (bool, error)) fantasy.AgentTool {
+// NewSecuredHTTPClient returns an *http.Client whose transport enforces the
+// web-fetch trust hierarchy: the IP-block policy on raw-IP destinations, the
+// resolved-address dial gate (DNS-rebinding defense), the layered allow
+// lists, and the user-prompt fallback for unknown hosts. All network tools
+// (web_fetch, fetch, download, agentic_fetch, web_search) must share it.
+func NewSecuredHTTPClient(cfg *config.Config, allowFn func(ctx context.Context, host string) (bool, error)) *http.Client {
 	baseTransport := egress.NewHTTPTransport()
 	guarded := guardedDialer(cfg, baseTransport.Proxy)
 	baseTransport.DialContext = guarded.DialContext
@@ -495,10 +516,16 @@ func NewWebFetchTool(workingDir string, client *http.Client, cfg *config.Config,
 		egress.Transport(proxyStash{baseTransport}, egress.WithDialGuard(guard)),
 		allowFn, cfg,
 	)
-	secureClient := &http.Client{
+	return &http.Client{
 		Timeout:   30 * time.Second,
 		Transport: secure,
 	}
+}
+
+// NewWebFetchTool constructs a web fetch tool that uses the security transport
+// and invokes the TUI permission prompt when a host is not yet approved.
+func NewWebFetchTool(workingDir string, cfg *config.Config, allowFn func(ctx context.Context, host string) (bool, error)) fantasy.AgentTool {
+	secureClient := NewSecuredHTTPClient(cfg, allowFn)
 
 	return fantasy.NewParallelAgentTool(
 		WebFetchToolName,
@@ -582,6 +609,12 @@ func FetchURLAndConvertWithTrust(ctx context.Context, client *http.Client, rawUR
 
 	host := stripPort(parsed.Host)
 	if !hostInAllowList(host) && !isAllowedByGlobal(host) && !isAllowedByWorkspace(host) {
+		if allowFn == nil {
+			// Fail closed, matching securityTransport: a host nobody
+			// approved must not be fetched just because no prompt
+			// handler was configured (headless / serve mode).
+			return "", fmt.Errorf("host %s is not in any allow list and no approval handler is configured", host)
+		}
 		allowed, err := allowFn(ctx, host)
 		if err != nil {
 			return "", fmt.Errorf("host %s not approved by user prompt: %w", host, err)

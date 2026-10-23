@@ -66,6 +66,7 @@ func NewMultiEditTool(
 	files history.Service,
 	filetracker filetracker.Service,
 	workingDir string,
+	policy *Policy,
 ) fantasy.AgentTool {
 	cache := newFuzzyCache()
 	return fantasy.NewAgentTool(
@@ -123,6 +124,7 @@ func NewMultiEditTool(
 				workingDir:  workingDir,
 				lspManager:  lspManager,
 				fuzzyCache:  cache,
+				policy:      policy,
 			}
 			// Handle file creation case (first edit has empty old_string)
 			if len(params.Edits) > 0 && params.Edits[0].OldString == "" {
@@ -274,7 +276,7 @@ func processMultiEditWithCreation(edit editContext, params MultiEditParams, call
 	}
 
 	// Validate secrets and syntax
-	if err := checkSecretsAt(currentContent, params.FilePath); err != nil {
+	if err := checkSecretsAt(currentContent, params.FilePath, edit.policy); err != nil {
 		return fantasy.NewTextErrorResponse(err.Error()), nil
 	}
 	if err := verifySyntax(currentContent, params.FilePath); err != nil {
@@ -283,7 +285,7 @@ func processMultiEditWithCreation(edit editContext, params MultiEditParams, call
 
 	// Write the file. Resolve reversible tokens for a trusted sensitive target
 	// (an .env round-trip); inert for any other target, no-op when off.
-	currentContent = restoreSecretTokensForWrite(currentContent, params.FilePath)
+	currentContent = restoreSecretTokensForWrite(currentContent, params.FilePath, edit.policy)
 	err = os.WriteFile(params.FilePath, []byte(currentContent), 0o644)
 	if err != nil {
 		return fantasy.ToolResponse{}, fmt.Errorf("failed to write file: %w", err)
@@ -497,7 +499,7 @@ func processMultiEditExistingFile(edit editContext, params MultiEditParams, call
 	}
 
 	// Validate secrets and syntax
-	if err := checkSecretsAt(finalContentToWrite, params.FilePath); err != nil {
+	if err := checkSecretsAt(finalContentToWrite, params.FilePath, edit.policy); err != nil {
 		return fantasy.NewTextErrorResponse(err.Error()), nil
 	}
 	if err := verifySyntax(finalContentToWrite, params.FilePath); err != nil {
@@ -506,7 +508,7 @@ func processMultiEditExistingFile(edit editContext, params MultiEditParams, call
 
 	// Write the updated content. Resolve reversible tokens for a trusted sensitive
 	// target (an .env round-trip); inert for any other target, no-op when off.
-	finalContentToWrite = restoreSecretTokensForWrite(finalContentToWrite, params.FilePath)
+	finalContentToWrite = restoreSecretTokensForWrite(finalContentToWrite, params.FilePath, edit.policy)
 	err = os.WriteFile(params.FilePath, []byte(finalContentToWrite), 0o644)
 	if err != nil {
 		return fantasy.ToolResponse{}, fmt.Errorf("failed to write file: %w", err)

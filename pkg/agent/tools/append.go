@@ -52,6 +52,7 @@ func NewAppendTool(
 	files history.Service,
 	filetracker filetracker.Service,
 	workingDir string,
+	policy *Policy,
 ) fantasy.AgentTool {
 	return fantasy.NewAgentTool(
 		AppendToolName,
@@ -92,6 +93,9 @@ func NewAppendTool(
 			filePath = absFilePath
 			if resp, blocked := vaultWriteGuard(workingDir, filePath); blocked {
 				return resp, nil
+			}
+			if err := checkSecretsAt(params.Content, filePath, policy); err != nil {
+				return fantasy.NewTextErrorResponse(err.Error()), nil
 			}
 
 			fileInfo, err := os.Stat(filePath)
@@ -166,7 +170,7 @@ func NewAppendTool(
 
 			// Resolve reversible tokens for a trusted sensitive target (an .env
 			// round-trip); inert for any other destination, no-op when off.
-			contentToAppend := restoreSecretTokensForWrite(params.Content, filePath)
+			contentToAppend := restoreSecretTokensForWrite(params.Content, filePath, policy)
 
 			f, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 			if err != nil {

@@ -146,11 +146,7 @@ regex = '''(a|aa)+TOKEN'''
 keywords = ["token"]
 `), 0o644))
 
-	previous := SecretRulesPath()
-	t.Cleanup(func() { SetSecretRulesPath(previous) })
-	SetSecretRulesPath(path)
-
-	detector, err := newSecretDetector()
+	detector, err := newSecretDetector(path)
 	require.NoError(t, err)
 
 	findings := detector.DetectString(`AWS_ACCESS_KEY_ID := "` + testAWSKeyID + `"`)

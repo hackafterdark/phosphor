@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"sync/atomic"
+	"sync"
 
 	toml "github.com/pelletier/go-toml/v2"
 	gcfg "github.com/zricethezav/gitleaks/v8/config"
@@ -56,42 +56,42 @@ type customAllowlist struct {
 	TargetRules []string `toml:"targetRules"`
 }
 
-var secretRulesPath = func() *atomic.Pointer[string] {
-	p := &atomic.Pointer[string]{}
-	initial := defaultSecretRulesPath()
-	p.Store(&initial)
-	return p
-}()
+// detectorCache memoizes the compiled detector per custom-rules path. The
+// path is part of the per-agent redaction policy, so two workspaces with
+// different rules files get their own detector; identical paths share one
+// compiled instance (the compile is expensive and the result immutable).
+var detectorCache sync.Map // path string -> detectorResult
 
-func SetSecretRulesPath(path string) {
-	path = strings.TrimSpace(path)
-	if path == "" {
-		path = defaultSecretRulesPath()
-	}
-	if !filepath.IsAbs(path) {
-		if abs, err := filepath.Abs(path); err == nil {
-			path = abs
-		}
-	}
-	cleaned := filepath.Clean(path)
-	secretRulesPath.Store(&cleaned)
+type detectorResult struct {
+	detector *gl.Detector
+	err      error
 }
 
-func SecretRulesPath() string {
-	if p := secretRulesPath.Load(); p != nil {
-		return *p
-	}
-	return defaultSecretRulesPath()
+// detector returns the gitleaks detector for this policy's custom rules path.
+func (p *Policy) detector() (*gl.Detector, error) {
+	return detectorFor(p.orDefault().secretRulesPath)
 }
 
-func newSecretDetector() (*gl.Detector, error) {
-	d, err := detectorWithSecretRules(SecretRulesPath())
+func detectorFor(path string) (*gl.Detector, error) {
+	if v, ok := detectorCache.Load(path); ok {
+		res := v.(detectorResult)
+		return res.detector, res.err
+	}
+	d, err := newSecretDetector(path)
+	if err == nil {
+		detectorCache.Store(path, detectorResult{detector: d, err: nil})
+	}
+	return d, err
+}
+
+func newSecretDetector(rulesPath string) (*gl.Detector, error) {
+	d, err := detectorWithSecretRules(rulesPath)
 	if err == nil {
 		return d, nil
 	}
 
 	slog.Warn("Failed to load custom secret rules; using gitleaks default rules",
-		"path", SecretRulesPath(),
+		"path", rulesPath,
 		"error", err,
 	)
 	return defaultSecretDetector()
@@ -143,7 +143,7 @@ func configureSecretDetector(d *gl.Detector) {
 }
 
 func defaultSecretRulesPath() string {
-	return filepath.Join(".phosphor", "secret-rules.toml")
+	return filepath.Clean(filepath.Join(".phosphor", "secret-rules.toml"))
 }
 
 func loadCustomSecretRules(path string) ([]gcfg.Rule, []customAllowlist, error) {

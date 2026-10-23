@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"sync/atomic"
 
 	"github.com/hackafterdark/phosphor/pkg/config"
 )
@@ -35,39 +34,21 @@ const valueSentinel = "<redacted:sensitive-file:value>"
 // keys, certificates): there is no key/value shape to preserve.
 const opaqueSentinel = "<redacted:sensitive-file:private-key>"
 
-// sensitiveFilePolicy is the process-wide configuration for this layer. It is set
-// once by the coordinator from the loaded config and read on every sensitive
-// file read, so the hot path never touches the config store.
-type sensitiveFilePolicy struct {
-	enabled  bool
-	patterns []string
-}
-
-var sensitivePolicy = func() *atomic.Pointer[sensitiveFilePolicy] {
-	p := &atomic.Pointer[sensitiveFilePolicy]{}
-	p.Store(&sensitiveFilePolicy{enabled: true, patterns: config.DefaultSensitiveFilePatterns})
-	return p
-}()
-
-// SetSensitiveFilePolicy installs the effective sensitive-file policy. enabled is
-// the master switch; extraPatterns are merged on top of the built-in default set
-// (they can extend, never subtract, so the .env family stays sensitive). Safe to
-// call repeatedly and from concurrent agents.
-func SetSensitiveFilePolicy(enabled bool, extraPatterns []string) {
+// mergeSensitivePatterns merges operator patterns on top of the built-in
+// default set (they can extend, never subtract, so the .env family stays
+// sensitive). The result is frozen into the per-agent redaction policy.
+func mergeSensitivePatterns(extraPatterns []string) []string {
 	patterns := config.DefaultSensitiveFilePatterns
-	if len(extraPatterns) > 0 {
-		merged := make([]string, 0, len(patterns)+len(extraPatterns))
-		seen := make(map[string]bool, len(patterns)+len(extraPatterns))
-		for _, p := range append(append([]string{}, patterns...), extraPatterns...) {
-			if seen[p] {
-				continue
-			}
-			seen[p] = true
-			merged = append(merged, p)
+	var merged []string
+	seen := make(map[string]bool)
+	for _, p := range append(append([]string{}, patterns...), extraPatterns...) {
+		if seen[p] {
+			continue
 		}
-		patterns = merged
+		seen[p] = true
+		merged = append(merged, p)
 	}
-	sensitivePolicy.Store(&sensitiveFilePolicy{enabled: enabled, patterns: patterns})
+	return merged
 }
 
 // sensitiveTier classifies a file for the redaction decision.
@@ -145,7 +126,7 @@ var (
 
 // classifySensitiveFile decides the tier and shape for a file path, consult the
 // effective policy pattern set for the SENSITIVE tier.
-func classifySensitiveFile(path string) (sensitiveTier, sensitiveShape) {
+func classifySensitiveFile(path string, pol *Policy) (sensitiveTier, sensitiveShape) {
 	if path == "" {
 		return tierNone, shapeNone
 	}
@@ -160,8 +141,7 @@ func classifySensitiveFile(path string) (sensitiveTier, sensitiveShape) {
 	if mixedBasenames[base] {
 		return tierMixed, shapeDotenv
 	}
-	pol := sensitivePolicy.Load()
-	if matchesSensitiveAny(pol.patterns, base, full) {
+	if matchesSensitiveAny(pol.orDefault().sensitivePatterns, base, full) {
 		return tierSensitive, inferShape(base)
 	}
 	return tierNone, shapeNone
@@ -201,15 +181,15 @@ func matchesSensitiveAny(patterns []string, base, full string) bool {
 // redactSensitiveContentByPath applies the whole-value redaction for a file read,
 // keyed off its path. Content is returned unchanged when the file is not
 // sensitive or the feature is off, so it composes safely with the gitleaks pass.
-func redactSensitiveContentByPath(content, path string) string {
+func redactSensitiveContentByPath(content, path string, pol *Policy) string {
 	if content == "" {
 		return content
 	}
-	if !sensitivePolicy.Load().enabled {
+	if !pol.orDefault().sensitiveEnabled {
 		return content
 	}
-	tier, shape := classifySensitiveFile(path)
-	return applySensitiveShape(content, tier, shape)
+	tier, shape := classifySensitiveFile(path, pol)
+	return applySensitiveShape(content, tier, shape, pol)
 }
 
 // redactReadContent is the single read-path chokepoint: structural whole-value
@@ -217,9 +197,9 @@ func redactSensitiveContentByPath(content, path string) string {
 // opaque keys the structural parser did not cover, and any real secret living in
 // a template file, are still scrubbed. The content pass honours the read-path
 // secrets toggle (a startup snapshot).
-func redactReadContent(text, filePath, source string) string {
-	text = redactSensitiveContentByPath(text, filePath)
-	return redactSecretsForTool(text, filePath, source)
+func redactReadContent(text, filePath, source string, pol *Policy) string {
+	text = redactSensitiveContentByPath(text, filePath, pol)
+	return redactSecretsForTool(text, filePath, source, pol)
 }
 
 // redactSensitiveOutputForCommand handles the bash asymmetry: `cat .env` gives us
@@ -227,21 +207,21 @@ func redactReadContent(text, filePath, source string) string {
 // was referenced. When it is, the same whole-value redaction is applied to the
 // command output. When detection is inconclusive we do nothing here and fall back
 // to the gitleaks pass that runs over all bash output.
-func redactSensitiveOutputForCommand(output, command string) string {
-	if output == "" || !sensitivePolicy.Load().enabled {
+func redactSensitiveOutputForCommand(output, command string, pol *Policy) string {
+	if output == "" || !pol.orDefault().sensitiveEnabled {
 		return output
 	}
-	shape, ok := shapeForCommandReference(command)
+	shape, ok := shapeForCommandReference(command, pol)
 	if !ok {
 		return output
 	}
-	return applySensitiveShape(output, tierSensitive, shape)
+	return applySensitiveShape(output, tierSensitive, shape, pol)
 }
 
 // applySensitiveShape runs the structural parser selected by shape. The TEMPLATE
 // and NONE tiers (and shapeNone) are a no-op here: TEMPLATE is exempt from (A),
 // and (B) still runs separately in redactReadContent.
-func applySensitiveShape(content string, tier sensitiveTier, shape sensitiveShape) string {
+func applySensitiveShape(content string, tier sensitiveTier, shape sensitiveShape, pol *Policy) string {
 	if tier != tierSensitive && tier != tierMixed {
 		return content
 	}
@@ -251,7 +231,7 @@ func applySensitiveShape(content string, tier sensitiveTier, shape sensitiveShap
 	case shapeJSON:
 		return jsonValueRe.ReplaceAllStringFunc(content, redactJSONValue)
 	case shapeDotenv:
-		return redactDotenvValues(content, tier == tierMixed)
+		return redactDotenvValues(content, tier == tierMixed, pol)
 	default:
 		return content
 	}
@@ -263,8 +243,8 @@ func applySensitiveShape(content string, tier sensitiveTier, shape sensitiveShap
 // tokenization is enabled the placeholder is a <secret:kind:id> token (so the
 // value can be restored on a trusted write) instead of the static sentinel; with
 // tokenization off the shipped static sentinel is used unchanged.
-func redactDotenvValues(content string, keepHarmless bool) string {
-	tokenize := currentRedactionPolicy().tokenizationEnabled
+func redactDotenvValues(content string, keepHarmless bool, pol *Policy) string {
+	tokenize := pol.orDefault().tokenizationEnabled
 	return dotenvLineRe.ReplaceAllStringFunc(content, func(line string) string {
 		i := strings.IndexByte(line, '=')
 		if i < 0 {
@@ -278,15 +258,15 @@ func redactDotenvValues(content string, keepHarmless bool) string {
 		if keepHarmless && harmlessEnvKeys[assignmentKey(lhs)] {
 			return line
 		}
-		return lhs + "=" + dotenvPlaceholder(value, tokenize)
+		return lhs + "=" + dotenvPlaceholder(value, tokenize, pol)
 	})
 }
 
 // dotenvPlaceholder returns the token (tokenization on) or the static sentinel
 // (tokenization off) that replaces a dotenv value on read.
-func dotenvPlaceholder(value string, tokenize bool) string {
+func dotenvPlaceholder(value string, tokenize bool, pol *Policy) string {
 	if tokenize {
-		if tok := secretTokens.Issue("dotenv", value); tok != "" {
+		if tok := pol.orDefault().tokens.Issue("dotenv", value); tok != "" {
 			return tok
 		}
 	}
@@ -336,11 +316,11 @@ func redactJSONValue(match string) string {
 // redactSensitiveLine is the single-line variant of the whole-value redaction,
 // used where a tool has one line out of a file's context (a grep hit). It runs
 // the same shape parsers on the lone line.
-func redactSensitiveLine(line, path string) string {
-	if line == "" || !sensitivePolicy.Load().enabled {
+func redactSensitiveLine(line, path string, pol *Policy) string {
+	if line == "" || !pol.orDefault().sensitiveEnabled {
 		return line
 	}
-	tier, shape := classifySensitiveFile(path)
+	tier, shape := classifySensitiveFile(path, pol)
 	if tier != tierSensitive && tier != tierMixed {
 		return line
 	}
@@ -350,7 +330,7 @@ func redactSensitiveLine(line, path string) string {
 	case shapeJSON:
 		return jsonValueRe.ReplaceAllStringFunc(line, redactJSONValue)
 	case shapeDotenv:
-		return redactDotenvValues(line, tier == tierMixed)
+		return redactDotenvValues(line, tier == tierMixed, pol)
 	default:
 		return line
 	}
@@ -360,8 +340,7 @@ func redactSensitiveLine(line, path string) string {
 // references a sensitive path (argv-detect). It is a heuristic over argv tokens;
 // a miss simply falls through to the gitleaks pass, so it errs toward not
 // redacting only when no referenced token looks like a sensitive file.
-func shapeForCommandReference(command string) (sensitiveShape, bool) {
-	pol := sensitivePolicy.Load()
+func shapeForCommandReference(command string, pol *Policy) (sensitiveShape, bool) {
 	for _, tok := range strings.Fields(command) {
 		tok = strings.Trim(tok, "\"'")
 		if tok == "" || strings.HasPrefix(tok, "-") {
@@ -372,7 +351,7 @@ func shapeForCommandReference(command string) (sensitiveShape, bool) {
 			continue
 		}
 		full := strings.ToLower(filepath.ToSlash(filepath.FromSlash(tok)))
-		if matchesSensitiveAny(pol.patterns, norm, full) {
+		if matchesSensitiveAny(pol.orDefault().sensitivePatterns, norm, full) {
 			return inferShape(norm), true
 		}
 	}
@@ -394,11 +373,11 @@ func shapeForCommandReference(command string) (sensitiveShape, bool) {
 // trustedWriteTarget reports whether a write to path is a destination allowed to
 // receive restored plaintext: the SENSITIVE or MIXED sensitive-file tiers, i.e.
 // the same set the read path redacts. Template and ordinary files are not.
-func trustedWriteTarget(path string) bool {
-	if !currentRedactionPolicy().tokenizationEnabled {
+func trustedWriteTarget(path string, pol *Policy) bool {
+	if !pol.orDefault().tokenizationEnabled {
 		return false
 	}
-	tier, _ := classifySensitiveFile(path)
+	tier, _ := classifySensitiveFile(path, pol)
 	return tier == tierSensitive || tier == tierMixed
 }
 
@@ -406,11 +385,11 @@ func trustedWriteTarget(path string) bool {
 // the way to disk, but only for a trusted sensitive target and only when
 // tokenization is enabled. It is a no-op otherwise, so shipped writes are
 // unchanged. Called at every content-write site in the edit/write/append tools.
-func restoreSecretTokensForWrite(content, targetPath string) string {
-	if content == "" || !trustedWriteTarget(targetPath) {
+func restoreSecretTokensForWrite(content, targetPath string, pol *Policy) string {
+	if content == "" || !trustedWriteTarget(targetPath, pol) {
 		return content
 	}
-	out, n := secretTokens.Restore(content)
+	out, n := pol.orDefault().tokens.Restore(content)
 	if n > 0 {
 		slog.Debug("Restored secret tokens on trusted write",
 			"path", filepath.Base(targetPath),

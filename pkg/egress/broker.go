@@ -103,7 +103,7 @@ func WrapClient(c *http.Client) *http.Client {
 	if c == nil {
 		return nil
 	}
-	if _, wrapped := c.Transport.(*RoundTripperPolicy); wrapped {
+	if isWrappedTransport(c.Transport) {
 		return c
 	}
 	cloned := &http.Client{
@@ -113,6 +113,23 @@ func WrapClient(c *http.Client) *http.Client {
 		CheckRedirect: c.CheckRedirect,
 	}
 	return cloned
+}
+
+// isWrappedTransport reports whether tr is or transparently wraps a
+// RoundTripperPolicy (e.g. the web-fetch security transport), so a client
+// that already carries the brokered tier is not wrapped again.
+func isWrappedTransport(tr http.RoundTripper) bool {
+	for i := 0; tr != nil && i < 4; i++ {
+		if _, ok := tr.(*RoundTripperPolicy); ok {
+			return true
+		}
+		u, ok := tr.(interface{ Unwrap() http.RoundTripper })
+		if !ok {
+			return false
+		}
+		tr = u.Unwrap()
+	}
+	return false
 }
 
 // ResetBrokerForTest stops any started broker and clears the frozen state so a

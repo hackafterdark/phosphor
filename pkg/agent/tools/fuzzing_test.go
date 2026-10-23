@@ -141,7 +141,7 @@ func TestFuzzing_WriteToolHandlesGarbagePaths(t *testing.T) {
 	workingDir := t.TempDir()
 	ctx := newTestContext()
 
-	tool := NewWriteTool(nil, &mockPermissionService{}, &mockHistoryService{}, mockFileTrackerService{}, workingDir)
+	tool := NewWriteTool(nil, &mockPermissionService{}, &mockHistoryService{}, mockFileTrackerService{}, workingDir, nil)
 
 	garbagePaths := generateGarbagePaths(50)
 

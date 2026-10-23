@@ -22,7 +22,7 @@ func TestAppendToolAppendsToExistingFile(t *testing.T) {
 	err := os.WriteFile(filepath.Join(workingDir, "test.txt"), []byte(initialContent), 0o644)
 	require.NoError(t, err)
 
-	tool := NewAppendTool(nil, &mockPermissionService{}, &mockHistoryService{}, mockFileTrackerService{}, workingDir)
+	tool := NewAppendTool(nil, &mockPermissionService{}, &mockHistoryService{}, mockFileTrackerService{}, workingDir, nil)
 
 	input, err := json.Marshal(AppendParams{FilePath: "test.txt", Content: "line 3\n"})
 	require.NoError(t, err)
@@ -46,7 +46,7 @@ func TestAppendToolCreatesNewFile(t *testing.T) {
 	workingDir := t.TempDir()
 	ctx := context.WithValue(context.Background(), SessionIDContextKey, "test-session")
 
-	tool := NewAppendTool(nil, &mockPermissionService{}, &mockHistoryService{}, mockFileTrackerService{}, workingDir)
+	tool := NewAppendTool(nil, &mockPermissionService{}, &mockHistoryService{}, mockFileTrackerService{}, workingDir, nil)
 
 	input, err := json.Marshal(AppendParams{FilePath: "new.txt", Content: "hello world\n"})
 	require.NoError(t, err)
@@ -70,7 +70,7 @@ func TestAppendToolRequiresFilePath(t *testing.T) {
 	workingDir := t.TempDir()
 	ctx := context.WithValue(context.Background(), SessionIDContextKey, "test-session")
 
-	tool := NewAppendTool(nil, &mockPermissionService{}, &mockHistoryService{}, mockFileTrackerService{}, workingDir)
+	tool := NewAppendTool(nil, &mockPermissionService{}, &mockHistoryService{}, mockFileTrackerService{}, workingDir, nil)
 
 	input, err := json.Marshal(AppendParams{FilePath: "", Content: "content"})
 	require.NoError(t, err)
@@ -91,7 +91,7 @@ func TestAppendToolRequiresContent(t *testing.T) {
 	workingDir := t.TempDir()
 	ctx := context.WithValue(context.Background(), SessionIDContextKey, "test-session")
 
-	tool := NewAppendTool(nil, &mockPermissionService{}, &mockHistoryService{}, mockFileTrackerService{}, workingDir)
+	tool := NewAppendTool(nil, &mockPermissionService{}, &mockHistoryService{}, mockFileTrackerService{}, workingDir, nil)
 
 	input, err := json.Marshal(AppendParams{FilePath: "test.txt", Content: ""})
 	require.NoError(t, err)
@@ -116,7 +116,7 @@ func TestAppendToolRefusesDirectory(t *testing.T) {
 	err := os.MkdirAll(filepath.Join(workingDir, "testdir"), 0o755)
 	require.NoError(t, err)
 
-	tool := NewAppendTool(nil, &mockPermissionService{}, &mockHistoryService{}, mockFileTrackerService{}, workingDir)
+	tool := NewAppendTool(nil, &mockPermissionService{}, &mockHistoryService{}, mockFileTrackerService{}, workingDir, nil)
 
 	input, err := json.Marshal(AppendParams{FilePath: "testdir", Content: "content"})
 	require.NoError(t, err)
@@ -137,7 +137,7 @@ func TestAppendToolMultipleAppends(t *testing.T) {
 	workingDir := t.TempDir()
 	ctx := context.WithValue(context.Background(), SessionIDContextKey, "test-session")
 
-	tool := NewAppendTool(nil, &mockPermissionService{}, &mockHistoryService{}, mockFileTrackerService{}, workingDir)
+	tool := NewAppendTool(nil, &mockPermissionService{}, &mockHistoryService{}, mockFileTrackerService{}, workingDir, nil)
 
 	// First append
 	input1, err := json.Marshal(AppendParams{FilePath: "multi.txt", Content: "first\n"})
@@ -183,7 +183,7 @@ func TestAppendToolCreatesParentDirs(t *testing.T) {
 	workingDir := t.TempDir()
 	ctx := context.WithValue(context.Background(), SessionIDContextKey, "test-session")
 
-	tool := NewAppendTool(nil, &mockPermissionService{}, &mockHistoryService{}, mockFileTrackerService{}, workingDir)
+	tool := NewAppendTool(nil, &mockPermissionService{}, &mockHistoryService{}, mockFileTrackerService{}, workingDir, nil)
 
 	input, err := json.Marshal(AppendParams{FilePath: "nested/deep/file.txt", Content: "content"})
 	require.NoError(t, err)

@@ -5,7 +5,6 @@ import (
 	"log/slog"
 	"regexp"
 	"strings"
-	"sync"
 
 	"github.com/hackafterdark/phosphor/pkg/egress"
 	"github.com/hackafterdark/phosphor/pkg/secrets"
@@ -17,7 +16,8 @@ import (
 // compiles 700+ RE2 regexes plus an Aho-Corasick prefilter, which is far too
 // expensive to redo per call. Detector.DetectString only reads immutable
 // post-construction state, so concurrent calls from parallel tools are safe.
-var secretDetector = sync.OnceValues(newSecretDetector)
+// The per-policy view is policy.detector(), which resolves (and caches) the
+// detector for the policy's custom rules path.
 
 // contentScanExcluded reports whether filePath is test/doc material that
 // should skip content scanning. gitleaks' inline "// gitleaks:allow" opt-out
@@ -59,19 +59,19 @@ func contentScanExcluded(filePath string) bool {
 //
 // checkSecrets is retained for call sites without a target path; it delegates
 // to checkSecretsAt with an empty path (full scan, no path allowlisting).
-func checkSecrets(content string) error {
-	return checkSecretsAt(content, "")
+func checkSecrets(content string, pol *Policy) error {
+	return checkSecretsAt(content, "", pol)
 }
 
 // checkSecretsAt is checkSecrets with path-based false-positive suppression:
 // test and doc material is skipped so fixture credentials do not block
 // legitimate edits. Pass filePath as the write/edit target when known.
-func checkSecretsAt(content, filePath string) error {
+func checkSecretsAt(content, filePath string, pol *Policy) error {
 	if content == "" || contentScanExcluded(filePath) {
 		return nil
 	}
 
-	d, err := secretDetector()
+	d, err := pol.orDefault().detector()
 	if err != nil {
 		// The detector parses a tested embedded TOML and only errors if that
 		// parse fails, which is effectively unreachable. Fail open to the legacy
@@ -141,15 +141,15 @@ func checkSecretsLegacy(content string) error {
 // mask (see RedactSecretsForWire), where redaction must happen regardless of the
 // read-path toggle. Tool read surfaces go through redactSecretsForTool, which
 // honours that toggle.
-func redactSecrets(text string) string {
-	return redactSecretsAt(text, "", "tool")
+func redactSecrets(text string, pol *Policy) string {
+	return redactSecretsAt(text, "", "tool", pol)
 }
 
 // redactSecretsForTool is the read-path entrypoint the view/grep/bash/mcp/job
 // surfaces call. It is gated by the read-path secrets toggle (a snapshot frozen
 // at startup) so an operator can turn read-side scanning off; it then defers to
 // redactSecretsAt, which derives the scan mode from the read context.
-func redactSecretsForTool(text, filePath, source string) string {
+func redactSecretsForTool(text, filePath, source string, pol *Policy) string {
 	if text == "" {
 		return text
 	}
@@ -159,34 +159,34 @@ func redactSecretsForTool(text, filePath, source string) string {
 	// It also fires on the test/doc paths the gitleaks pass allow-lists, since a
 	// real provider key should never reach context even inside a fixture.
 	text = secrets.Scrub(text)
-	if !SecretsEnabled() {
+	if !pol.orDefault().SecretsEnabled() {
 		return text
 	}
-	return redactSecretsAt(text, filePath, source)
+	return redactSecretsAt(text, filePath, source, pol)
 }
 
 // redactSecretsAt is redactSecrets with path-based false-positive suppression
 // for known test/doc material and context-aware mode selection: a read of a
 // source-code file runs ScanCodeFile (generic family suppressed), anything else
 // runs ScanFull. pass the source file path when it is known.
-func redactSecretsAt(text, filePath, source string) string {
+func redactSecretsAt(text, filePath, source string, pol *Policy) string {
 	if text == "" || contentScanExcluded(filePath) {
 		return text
 	}
 
-	d, err := secretDetector()
+	d, err := pol.orDefault().detector()
 	if err != nil {
 		return text
 	}
 
 	mode := scanModeForPath(filePath, source)
-	findings := filterFindings(d.DetectString(text), mode)
+	findings := filterFindings(d.DetectString(text), mode, pol)
 	if len(findings) == 0 {
 		return text
 	}
 
-	tokenize := currentRedactionPolicy().tokenizationEnabled
-	learned := LearnedSecretMemoryEnabled()
+	tokenize := pol.orDefault().tokenizationEnabled
+	learned := pol.orDefault().LearnedSecretMemoryEnabled()
 	pairs := make([]string, 0, len(findings)*2)
 	seen := make(map[string]struct{}, len(findings))
 	rules := make([]string, 0, len(findings))
@@ -208,7 +208,7 @@ func redactSecretsAt(text, filePath, source string) string {
 		if learned {
 			secrets.Learn(needle)
 		}
-		pairs = append(pairs, needle, tokenOrSentinel(f.RuleID, needle, tokenize))
+		pairs = append(pairs, needle, tokenOrSentinel(f.RuleID, needle, tokenize, pol))
 		rules = append(rules, f.RuleID)
 	}
 	if len(pairs) == 0 {
@@ -232,15 +232,15 @@ func redactSecretsAt(text, filePath, source string) string {
 // This is the code_file FP mode of the redaction plan; it only ever removes
 // detections, so it cannot introduce a false block, and it never runs on the
 // write path (which always uses ScanFull).
-func filterFindings(findings []report.Finding, mode ScanMode) []report.Finding {
-	if mode != ScanCodeFile || !codeFileFPEnabled() {
+func filterFindings(findings []report.Finding, mode ScanMode, pol *Policy) []report.Finding {
+	if mode != ScanCodeFile || !pol.orDefault().codeFileFPEnabled() {
 		return findings
 	}
-	pol := currentRedactionPolicy()
-	learned := LearnedSecretMemoryEnabled()
+	p := pol.orDefault()
+	learned := p.LearnedSecretMemoryEnabled()
 	out := findings[:0]
 	for _, f := range findings {
-		if pol.isGenericRule(f.RuleID) {
+		if p.isGenericRule(f.RuleID) {
 			// The generic family is FP noise on source code and is normally
 			// dropped here. But if this exact value was already judged a real
 			// secret elsewhere this session (its keyed hash is in the learned
@@ -273,14 +273,14 @@ func findingValue(f report.Finding) string {
 // <secret:kind:id> token when tokenization is on; otherwise the static
 // non-reusable sentinel. The static path keeps shipped output identical to
 // before either opt-in existed, and both opt-ins default off.
-func tokenOrSentinel(ruleID, value string, tokenize bool) string {
-	if currentRedactionPolicy().sealSentinels {
+func tokenOrSentinel(ruleID, value string, tokenize bool, pol *Policy) string {
+	if pol.orDefault().sealSentinels {
 		if tok, ok := egress.Seal(value, ruleID); ok {
 			return tok
 		}
 	}
 	if tokenize {
-		if tok := secretTokens.Issue(ruleID, value); tok != "" {
+		if tok := pol.orDefault().tokens.Issue(ruleID, value); tok != "" {
 			return tok
 		}
 	}
@@ -334,7 +334,7 @@ func uniqueStrings(in []string) []string {
 // known-value credential we loaded (the registry, which is a hard, high-precision
 // boundary independent of the gitleaks read-path toggle) and then runs the
 // gitleaks pattern pass over what remains.
-func RedactSecretsForWire(text string) string {
+func RedactSecretsForWire(text string, pol *Policy) string {
 	text = secrets.Scrub(text)
-	return redactSecrets(text)
+	return redactSecrets(text, pol)
 }

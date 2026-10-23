@@ -54,8 +54,9 @@ const (
 	tokenKindSecret        = "secret"
 )
 
-var secretTokens = newTokenStore(defaultTokenTTL, defaultTokenMaxEntries)
-
+// The token store is owned by each agent's redaction policy (see
+// redaction_policy.go), so tokens minted in one workspace cannot be resolved
+// by another workspace's tools. newTokenStore builds one per policy.
 func newTokenStore(ttl time.Duration, max int) *tokenStore {
 	if ttl <= 0 {
 		ttl = defaultTokenTTL

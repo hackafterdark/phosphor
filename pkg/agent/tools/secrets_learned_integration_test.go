@@ -31,7 +31,7 @@ func TestRedactSecretsAt_RecordsJudgedSecrets(t *testing.T) {
 	t.Cleanup(secrets.ResetLearned)
 
 	before := secrets.LearnedLen()
-	got := redactSecretsAt("aws_access_key_id = "+testAWSKeyID, "app/config.go", "view")
+	got := redactSecretsAt("aws_access_key_id = "+testAWSKeyID, "app/config.go", "view", nil)
 	require.NotContains(t, got, testAWSKeyID, "the AWS key must be redacted")
 	require.Contains(t, got, sentinelPrefix)
 
@@ -40,12 +40,12 @@ func TestRedactSecretsAt_RecordsJudgedSecrets(t *testing.T) {
 }
 
 func TestRedactSecretsAt_ToggleOffRecordsNothing(t *testing.T) {
-	useRedaction(t, RedactionPolicyOptions{LearnedSecretMemoryEnabled: ptrBool(false)})
+	pol := useRedaction(t, RedactionPolicyOptions{LearnedSecretMemoryEnabled: ptrBool(false)})
 	secrets.ResetLearned()
 	t.Cleanup(secrets.ResetLearned)
 
 	before := secrets.LearnedLen()
-	got := redactSecretsAt("aws_access_key_id = "+testAWSKeyID, "app/config.go", "view")
+	got := redactSecretsAt("aws_access_key_id = "+testAWSKeyID, "app/config.go", "view", pol)
 	require.NotContains(t, got, testAWSKeyID, "redaction itself is unaffected by the toggle")
 	require.Equal(t, before, secrets.LearnedLen(),
 		"a disabled learned memory records no new digests")
@@ -63,7 +63,7 @@ func TestFilterFindings_CodeFileKeepsLearnedGenericDropsUnknown(t *testing.T) {
 	secrets.Learn(learnedGenericValue)
 
 	in := []report.Finding{learned, unknown, precise}
-	out := filterFindings(append([]report.Finding{}, in...), ScanCodeFile)
+	out := filterFindings(append([]report.Finding{}, in...), ScanCodeFile, nil)
 
 	require.Len(t, out, 2, "the learned generic hit and the high-precision hit survive")
 	require.Contains(t, out, learned, "a generic finding whose value was already learned is restored")
@@ -72,7 +72,7 @@ func TestFilterFindings_CodeFileKeepsLearnedGenericDropsUnknown(t *testing.T) {
 }
 
 func TestFilterFindings_ToggleOffRestoresNoGenerics(t *testing.T) {
-	useRedaction(t, RedactionPolicyOptions{LearnedSecretMemoryEnabled: ptrBool(false)})
+	pol := useRedaction(t, RedactionPolicyOptions{LearnedSecretMemoryEnabled: ptrBool(false)})
 	secrets.ResetLearned()
 	t.Cleanup(secrets.ResetLearned)
 
@@ -81,7 +81,7 @@ func TestFilterFindings_ToggleOffRestoresNoGenerics(t *testing.T) {
 
 	secrets.Learn(learnedGenericValue) // present, but the consult is gated off.
 
-	out := filterFindings([]report.Finding{learned, precise}, ScanCodeFile)
+	out := filterFindings([]report.Finding{learned, precise}, ScanCodeFile, pol)
 	require.Len(t, out, 1, "with the memory off, the generic family is dropped as before")
 	require.NotContains(t, out, learned)
 	require.Contains(t, out, precise)
@@ -97,6 +97,6 @@ func TestFilterFindings_FullModeUnaffected(t *testing.T) {
 		{RuleID: "generic-secret", Match: unknownGenericValue},
 		{RuleID: "aws-access-token", Match: testAWSKeyID},
 	}
-	out := filterFindings(append([]report.Finding{}, in...), ScanFull)
+	out := filterFindings(append([]report.Finding{}, in...), ScanFull, nil)
 	require.Len(t, out, len(in), "full mode never drops a finding on learned state")
 }
