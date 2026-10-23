@@ -3,6 +3,13 @@
 # quota on generated docs, bot PRs, and per-push incremental re-reviews.
 
 reviews:
+  # Go has no docstrings — godoc comments (enforced by the linters we
+  # already run) are the Go idiom. The Python-centric docstring-coverage
+  # gate false-positives on every Go diff, so it is disabled.
+  pre_merge_checks:
+    docstrings:
+      mode: "off"
+
   auto_review:
     enabled: true
     # Review once when the PR opens; no re-review on every push.
