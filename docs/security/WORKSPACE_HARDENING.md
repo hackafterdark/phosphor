@@ -85,10 +85,10 @@ Every tool that touches the filesystem resolves its target path to an absolute p
 
 | Tool | Location | Behavior |
 |------|----------|----------|
-| `write.go` | `internal/agent/tools/write.go:74` | After `SmartJoin`, resolves absolute path and checks `IsInside`. Rejects with security error. |
-| `edit.go` | `internal/agent/tools/edit.go:85` | Same pattern — validates before any content replacement or file creation. |
-| `multiedit.go` | `internal/agent/tools/multiedit.go:88` | Same pattern — validates before any edit operations. |
-| `append.go` | `internal/agent/tools/append.go:80` | Previously had its own inline bounds check. Refactored to use `IsInside` for consistency. |
+| `write.go` | `pkg/agent/tools/write.go:74` | After `SmartJoin`, resolves absolute path and checks `IsInside`. Rejects with security error. |
+| `edit.go` | `pkg/agent/tools/edit.go:85` | Same pattern — validates before any content replacement or file creation. |
+| `multiedit.go` | `pkg/agent/tools/multiedit.go:88` | Same pattern — validates before any edit operations. |
+| `append.go` | `pkg/agent/tools/append.go:80` | Previously had its own inline bounds check. Refactored to use `IsInside` for consistency. |
 
 ### File-read tools (view, download)
 
@@ -96,8 +96,8 @@ These previously used a **permission-request pattern** — they would detect out
 
 | Tool | Location | Behavior |
 |------|----------|----------|
-| `view.go` | `internal/agent/tools/view.go:122` | Replaced permission gate with hard block. The old `isSkillFile` workaround (which allowed reading skill files outside the workspace) is removed. Builtin skills via `phosphor://skills/...` prefix are handled separately before the bounds check and remain accessible. |
-| `download.go` | `internal/agent/tools/download.go:90` | Added bounds check after `SmartJoin`. Removed unused `cmp` import that was only needed for the old relative-path formatting. |
+| `view.go` | `pkg/agent/tools/view.go:122` | Replaced permission gate with hard block. The old `isSkillFile` workaround (which allowed reading skill files outside the workspace) is removed. Builtin skills via `phosphor://skills/...` prefix are handled separately before the bounds check and remain accessible. |
+| `download.go` | `pkg/agent/tools/download.go:90` | Added bounds check after `SmartJoin`. Removed unused `cmp` import that was only needed for the old relative-path formatting. |
 
 ### Search and listing tools (ls, glob, grep, structural_search)
 
@@ -105,10 +105,10 @@ These previously used permission requests for out-of-workspace directories. All 
 
 | Tool | Location | Behavior |
 |------|----------|----------|
-| `ls.go` | `internal/agent/tools/ls.go:93` | Replaced permission gate with hard block after path resolution. |
-| `glob.go` | `internal/agent/tools/glob.go:68` | Bounds check after `ResolveSearchPath`. |
-| `grep.go` | `internal/agent/tools/grep.go:146` | Same — bounds check after `ResolveSearchPath`. |
-| `structural_search.go` | `internal/agent/tools/structural_search.go:302` | Same — bounds check after `ResolveSearchPath`. |
+| `ls.go` | `pkg/agent/tools/ls.go:93` | Replaced permission gate with hard block after path resolution. |
+| `glob.go` | `pkg/agent/tools/glob.go:68` | Bounds check after `ResolveSearchPath`. |
+| `grep.go` | `pkg/agent/tools/grep.go:146` | Same — bounds check after `ResolveSearchPath`. |
+| `structural_search.go` | `pkg/agent/tools/structural_search.go:302` | Same — bounds check after `ResolveSearchPath`. |
 
 ### Cross-reference tools (references, diagnostics)
 
@@ -116,12 +116,12 @@ These tools accept user-supplied paths and previously had no workspace validatio
 
 | Tool | Location | Behavior |
 |------|----------|----------|
-| `references.go` | `internal/agent/tools/references.go:38` | Accepts `workingDir` parameter. Validates `params.Path` against workspace via `IsInside` before calling `searchFiles`. Prevents symbol search in files outside workspace (e.g., `/etc/passwd`). |
-| `diagnostics.go` | `internal/agent/tools/diagnostics.go:29` | Accepts `workingDir` parameter. Validates `params.FilePath` against workspace via `IsInside` before triggering LSP analysis. Prevents LSP side-effects on files outside workspace. |
+| `references.go` | `pkg/agent/tools/references.go:38` | Accepts `workingDir` parameter. Validates `params.Path` against workspace via `IsInside` before calling `searchFiles`. Prevents symbol search in files outside workspace (e.g., `/etc/passwd`). |
+| `diagnostics.go` | `pkg/agent/tools/diagnostics.go:29` | Accepts `workingDir` parameter. Validates `params.FilePath` against workspace via `IsInside` before triggering LSP analysis. Prevents LSP side-effects on files outside workspace. |
 
 ## Layer 2: Bash Working Directory Guard
 
-**Location:** `internal/agent/tools/bash.go:217`
+**Location:** `pkg/agent/tools/bash.go:217`
 
 The bash tool accepts an optional `working_dir` parameter. Previously, the agent could pass any absolute path (e.g. `C:\Windows`) as `working_dir` and commands would execute there with no restriction.
 
@@ -139,7 +139,7 @@ This covers absolute paths, relative paths that resolve outside the workspace, a
 
 ## Layer 3: Shell CWD Lockdown
 
-**Location:** `internal/shell/shell.go:68` (Shell struct), `shell.go:280` (`updateShellFromRunner`)
+**Location:** `pkg/shell/shell.go:68` (Shell struct), `shell.go:280` (`updateShellFromRunner`)
 
 Even with the working_dir guard, a command like `cd /some/outside/path && ls` could change the shell's internal working directory mid-execution. The POSIX shell interpreter (`mvdan.cc/sh/v3`) tracks `runner.Dir` and updates the Shell's `cwd` after each command via `updateShellFromRunner`.
 
@@ -163,7 +163,7 @@ If a `cd` command would move the working directory outside the workspace, it is 
 
 The background shell manager passes the workspace root through to each new Shell:
 
-**Location:** `internal/shell/background.go:89` — `Start(ctx, workingDir, workspace, blockFuncs, command, description)`
+**Location:** `pkg/shell/background.go:89` — `Start(ctx, workingDir, workspace, blockFuncs, command, description)`
 
 ### Why the post-command reset is not sufficient
 
@@ -235,7 +235,7 @@ directory.
 
 ## Layer 4: Agent Prompt Instructions
 
-**Location:** `internal/agent/tools/bash.md.tpl:19`
+**Location:** `pkg/agent/tools/bash.md.tpl:19`
 
 The bash tool's system prompt now includes an explicit sandbox warning:
 
@@ -245,9 +245,14 @@ This is defense-in-depth — it tells the LLM the rules so it is less likely to 
 
 ## Layer 5: Startup Symlink Resolution
 
-**Location:** `internal/config/load.go:51-55`
+**Location:** `pkg/config/load.go:63-68`
 
-Before config initialization, the workspace root is resolved via `filepath.EvalSymlinks` to prevent bypass through symlink traversal in bounds checking. If the workspace doesn't exist on disk (e.g., during tests), the original path is used as-is.
+The workspace root is resolved via `filepath.EvalSymlinks` after the config
+files are parsed but before the `ConfigStore` is constructed and providers
+are wired, so every consumer of the workspace path sees the resolved target
+and bounds checking cannot be bypassed through symlink traversal. If the
+workspace doesn't exist on disk (e.g., during tests), the original path is
+used as-is.
 
 ```go
 if resolvedWorkingDir, err := filepath.EvalSymlinks(workingDir); err == nil {
@@ -263,9 +268,9 @@ The following components intentionally operate outside the workspace sandbox. Th
 
 | Component | Reason for bypass |
 |-----------|-------------------|
-| Hook runner (`internal/hooks/`) | Runs user-authored shell commands from `phosphor.json`, not agent-generated ones. The cwd comes from the hook config, not the agent. |
+| Hook runner (`pkg/hooks/`) | Runs user-authored shell commands from `phosphor.json`, not agent-generated ones. The cwd comes from the hook config, not the agent. |
 | `getGitStatus` in prompt loading | Internal utility that runs git commands against the project directory. Not agent-facing. |
-| LSP client (`internal/lsp/`) | Uses file paths for diagnostics but does not write files. Path filtering already exists (`fsext.HasPrefix`). |
+| LSP client (`pkg/lsp/`) | Uses file paths for diagnostics but does not write files. Path filtering already exists (`fsext.HasPrefix`). |
 | Config loading | Reads `phosphor.json` and context files (AGENTS.md, etc.) from the working directory. |
 
 ### Skills and MCP Servers
@@ -280,9 +285,9 @@ The following components use `UnsafeSmartJoin` instead of `SmartJoin` because th
 
 | Component | Location | Reason |
 |-----------|----------|--------|
-| MCP resource listing | `internal/agent/tools/list_mcp_resources.go:55` | MCP servers may reference resources outside the workspace. |
-| MCP resource reading | `internal/agent/tools/read_mcp_resource.go:61` | MCP servers may serve content from arbitrary locations. |
-| Shell script dispatch | `internal/shell/dispatch.go:58` | Hook scripts may be located outside the workspace. |
+| MCP resource listing | `pkg/agent/tools/list_mcp_resources.go:55` | MCP servers may reference resources outside the workspace. |
+| MCP resource reading | `pkg/agent/tools/read_mcp_resource.go:61` | MCP servers may serve content from arbitrary locations. |
+| Shell script dispatch | `pkg/shell/dispatch.go:58` | Hook scripts may be located outside the workspace. |
 
 These are explicitly marked with `UnsafeSmartJoin` to make the intentional bypass visible in code review and static analysis.
 
@@ -303,8 +308,8 @@ If future features need the agent to read configuration files or other resources
 All bounds-check logic is covered by unit tests:
 
 - `internal/filepathext/bounds_test.go` — `IsInside` correctness (7 cases + real-path integration test).
-- `internal/agent/tools/append_test.go` — existing append tests pass with the refactored bounds check.
-- `internal/shell/background_test.go` — background shell manager tests pass with the updated `Start` signature.
+- `pkg/agent/tools/append_test.go` — existing append tests pass with the refactored bounds check.
+- `pkg/shell/background_test.go` — background shell manager tests pass with the updated `Start` signature.
 - `internal/pathguard/pathguard_test.go` — `TestCommandEscapesWorkspace_CDCommandValidated` pins that `cd` targets are bounds-checked (absolute, `~`, and compound `cd X && cmd` forms are refused; in-tree `cd` is allowed).
 - `internal/pathguard/heredoc_test.go` — `TestHeredocBodyIsData` pins that heredoc bodies, stacked heredocs, `<<-` bodies, and herestring operands are treated as data while real operands on the introducer line are still flagged; `TestHeredocBodyNotRewritten` pins that `CorrectCommandPaths` leaves heredoc data byte-for-byte intact.
 - `pkg/shell/confinement_vectors_test.go` — `TestMidCommandCDEscapeBlocked` pins the red-team vectors (`cd <outside> && cat <relative>`, `cd <outside> && ls`, `cd ~ && ls .ssh`, `cd <outside>; echo > file`) are refused; `TestMidCommandCDInTreeAllowed` and `TestCDEscapeHarmlessWithTrustedTempRoots` pin that legitimate in-tree and trusted-temp directory changes still work.

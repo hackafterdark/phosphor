@@ -14,6 +14,7 @@ import (
 
 	"charm.land/fantasy"
 	"github.com/hackafterdark/phosphor/internal/filepathext"
+	"github.com/hackafterdark/phosphor/pkg/config"
 	"github.com/hackafterdark/phosphor/pkg/egress"
 	"github.com/hackafterdark/phosphor/pkg/otel"
 	"github.com/hackafterdark/phosphor/pkg/permission"
@@ -53,9 +54,9 @@ func downloadDescription() string {
 	})
 }
 
-func NewDownloadTool(permissions permission.Service, workingDir string, client *http.Client) fantasy.AgentTool {
+func NewDownloadTool(permissions permission.Service, workingDir string, cfg *config.Config, client *http.Client) fantasy.AgentTool {
 	if client == nil {
-		client = NewSecuredHTTPClient(nil, nil)
+		client = NewSecuredHTTPClient(cfg, nil)
 		client.Timeout = 5 * time.Minute
 	} else {
 		client = egress.WrapClient(client)

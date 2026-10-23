@@ -168,10 +168,10 @@ func coderAgent(r *vcr.Recorder, env fakeEnv, large, small fantasy.LanguageModel
 
 	allTools := []fantasy.AgentTool{
 		tools.NewBashTool(env.permissions, env.workingDir, cfg.Config().Tools.Bash, cfg.Config().Options.Attribution, modelName, nil),
-		tools.NewDownloadTool(env.permissions, env.workingDir, r.GetDefaultClient()),
+		tools.NewDownloadTool(env.permissions, env.workingDir, cfg.Config(), r.GetDefaultClient()),
 		tools.NewEditTool(nil, env.permissions, env.history, *env.filetracker, env.workingDir, nil),
 		tools.NewMultiEditTool(nil, env.permissions, env.history, *env.filetracker, env.workingDir, nil),
-		tools.NewFetchTool(env.permissions, env.workingDir, r.GetDefaultClient()),
+		tools.NewFetchTool(env.permissions, env.workingDir, cfg.Config(), r.GetDefaultClient()),
 		tools.NewGlobTool(env.workingDir),
 		tools.NewGrepTool(env.workingDir, cfg.Config().Tools.Grep, nil),
 		tools.NewStructuralSearchTool(env.workingDir, nil),

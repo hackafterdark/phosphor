@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"charm.land/fantasy"
+	"github.com/hackafterdark/phosphor/pkg/config"
 	"github.com/hackafterdark/phosphor/pkg/egress"
 	"github.com/hackafterdark/phosphor/pkg/otel"
 	"github.com/hackafterdark/phosphor/pkg/permission"
@@ -48,9 +49,9 @@ func fetchDescription() string {
 	})
 }
 
-func NewFetchTool(permissions permission.Service, workingDir string, client *http.Client) fantasy.AgentTool {
+func NewFetchTool(permissions permission.Service, workingDir string, cfg *config.Config, client *http.Client) fantasy.AgentTool {
 	if client == nil {
-		client = NewSecuredHTTPClient(nil, nil)
+		client = NewSecuredHTTPClient(cfg, nil)
 	} else {
 		client = egress.WrapClient(client)
 	}

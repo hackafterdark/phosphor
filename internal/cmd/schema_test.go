@@ -6,14 +6,13 @@ import (
 	"testing"
 
 	"github.com/hackafterdark/phosphor/pkg/config"
-	"github.com/invopop/jsonschema"
 	"github.com/stretchr/testify/require"
 )
 
 func TestSchemaNoBrokenRefs(t *testing.T) {
 	t.Parallel()
 
-	reflector := new(jsonschema.Reflector)
+	reflector := newSchemaReflector()
 	bts, err := json.Marshal(reflector.Reflect(&config.Config{}))
 	require.NoError(t, err)
 
@@ -31,7 +30,7 @@ func TestSchemaNoBrokenRefs(t *testing.T) {
 func TestSchemaProvidersHasAdditionalProperties(t *testing.T) {
 	t.Parallel()
 
-	reflector := new(jsonschema.Reflector)
+	reflector := newSchemaReflector()
 	bts, err := json.Marshal(reflector.Reflect(&config.Config{}))
 	require.NoError(t, err)
 
