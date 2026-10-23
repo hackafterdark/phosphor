@@ -1,4 +1,4 @@
-//go:build !linux
+//go:build !linux && !darwin
 
 package sandbox
 
@@ -7,9 +7,9 @@ import (
 	"runtime"
 )
 
-// current returns the platform isolator. Phases 2 (macOS Seatbelt) and 3
-// (Windows restricted token) replace these stubs; until then enforcement
-// stays in-process and Available() reports honestly.
+// current returns the platform isolator. Phase 3 (Windows restricted
+// token) replaces this stub; until then enforcement stays in-process and
+// Available() reports honestly.
 func Current() Isolator { return stubIsolator{} }
 
 type stubIsolator struct{}
