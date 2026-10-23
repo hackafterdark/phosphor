@@ -454,5 +454,5 @@ Comprehensive tests are in `pkg/shell/env_test.go` and
 Run with:
 
 ```bash
-go test ./pkg/shell/ ./pkg/agent/tools/ -run TestFilterEnv|TestSafeDefaultEnv|TestPhosphorEnvMarkers|TestNewShell|TestBashTool_ConfigAwareBannedCommands
+go test ./pkg/shell/ ./pkg/agent/tools/ -run 'TestFilterEnv|TestSafeDefaultEnv|TestPhosphorEnvMarkers|TestNewShell|TestBashTool_ConfigAwareBannedCommands'
 ```

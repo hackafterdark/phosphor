@@ -247,9 +247,11 @@ This is defense-in-depth — it tells the LLM the rules so it is less likely to 
 
 **Location:** `pkg/config/load.go:63-68`
 
-The workspace root is resolved via `filepath.EvalSymlinks` after the config
-files are parsed but before the `ConfigStore` is constructed and providers
-are wired, so every consumer of the workspace path sees the resolved target
+The workspace root is resolved via `filepath.EvalSymlinks` after the initial
+config files are parsed but before the `ConfigStore` is constructed. The
+workspace config is merged afterward (after `ConfigStore` construction, at
+the highest priority); either way, resolution happens before the store is
+built, so every consumer of the workspace path sees the resolved target
 and bounds checking cannot be bypassed through symlink traversal. If the
 workspace doesn't exist on disk (e.g., during tests), the original path is
 used as-is.
