@@ -53,7 +53,7 @@ Tests map to the six-layer defense architecture documented in [WORKSPACE_HARDENI
 
 ## Test Files
 
-### `internal/agent/tools/workspace_hardening_test.go`
+### `pkg/agent/tools/workspace_hardening_test.go`
 
 Validates that every filesystem-touching tool blocks out-of-workspace paths with a `Security violation: path ... is outside workspace` error.
 
@@ -72,7 +72,7 @@ Validates that every filesystem-touching tool blocks out-of-workspace paths with
 | `TestWorkspaceHardening_BashWorkingDirBlocksOutsidePaths` | bash | out-of-workspace `working_dir` parameter |
 | `TestWorkspaceHardening_AllToolsAllowInWorkspace` | all | positive control — in-workspace paths are allowed |
 
-### `internal/shell/environment_hardening_test.go`
+### `pkg/shell/environment_hardening_test.go`
 
 Validates shell-level security: command deny list, environment filtering, and sandbox markers.
 
@@ -86,7 +86,7 @@ Validates shell-level security: command deny list, environment filtering, and sa
 | `TestEnvironmentHardening_FilterEnvWithAllowedEnv` | Env filtering | AWS_SECRET_ACCESS_KEY invisible when AllowedEnv=[PATH,HOME]; PATH visible |
 | `TestEnvironmentHardening_EmptyAllowedEnv_FiltersEverything` | Env filtering | Empty allowlist filters ALL environment variables including PATH |
 
-### `internal/agent/tools/compositional_chain_test.go`
+### `pkg/agent/tools/compositional_chain_test.go`
 
 Validates that chaining individually allowed actions cannot produce forbidden outcomes.
 
@@ -97,7 +97,7 @@ Validates that chaining individually allowed actions cannot produce forbidden ou
 | `TestCompositionalChains_WorkingDirEscapeInChain` | Out-of-workspace working_dir blocked even in chains |
 | `TestCompositionalChains_ChainTriggersPermission` | Plain `ls` does NOT trigger permission; `ls && echo` DOES trigger permission |
 
-### `internal/agent/tools/agentjacking_test.go`
+### `pkg/agent/tools/agentjacking_test.go`
 
 Validates that data from "trusted" sources (MCP servers, context files) cannot be used to smuggle malicious instructions or bypass security.
 
@@ -109,7 +109,7 @@ Validates that data from "trusted" sources (MCP servers, context files) cannot b
 | `TestAgentjacking_ZerWidthCharsInPath` | Zero-width characters (\u200B, \uFEFF, \u2060) in paths do not bypass bounds checks |
 | `TestAgentjacking_HTMLCommentsInPath` | HTML comments (`<!-- SYSTEM: ... -->`) in paths do not bypass bounds checks |
 
-### `internal/agent/tools/path_obfuscation_test.go`
+### `pkg/agent/tools/path_obfuscation_test.go`
 
 Validates that IsInside and SmartJoin handle complex path resolutions robustly.
 
@@ -137,7 +137,7 @@ Validates network egress hardening: the `securityTransport` interceptor, IP-bloc
 | `TestWebFetchHardeningUserPromptVerified` | Unknown host triggers TUI prompt — user granted access |
 | `TestWebFetchHardeningUserPromptDenyVerified` | Unknown host triggers TUI prompt — user denied access → request blocked |
 
-### `internal/agent/tools/memory_poisoning_test.go`
+### `pkg/agent/tools/memory_poisoning_test.go`
 
 Validates that persistent state (context files like AGENTS.md, PHOSPHOR.md) cannot override hardcoded security policies.
 
@@ -149,7 +149,7 @@ Validates that persistent state (context files like AGENTS.md, PHOSPHOR.md) cann
 | `TestMemoryPoisoning_BashToolSecurity` | Bash tool still blocks banned commands and out-of-workspace working_dir even with malicious GEMINI.md |
 | `TestMemoryPoisoning_EditToolSecurity` | Edit tool still blocks out-of-workspace edits even with malicious AGENTS.md |
 
-### `internal/agent/tools/fuzzing_test.go`
+### `pkg/agent/tools/fuzzing_test.go`
 
 Validates that all security guards **fail-closed** (reject input) rather than **fail-open** (panic/crash). A crash in a security check is itself a vulnerability — if `IsInside` panics, the caller may silently proceed. These tests feed random garbage into every guard and assert `NotPanics`, ensuring robustness under adversarial or malformed input.
 
@@ -165,16 +165,16 @@ Validates that all security guards **fail-closed** (reject input) rather than **
 
 ```bash
 # Individual test suites
-go test ./internal/agent/tools/ -run 'TestWorkspaceHardening' -count=1
-go test ./internal/shell/ -run 'TestEnvironmentHardening' -count=1
-go test ./internal/agent/tools/ -run 'TestCompositionalChains' -count=1
-go test ./internal/agent/tools/ -run 'TestAgentjacking' -count=1
-go test ./internal/agent/tools/ -run 'TestPathObfuscation' -count=1
-go test ./internal/agent/tools/ -run 'TestMemoryPoisoning' -count=1
-go test ./internal/agent/tools/ -run 'TestFuzzing' -count=1
+go test ./pkg/agent/tools/ -run 'TestWorkspaceHardening' -count=1
+go test ./pkg/shell/ -run 'TestEnvironmentHardening' -count=1
+go test ./pkg/agent/tools/ -run 'TestCompositionalChains' -count=1
+go test ./pkg/agent/tools/ -run 'TestAgentjacking' -count=1
+go test ./pkg/agent/tools/ -run 'TestPathObfuscation' -count=1
+go test ./pkg/agent/tools/ -run 'TestMemoryPoisoning' -count=1
+go test ./pkg/agent/tools/ -run 'TestFuzzing' -count=1
 
 # All new security tests together
-go test ./internal/agent/tools/ ./internal/shell/ \
+go test ./pkg/agent/tools/ ./pkg/shell/ \
   -run 'TestWorkspaceHardening|TestEnvironmentHardening|TestCompositionalChains|TestAgentjacking|TestPathObfuscation|TestMemoryPoisoning|TestFuzzing' \
   -count=1
 ```
@@ -199,5 +199,5 @@ go test ./internal/agent/tools/ ./internal/shell/ \
 - Error message assertions use substring matching (`Contains`) to catch wording regressions without being fragile.
 - The `securityViolationMsg` constant (`"Security violation: path"`) is shared across workspace hardening tests.
 - When adding new tools, follow the existing pattern: resolve path with `SmartJoin`, call `IsInside`, return `fantasy.NewTextErrorResponse` on failure.
-- When adding new banned commands, update both `internal/agent/tools/bash.go:bannedCommands` and the relevant environment hardening tests.
+- When adding new banned commands, update both `pkg/agent/tools/bash.go:bannedCommands` and the relevant environment hardening tests.
 - **Fail-closed principle**: Security guards must never panic. Fuzzing tests (`TestFuzzing_*`) use `require.NotPanics()` to verify that garbage input is rejected (returns error/false) rather than crashing. A crash in a security check is a fail-open vulnerability.

@@ -33,7 +33,7 @@ func TestFetchTool_RefusesRegisteredSecretInQuery(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	tool := NewFetchTool(&mockPermissionService{}, t.TempDir(), nil)
+	tool := NewFetchTool(&mockPermissionService{}, t.TempDir(), nil, nil)
 	input, err := json.Marshal(FetchParams{
 		URL:    srv.URL + "/log?token=" + guardToken,
 		Format: "text",
@@ -54,7 +54,7 @@ func TestFetchTool_AllowsCleanQuery(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	tool := NewFetchTool(&mockPermissionService{}, t.TempDir(), nil)
+	tool := NewFetchTool(&mockPermissionService{}, t.TempDir(), nil, nil)
 	input, err := json.Marshal(FetchParams{URL: srv.URL + "/search?q=hello&page=2", Format: "text"})
 	require.NoError(t, err)
 
@@ -121,7 +121,7 @@ func TestDownloadTool_RefusesRegisteredSecretInQuery(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	tool := NewDownloadTool(&mockPermissionService{}, t.TempDir(), nil)
+	tool := NewDownloadTool(&mockPermissionService{}, t.TempDir(), nil, nil)
 	input, err := json.Marshal(DownloadParams{
 		URL:      srv.URL + "/artifact.bin?token=" + guardToken,
 		FilePath: "artifact.bin",
@@ -171,7 +171,7 @@ func TestFetchDownloadToolsRouteThroughSecuredClient(t *testing.T) {
 	perm := &mockPermissionService{}
 	workingDir := t.TempDir()
 
-	fetchTool := NewFetchTool(perm, workingDir, nil)
+	fetchTool := NewFetchTool(perm, workingDir, nil, nil)
 	input, err := json.Marshal(FetchParams{URL: "https://trusted.example.com/x", Format: "text"})
 	require.NoError(t, err)
 	_, err = fetchTool.Run(guardSessionCtx(), fantasy.ToolCall{
@@ -180,7 +180,7 @@ func TestFetchDownloadToolsRouteThroughSecuredClient(t *testing.T) {
 	require.Error(t, err, "fetch must fail closed on an unapproved host")
 	require.Contains(t, err.Error(), "no prompt handler configured")
 
-	dlTool := NewDownloadTool(perm, workingDir, nil)
+	dlTool := NewDownloadTool(perm, workingDir, nil, nil)
 	dlInput, err := json.Marshal(DownloadParams{URL: "https://trusted.example.com/x", FilePath: "x.bin"})
 	require.NoError(t, err)
 	_, err = dlTool.Run(guardSessionCtx(), fantasy.ToolCall{

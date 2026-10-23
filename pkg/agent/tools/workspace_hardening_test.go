@@ -200,7 +200,7 @@ func TestWorkspaceHardening_DownloadToolBlocksOutsidePaths(t *testing.T) {
 	workingDir := t.TempDir()
 	ctx := context.WithValue(context.Background(), SessionIDContextKey, "test-session")
 
-	tool := NewDownloadTool(nil, workingDir, nil)
+	tool := NewDownloadTool(nil, workingDir, nil, nil)
 
 	tests := []struct {
 		name string

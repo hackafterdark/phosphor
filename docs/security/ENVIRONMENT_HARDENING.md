@@ -39,13 +39,13 @@ but absent from the process environment entirely.
 └───────────────────────────────────────────────────────────┘
          │
          ▼
-  internal/shell/shell.go → NewShell()
+  pkg/shell/shell.go → NewShell()
   (the single enforcement point for all shell surfaces)
 ```
 
 ## Layer 2: Environment Filtering
 
-**Location:** `internal/shell/env.go`, `internal/shell/shell.go`
+**Location:** `pkg/shell/env.go`, `pkg/shell/shell.go`
 
 When `NewShell` is called without an explicit `Env` slice, the process
 environment (`os.Environ()`) is filtered through an allowlist. Only variables
@@ -122,7 +122,7 @@ sandbox.
 
 ## Layer 3: Command Deny List
 
-**Location:** `internal/shell/run.go` (blockHandler), `internal/agent/tools/bash.go` (blockFuncs)
+**Location:** `pkg/shell/run.go` (blockHandler), `pkg/agent/tools/bash.go` (blockFuncs)
 
 The `blockHandler` middleware intercepts external command execution in the
 mvdan/sh interpreter chain. Each `BlockFunc` in the list is tested against
@@ -243,7 +243,7 @@ built-in list. Built-in entries cannot be removed via configuration.
 
 ## Layer 1: Sandbox Markers
 
-**Location:** `internal/shell/shell.go` (`PhosphorEnvMarkers`)
+**Location:** `pkg/shell/shell.go` (`PhosphorEnvMarkers`)
 
 Every shell spawned by Phosphor receives the following environment markers:
 
@@ -438,8 +438,8 @@ echoing them reveals nothing.
 
 ## Testing
 
-Comprehensive tests are in `internal/shell/env_test.go` and
-`internal/agent/tools/bash_test.go`:
+Comprehensive tests are in `pkg/shell/env_test.go` and
+`pkg/agent/tools/bash_test.go`:
 
 - `TestFilterEnv_Basic` — basic allowlist filtering
 - `TestFilterEnv_CaseInsensitive` — Windows case-insensitive matching
@@ -454,5 +454,5 @@ Comprehensive tests are in `internal/shell/env_test.go` and
 Run with:
 
 ```bash
-go test ./internal/shell/ ./internal/agent/tools/ -run TestFilterEnv|TestSafeDefaultEnv|TestPhosphorEnvMarkers|TestNewShell|TestBashTool_ConfigAwareBannedCommands
+go test ./pkg/shell/ ./pkg/agent/tools/ -run 'TestFilterEnv|TestSafeDefaultEnv|TestPhosphorEnvMarkers|TestNewShell|TestBashTool_ConfigAwareBannedCommands'
 ```

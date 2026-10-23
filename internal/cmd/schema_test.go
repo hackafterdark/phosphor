@@ -5,16 +5,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hackafterdark/phosphor/pkg/config"
-	"github.com/invopop/jsonschema"
 	"github.com/stretchr/testify/require"
 )
 
 func TestSchemaNoBrokenRefs(t *testing.T) {
 	t.Parallel()
 
-	reflector := new(jsonschema.Reflector)
-	bts, err := json.Marshal(reflector.Reflect(&config.Config{}))
+	bts, err := json.Marshal(newConfigSchema())
 	require.NoError(t, err)
 
 	var schema struct {
@@ -31,8 +28,7 @@ func TestSchemaNoBrokenRefs(t *testing.T) {
 func TestSchemaProvidersHasAdditionalProperties(t *testing.T) {
 	t.Parallel()
 
-	reflector := new(jsonschema.Reflector)
-	bts, err := json.Marshal(reflector.Reflect(&config.Config{}))
+	bts, err := json.Marshal(newConfigSchema())
 	require.NoError(t, err)
 
 	var schema struct {
@@ -56,4 +52,6 @@ func TestSchemaProvidersHasAdditionalProperties(t *testing.T) {
 	require.Equal(t, "object", providers.Type)
 	require.True(t, strings.Contains(string(providers.AdditionalProperties), "ProviderConfig"),
 		"providers should use additionalProperties with a ProviderConfig ref, got: %s", string(providers.AdditionalProperties))
+	_, ok = schema.Defs["ProviderConfig"]
+	require.True(t, ok, "providers $ref target ProviderConfig must exist in $defs")
 }
