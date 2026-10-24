@@ -16,6 +16,7 @@ import (
 
 	"github.com/hackafterdark/phosphor/internal/filepathext"
 	"github.com/hackafterdark/phosphor/internal/pathguard"
+	"github.com/hackafterdark/phosphor/pkg/sandbox"
 	"mvdan.cc/sh/v3/expand"
 	"mvdan.cc/sh/v3/interp"
 	"mvdan.cc/sh/v3/syntax"
@@ -218,7 +219,18 @@ func dispatchShebang(ctx context.Context, scriptPath string, probe []byte, args 
 		return refused
 	}
 
-	if err := cmd.Run(); err != nil {
+	err = cmd.Start()
+	if err == nil {
+		release, cerr := sandbox.ContainProcess(cmd)
+		if cerr != nil {
+			fmt.Fprintf(hc.Stderr, "phosphor: containment failed: %v\n", cerr)
+		}
+		if release != nil {
+			defer release()
+		}
+		err = cmd.Wait()
+	}
+	if err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
 			code := exitErr.ExitCode()

@@ -1,4 +1,4 @@
-//go:build !linux && !darwin
+//go:build !linux && !darwin && !windows
 
 package sandbox
 
@@ -7,9 +7,9 @@ import (
 	"runtime"
 )
 
-// current returns the platform isolator. Phase 3 (Windows restricted
-// token) replaces this stub; until then enforcement stays in-process and
-// Available() reports honestly.
+// current returns the platform isolator. Phase 4 (AppContainer FS
+// boundary on Windows) and later phases replace these stubs; until then
+// enforcement stays in-process and Available() reports honestly.
 func Current() Isolator { return stubIsolator{} }
 
 type stubIsolator struct{}

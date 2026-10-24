@@ -139,6 +139,10 @@ func Confine(cmd *exec.Cmd, mode string, spec Spec) (degraded bool, err error) {
 			if mode == "strict" {
 				return false, &SandboxUnavailableError{Reason: "platform sandbox unavailable"}
 			}
+			// Degraded workspace mode still gets whatever partial
+			// kernel containment the platform can apply (Windows
+			// restricted token); the caller surfaces the warning.
+			_ = iso.Confine(cmd, spec)
 			return true, nil
 		}
 		if err := iso.Confine(cmd, spec); err != nil {
