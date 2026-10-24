@@ -22,6 +22,10 @@ func (m *mockBashPermissionService) Request(ctx context.Context, req permission.
 	return true, nil
 }
 
+func (m *mockBashPermissionService) BypassShortcuts(ctx context.Context, req permission.CreatePermissionRequest) (bool, error) {
+	return true, nil
+}
+
 func (m *mockBashPermissionService) Grant(req permission.PermissionRequest) bool { return true }
 
 func (m *mockBashPermissionService) Deny(req permission.PermissionRequest) bool { return true }
@@ -92,6 +96,11 @@ type recordingPermissionService struct {
 }
 
 func (m *recordingPermissionService) Request(ctx context.Context, req permission.CreatePermissionRequest) (bool, error) {
+	m.requestCount++
+	return m.allow, nil
+}
+
+func (m *recordingPermissionService) BypassShortcuts(ctx context.Context, req permission.CreatePermissionRequest) (bool, error) {
 	m.requestCount++
 	return m.allow, nil
 }

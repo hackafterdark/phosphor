@@ -345,6 +345,52 @@ func TestPermissionService_SequentialProperties(t *testing.T) {
 	})
 }
 
+// TestPermissionService_BypassShortcuts proves the security property the
+// sandbox escalation UX relies on: with YOLO mode, an allowlist entry, and
+// an auto-approved session all armed, Request auto-grants but
+// BypassShortcuts still prompts the user and only proceeds on a Grant.
+func TestPermissionService_BypassShortcuts(t *testing.T) {
+	t.Parallel()
+
+	service := NewPermissionService("/tmp", true, []string{"bash"})
+	service.AutoApproveSession("sess-1")
+
+	// The shortcut path grants without any user round-trip.
+	granted, err := service.Request(t.Context(), CreatePermissionRequest{
+		SessionID: "sess-1",
+		ToolName:  "bash",
+		Action:    "execute",
+		Path:      "/tmp",
+	})
+	require.NoError(t, err)
+	require.True(t, granted, "Request auto-grants under skip+allowlist+auto-approve")
+
+	// The bypass path prompts anyway.
+	events := service.Subscribe(t.Context())
+	done := make(chan bool, 1)
+	go func() {
+		granted, err := service.BypassShortcuts(t.Context(), CreatePermissionRequest{
+			SessionID: "sess-1",
+			ToolName:  "bash",
+			Action:    "execute",
+			Path:      "/tmp",
+		})
+		require.NoError(t, err)
+		done <- granted
+	}()
+
+	event := <-events
+	require.False(t, event.Payload.Action == "", "prompt must be published to the user")
+	service.Grant(event.Payload)
+
+	select {
+	case granted := <-done:
+		require.True(t, granted, "escalation proceeds after the user grants")
+	case <-time.After(2 * time.Second):
+		t.Fatal("BypassShortcuts did not resolve after grant")
+	}
+}
+
 // TestPermissionService_ResolveIdempotency covers the multi-subscriber
 // resolve guarantees added for client/server mode: exactly one
 // notification per resolution, racing callers see "already resolved",

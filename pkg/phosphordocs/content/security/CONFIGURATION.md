@@ -514,11 +514,18 @@ active.
 **Escalation UX.** When a sandboxed command is denied, the tool result is
 marked `sandbox-denial:` and the agent may retry once with
 `sandbox="escalate"`. That retry goes through the permission system as a
-separate, explicit grant ("run this command outside the sandbox"); the user
+separate, explicit grant ("Run command outside the sandbox"); the user
 must approve it per command. The sandbox is a policy ceiling, never a
 permission gate: approving a command never implies de-escalation, and the
 escalation request is only honored when `sandbox_mode` is `workspace` or
-`strict`.
+`strict`. The escalation prompt uses the permission service's
+`BypassShortcuts` path: YOLO mode, tool allowlists, hook pre-approvals,
+auto-approved sessions, and session permission caches all **never** grant
+it — every escalation is an explicit user decision. Escalations are
+observable: the bash tool span carries `phosphor.security.sandbox_mode`,
+`phosphor.security.sandbox_escalated`, and
+`phosphor.security.sandbox_escalation_denied`, and every escalation is
+logged at warn level.
 
 **Toolchain caches.** The sandbox keeps the common language-runtime caches
 (`~/.npm`, `~/.cache/pip`, `~/.cargo`, `~/.m2`, `~/.gradle`, honoring

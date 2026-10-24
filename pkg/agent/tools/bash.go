@@ -7,6 +7,7 @@ import (
 	_ "embed"
 	"fmt"
 	"html/template"
+	"log/slog"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -492,9 +493,14 @@ func NewBashTool(permissions permission.Service, workingDir string, bashCfg conf
 			// policy ceiling, never a permission gate — approving the
 			// command never implies de-escalation.
 			sandboxMode := bashCfg.BashSandboxMode()
+			span.SetAttributes(attribute.String("phosphor.security.sandbox_mode", sandboxMode))
 			escalated := sandboxMode != config.SandboxModeOff && sandboxDenialRequested(params)
 			if escalated {
-				p, err := permissions.Request(
+				// BypassShortcuts: YOLO mode, tool allowlists, hook
+				// pre-approvals, and session permission caches must never
+				// grant an unsandboxed run — the user sees every escalation
+				// prompt, per command.
+				p, err := permissions.BypassShortcuts(
 					ctx,
 					permission.CreatePermissionRequest{
 						SessionID:   sessionID,
@@ -510,8 +516,12 @@ func NewBashTool(permissions permission.Service, workingDir string, bashCfg conf
 					return fantasy.ToolResponse{}, err
 				}
 				if !p {
+					span.SetAttributes(attribute.Bool("phosphor.security.sandbox_escalation_denied", true))
+					slog.Warn("Sandbox escalation denied by user", "command", params.Command)
 					return NewPermissionDeniedResponse(), nil
 				}
+				span.SetAttributes(attribute.Bool("phosphor.security.sandbox_escalated", true))
+				slog.Warn("Sandbox escalation approved by user; running unsandboxed", "command", params.Command, "sandbox_mode", sandboxMode)
 				sandboxMode = config.SandboxModeOff
 			}
 			sandboxActive := sandboxMode != config.SandboxModeOff

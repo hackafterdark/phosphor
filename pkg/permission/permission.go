@@ -78,6 +78,12 @@ type Service interface {
 	// already been resolved or is unknown.
 	Deny(permission PermissionRequest) bool
 	Request(ctx context.Context, opts CreatePermissionRequest) (bool, error)
+	// BypassShortcuts is Request for security-critical grants: it ignores
+	// YOLO mode, tool allowlists, hook pre-approvals, auto-approved
+	// sessions, and session permission caches, and always asks the user.
+	// Callers use it where the normal shortcuts would silently grant
+	// something the user has not seen (e.g. sandbox escalation).
+	BypassShortcuts(ctx context.Context, opts CreatePermissionRequest) (bool, error)
 	AutoApproveSession(sessionID string)
 	SetSkipRequests(skip bool)
 	SkipRequests() bool
@@ -240,6 +246,35 @@ func (s *permissionService) Request(ctx context.Context, opts CreatePermissionRe
 		return true, nil
 	}
 
+	return s.request(ctx, opts, dir)
+}
+
+// BypassShortcuts prompts the user even when YOLO mode, allowlists, hook
+// pre-approvals, auto-approved sessions, or session permission caches would
+// normally grant the request. The prompt is explicit and per-request; a
+// session-wide auto-approve (GrantPersistent) must never silence it.
+func (s *permissionService) BypassShortcuts(ctx context.Context, opts CreatePermissionRequest) (bool, error) {
+	fileInfo, err := os.Stat(opts.Path)
+	dir := opts.Path
+	if err == nil {
+		if fileInfo.IsDir() {
+			dir = opts.Path
+		} else {
+			dir = filepath.Dir(opts.Path)
+		}
+	}
+
+	if dir == "." {
+		dir = s.workingDir
+	}
+
+	return s.request(ctx, opts, dir)
+}
+
+// request publishes the prompt and waits for the user's verdict. Callers
+// have already resolved the effective directory; this is the shared tail of
+// Request and BypassShortcuts.
+func (s *permissionService) request(ctx context.Context, opts CreatePermissionRequest, dir string) (bool, error) {
 	s.requestMu.Lock()
 	defer s.requestMu.Unlock()
 
