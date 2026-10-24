@@ -39,6 +39,9 @@ type Spec struct {
 	Network NetworkMode
 	// ProxyPort is the broker port when Network is NetworkProxyOnly.
 	ProxyPort int
+	// Limits carries optional kernel resource caps. Zero values mean
+	// "no limit"; limits are opt-in and validated at Confine time.
+	Limits ResourceLimits
 }
 
 // Isolator applies a Spec to a child process so the child and all of its

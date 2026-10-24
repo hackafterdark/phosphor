@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/hackafterdark/phosphor/pkg/csync"
+	"github.com/hackafterdark/phosphor/pkg/sandbox"
 )
 
 const (
@@ -113,6 +114,14 @@ func WithProxyEnv(env []string) StartOption {
 func WithSandboxMode(mode string) StartOption {
 	return func(opts *Options) {
 		opts.SandboxMode = mode
+	}
+}
+
+// WithSandboxLimits sets kernel resource caps for the background shell's
+// sandboxed children; see [Options.SandboxLimits].
+func WithSandboxLimits(limits sandbox.ResourceLimits) StartOption {
+	return func(opts *Options) {
+		opts.SandboxLimits = limits
 	}
 }
 

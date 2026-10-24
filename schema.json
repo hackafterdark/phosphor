@@ -259,6 +259,14 @@
         "route_subprocesses": {
           "type": "boolean",
           "description": "Route the bash child process through the egress broker"
+        },
+        "upstream_proxy": {
+          "type": "string",
+          "description": "Corporate upstream proxy the broker chains through (reserved; validation active"
+        },
+        "ca_bundle": {
+          "type": "string",
+          "description": "Extra CA bundle for upstream proxy TLS (reserved; validation active"
         }
       },
       "additionalProperties": false,
@@ -951,6 +959,13 @@
           "type": "boolean",
           "description": "Add OpenInference llm.* attributes alongside gen_ai.* attributes",
           "default": false
+        },
+        "memory_buffer": {
+          "type": "integer",
+          "description": "Number of recent spans kept in the in-memory ring for phosphor_trace",
+          "examples": [
+            100
+          ]
         }
       },
       "additionalProperties": false,
@@ -1636,6 +1651,33 @@
         "network": {
           "$ref": "#/$defs/ToolBashNetwork",
           "description": "Optional opt-in network egress policy for bash commands."
+        },
+        "sandbox_mode": {
+          "type": "string",
+          "enum": [
+            "off",
+            "workspace",
+            "strict"
+          ],
+          "description": "Kernel-enforced sandbox for bash children: off"
+        },
+        "sandbox_limits": {
+          "$ref": "#/$defs/ToolBashLimits",
+          "description": "Optional kernel resource caps for sandboxed bash children (RLIMIT_NPROC / RLIMIT_FSIZE). Zero means no limit."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "ToolBashLimits": {
+      "properties": {
+        "max_procs": {
+          "type": "integer",
+          "description": "Cap on processes/threads the sandboxed child may create (RLIMIT_NPROC). 0 = no limit."
+        },
+        "max_file_mb": {
+          "type": "integer",
+          "description": "Cap on the size of files the sandboxed child may create"
         }
       },
       "additionalProperties": false,

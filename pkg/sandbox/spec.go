@@ -73,12 +73,19 @@ func DefaultReadWriteDirs() []string {
 // the writable set; well-known read-only roots are filtered to paths that
 // actually exist on this host.
 func SpecFor(workspace string, extraTrustedRoots []string) Spec {
+	return SpecForLimits(workspace, extraTrustedRoots, ResourceLimits{})
+}
+
+// SpecForLimits is SpecFor with explicit resource caps applied to the
+// confined child.
+func SpecForLimits(workspace string, extraTrustedRoots []string, limits ResourceLimits) Spec {
 	return Spec{
 		WorkspaceRoot:  workspace,
 		ReadOnlyRoots:  existing(DefaultReadOnlyDirs),
 		ReadWriteRoots: append(append([]string{}, DefaultReadWriteDirs()...), extraTrustedRoots...),
 		ReadOnlyFiles:  userReadOnlyFiles(),
 		ReadWriteFiles: []string{"/dev/null"},
+		Limits:         limits,
 	}
 }
 
@@ -90,6 +97,15 @@ func ForBashMode(mode, workspace string) *Spec {
 		return nil
 	}
 	spec := SpecFor(workspace, nil)
+	return &spec
+}
+
+// ForBashModeLimits is ForBashMode with explicit resource caps.
+func ForBashModeLimits(mode, workspace string, limits ResourceLimits) *Spec {
+	if !ModeEnabled(mode) || workspace == "" {
+		return nil
+	}
+	spec := SpecForLimits(workspace, nil, limits)
 	return &spec
 }
 
@@ -145,6 +161,9 @@ func Confine(cmd *exec.Cmd, mode string, spec Spec) (degraded bool, err error) {
 	case "", "off":
 		return false, nil
 	case "workspace", "strict":
+		if err := spec.Limits.Validate(); err != nil {
+			return false, err
+		}
 		iso := Current()
 		if ok, _ := iso.Available(); !ok {
 			if mode == "strict" {

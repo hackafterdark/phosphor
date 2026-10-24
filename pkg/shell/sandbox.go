@@ -36,13 +36,13 @@ type sandboxPolicy struct {
 // newSandboxPolicy builds the policy for a shell. Returns nil when
 // sandboxing is off, invalid, or no workspace is configured (hooks run
 // unsandboxed by invariant).
-func newSandboxPolicy(mode, workspace string, extraRoots []string) *sandboxPolicy {
+func newSandboxPolicy(mode, workspace string, extraRoots []string, limits sandbox.ResourceLimits) *sandboxPolicy {
 	if !sandbox.ModeEnabled(mode) || workspace == "" {
 		return nil
 	}
 	p := &sandboxPolicy{
 		mode: mode,
-		spec: sandbox.SpecFor(workspace, extraRoots),
+		spec: sandbox.SpecForLimits(workspace, extraRoots, limits),
 	}
 	// ProxyOnly network tier: when the egress broker is routing
 	// subprocesses, the kernel policy makes it the only egress path

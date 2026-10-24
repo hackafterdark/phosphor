@@ -60,10 +60,38 @@ func killOnParentDeath() syscall.Signal {
 	return syscall.SIGKILL
 }
 
+// applyRLimits caps the wrapper's (and therefore the payload's) process
+// count and file size before any sandbox state is attached, so a
+// misconfigured limit cannot leave a half-restricted process running.
+// Raising the hard limit requires CAP_SYS_RESOURCE; we lower the soft
+// limit to the requested value and keep the hard limit, so the caps can
+// never outlive the child.
+func applyRLimits(net netPolicy) error {
+	if net.nproc != 0 {
+		if err := unix.Setrlimit(unix.RLIMIT_NPROC, &unix.Rlimit{
+			Cur: net.nproc, Max: net.nproc,
+		}); err != nil {
+			return err
+		}
+	}
+	if net.fsizeMB != 0 {
+		limit := net.fsizeMB * 1024 * 1024
+		if err := unix.Setrlimit(unix.RLIMIT_FSIZE, &unix.Rlimit{
+			Cur: limit, Max: limit,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // enforceLandlock applies NO_NEW_PRIVS, the seccomp denylist, and Landlock
 // path rules to the calling process. Landlock is applied last so a failed
 // probe never leaves a half-restricted caller.
 func enforceLandlock(ro, rw []string, net netPolicy) error {
+	if err := applyRLimits(net); err != nil {
+		return err
+	}
 	if err := unix.Prctl(unix.PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0); err != nil {
 		return err
 	}

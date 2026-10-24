@@ -73,6 +73,12 @@ func (landlockIsolator) Confine(cmd *exec.Cmd, spec Spec) error {
 	case NetworkProxyOnly:
 		argv = append(argv, "--net-proxy", strconv.Itoa(spec.ProxyPort))
 	}
+	if spec.Limits.MaxProcs != 0 {
+		argv = append(argv, "--rlimit", "nproc="+strconv.FormatUint(spec.Limits.MaxProcs, 10))
+	}
+	if spec.Limits.MaxFileMB != 0 {
+		argv = append(argv, "--rlimit", "fsize-mb="+strconv.FormatUint(spec.Limits.MaxFileMB, 10))
+	}
 	argv = append(argv, "--")
 	argv = append(argv, cmd.Args...)
 
@@ -148,6 +154,27 @@ func splitPolicyArgs(args []string) (execPath string, ro, rw []string, net netPo
 			}
 			net.mode = NetworkProxyOnly
 			net.port = uint16(port)
+		case "--rlimit":
+			i++
+			if i >= len(args) {
+				return "", nil, nil, net, nil, fmt.Errorf("missing argument for --rlimit")
+			}
+			res, val, ok := strings.Cut(args[i], "=")
+			if !ok {
+				return "", nil, nil, net, nil, fmt.Errorf("invalid --rlimit %q", args[i])
+			}
+			n, nerr := strconv.ParseUint(val, 10, 64)
+			if nerr != nil || n == 0 {
+				return "", nil, nil, net, nil, fmt.Errorf("invalid --rlimit value %q", args[i])
+			}
+			switch res {
+			case "nproc":
+				net.nproc = n
+			case "fsize-mb":
+				net.fsizeMB = n
+			default:
+				return "", nil, nil, net, nil, fmt.Errorf("unknown --rlimit resource %q", res)
+			}
 		case "--":
 			return execPath, ro, rw, net, args[i+1:], nil
 		default:
@@ -160,8 +187,10 @@ func splitPolicyArgs(args []string) (execPath string, ro, rw []string, net netPo
 // netPolicy carries the kernel network posture parsed from the wrapped
 // argv. Zero value means no network restriction (NetworkAllow).
 type netPolicy struct {
-	mode NetworkMode
-	port uint16
+	mode    NetworkMode
+	port    uint16
+	nproc   uint64
+	fsizeMB uint64
 }
 
 // RunSandboxExec is the entry point of the hidden sandbox-exec subcommand:

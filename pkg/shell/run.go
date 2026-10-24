@@ -18,6 +18,7 @@ import (
 	"mvdan.cc/sh/v3/syntax"
 
 	"github.com/hackafterdark/phosphor/internal/pathguard"
+	"github.com/hackafterdark/phosphor/pkg/sandbox"
 )
 
 // RunOptions configures a single stateless shell execution via [Run].
@@ -60,6 +61,9 @@ type RunOptions struct {
 	// this execution; see [Options.SandboxMode]. Empty or "off" keeps
 	// today's behavior, which is what trusted callers such as hooks use.
 	SandboxMode string
+	// SandboxLimits carries optional kernel resource caps for sandboxed
+	// children; see [Options.SandboxLimits].
+	SandboxLimits sandbox.ResourceLimits
 	// TermWidth is the terminal width in columns for PTY execution.
 	// Zero uses a default of 200.
 	TermWidth int
@@ -105,7 +109,7 @@ func Run(ctx context.Context, opts RunOptions) (err error) {
 		return err
 	}
 
-	sbx := newSandboxPolicy(opts.SandboxMode, opts.Workspace, opts.ExtraTrustedRoots)
+	sbx := newSandboxPolicy(opts.SandboxMode, opts.Workspace, opts.ExtraTrustedRoots, opts.SandboxLimits)
 	runner, err := newRunner(opts.Cwd, opts.Env, opts.Stdin, stdout, stderr, opts.BlockFuncs, conf, sbx)
 	if err != nil {
 		return fmt.Errorf("could not run command: %w", err)

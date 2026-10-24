@@ -432,7 +432,7 @@ func NewBashTool(permissions permission.Service, workingDir string, bashCfg conf
 				bgManager := shell.GetBackgroundShellManager()
 				bgManager.Cleanup()
 				// Use background context so it continues after tool returns
-				bgShell, err := bgManager.Start(ctx, execWorkingDir, absWorkingDir, blockFuncs(ctx, bashCfg), params.Command, params.Description, shell.WithTrustedRoots(bashCfg.TrustedExtraRoots), shell.WithProxyEnv(egress.SubprocessProxyEnv()), shell.WithSandboxMode(bashCfg.BashSandboxMode()))
+				bgShell, err := bgManager.Start(ctx, execWorkingDir, absWorkingDir, blockFuncs(ctx, bashCfg), params.Command, params.Description, shell.WithTrustedRoots(bashCfg.TrustedExtraRoots), shell.WithProxyEnv(egress.SubprocessProxyEnv()), shell.WithSandboxMode(bashCfg.BashSandboxMode()), shell.WithSandboxLimits(bashCfg.BashSandboxLimits()))
 				if err != nil {
 					return fantasy.ToolResponse{}, fmt.Errorf("error starting background shell: %w", err)
 				}
@@ -493,7 +493,7 @@ func NewBashTool(permissions permission.Service, workingDir string, bashCfg conf
 			// Start with detached context so it can survive if moved to background
 			bgManager := shell.GetBackgroundShellManager()
 			bgManager.Cleanup()
-			bgShell, err := bgManager.Start(ctx, execWorkingDir, absWorkingDir, blockFuncs(ctx, bashCfg), params.Command, params.Description, shell.WithTrustedRoots(bashCfg.TrustedExtraRoots), shell.WithProxyEnv(egress.SubprocessProxyEnv()), shell.WithSandboxMode(bashCfg.BashSandboxMode()))
+			bgShell, err := bgManager.Start(ctx, execWorkingDir, absWorkingDir, blockFuncs(ctx, bashCfg), params.Command, params.Description, shell.WithTrustedRoots(bashCfg.TrustedExtraRoots), shell.WithProxyEnv(egress.SubprocessProxyEnv()), shell.WithSandboxMode(bashCfg.BashSandboxMode()), shell.WithSandboxLimits(bashCfg.BashSandboxLimits()))
 			if err != nil {
 				return fantasy.ToolResponse{}, fmt.Errorf("error starting shell: %w", err)
 			}

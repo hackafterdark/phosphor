@@ -87,6 +87,13 @@ func (windowsIsolator) Confine(cmd *exec.Cmd, spec Spec) error {
 	if cmd.Path == "" {
 		return fmt.Errorf("sandbox confine requires cmd.Path")
 	}
+	if !spec.Limits.Empty() {
+		// POSIX rlimits have no Windows equivalent; the Job Object caps
+		// (active-process, per-process memory) are applied separately in
+		// contain_windows.go and are not configurable per spec. Refuse
+		// rather than promise caps this host cannot enforce (invariant 1).
+		return fmt.Errorf("sandbox resource limits are POSIX-only and cannot be enforced on Windows")
+	}
 	token, err := sharedRestrictedToken()
 	if err != nil {
 		return fmt.Errorf("restricted token: %w", err)

@@ -18,6 +18,7 @@ import (
 	"github.com/hackafterdark/phosphor/internal/oauth"
 	"github.com/hackafterdark/phosphor/internal/oauth/copilot"
 	"github.com/hackafterdark/phosphor/pkg/csync"
+	"github.com/hackafterdark/phosphor/pkg/sandbox"
 	"github.com/invopop/jsonschema"
 )
 
@@ -883,6 +884,23 @@ type ToolBash struct {
 	// guards with a visible warning when the primitives are unavailable;
 	// "strict" refuses to exec when enforcement cannot attach.
 	SandboxMode string `json:"sandbox_mode,omitempty" jsonschema:"enum=off,enum=workspace,enum=strict,description=Kernel-enforced sandbox for bash children: off, workspace (degrade with warning), or strict (refuse if unavailable). Default off."`
+
+	// SandboxLimits carries optional kernel resource caps applied to
+	// sandboxed bash children. Zero values mean "no limit"; limits are
+	// opt-in so an unset config can never break legitimate toolchains.
+	SandboxLimits ToolBashLimits `json:"sandbox_limits,omitempty" jsonschema:"description=Optional kernel resource caps for sandboxed bash children (RLIMIT_NPROC / RLIMIT_FSIZE). Zero means no limit."`
+}
+
+// ToolBashLimits are the resource caps applied to sandboxed bash
+// children (and MCP stdio servers). Values are validated at exec time;
+// out-of-range values refuse the exec rather than silently weakening
+// the sandbox.
+type ToolBashLimits struct {
+	// MaxProcs caps the child's process/thread count (RLIMIT_NPROC).
+	MaxProcs uint64 `json:"max_procs,omitempty" jsonschema:"description=Cap on processes/threads the sandboxed child may create (RLIMIT_NPROC). 0 = no limit."`
+	// MaxFileMB caps the size of files the child may create
+	// (RLIMIT_FSIZE), in megabytes.
+	MaxFileMB uint64 `json:"max_file_mb,omitempty" jsonschema:"description=Cap on the size of files the sandboxed child may create, in MB (RLIMIT_FSIZE). 0 = no limit."`
 }
 
 // Sandbox modes for ToolBash.SandboxMode.
@@ -901,6 +919,18 @@ func (t ToolBash) BashSandboxMode() string {
 		return t.SandboxMode
 	default:
 		return SandboxModeOff
+	}
+}
+
+// BashSandboxLimits converts the configured resource caps into the
+// sandbox layer's representation. Zero values mean "no limit"; range
+// validation happens at exec time (see [sandbox.ResourceLimits.Validate]),
+// so a bad value refuses the exec rather than silently weakening the
+// sandbox.
+func (t ToolBash) BashSandboxLimits() sandbox.ResourceLimits {
+	return sandbox.ResourceLimits{
+		MaxProcs:  t.SandboxLimits.MaxProcs,
+		MaxFileMB: t.SandboxLimits.MaxFileMB,
 	}
 }
 

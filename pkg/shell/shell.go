@@ -25,6 +25,7 @@ import (
 	"github.com/charmbracelet/x/exp/slice"
 	"github.com/hackafterdark/phosphor/internal/filepathext"
 	"github.com/hackafterdark/phosphor/internal/pathguard"
+	"github.com/hackafterdark/phosphor/pkg/sandbox"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"mvdan.cc/sh/v3/interp"
@@ -109,6 +110,9 @@ type Options struct {
 	// guards with a visible warning when unavailable), "strict" refuses to exec
 	// when enforcement cannot attach. Empty or "off" keeps today's behavior.
 	SandboxMode string
+	// SandboxLimits carries optional kernel resource caps for sandboxed
+	// children; see [sandbox.ResourceLimits]. Zero values mean no limit.
+	SandboxLimits sandbox.ResourceLimits
 }
 
 // NewShell creates a new shell instance with the given options
@@ -152,7 +156,7 @@ func NewShell(opts *Options) *Shell {
 		logger:      logger,
 		blockFuncs:  opts.BlockFuncs,
 		confinement: newConfinement(opts.Workspace, opts.ExtraTrustedRoots, opts.DisableTempRoot),
-		sandbox:     newSandboxPolicy(opts.SandboxMode, opts.Workspace, opts.ExtraTrustedRoots),
+		sandbox:     newSandboxPolicy(opts.SandboxMode, opts.Workspace, opts.ExtraTrustedRoots, opts.SandboxLimits),
 	}
 }
 

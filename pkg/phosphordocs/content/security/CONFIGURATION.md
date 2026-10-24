@@ -467,6 +467,50 @@ start, read URLs from files, or invoke other network-capable child processes
 may bypass argv inspection. This is not a replacement for OS network isolation,
 a brokered egress proxy, or provider-side network controls.
 
+### Kernel Sandboxing For Bash Children
+
+`tools.bash.sandbox_mode` confines bash child processes (and stdio MCP servers)
+with kernel primitives instead of relying only on in-process guards:
+
+```json
+{
+  "$schema": "https://github.com/hackafterdark/phosphor/blob/main/schema.json",
+  "tools": {
+    "bash": {
+      "sandbox_mode": "workspace",
+      "sandbox_limits": {
+        "max_procs": 512,
+        "max_file_mb": 1024
+      }
+    }
+  }
+}
+```
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `sandbox_mode` | `string` | `off` | `off`, `workspace` (confine the filesystem kernel-side, degrade to in-process guards with a visible warning when unavailable), or `strict` (refuse to exec when enforcement cannot attach). |
+| `sandbox_limits.max_procs` | `uint64` | `0` | `RLIMIT_NPROC` cap for sandboxed children. `0` means no limit. |
+| `sandbox_limits.max_file_mb` | `uint64` | `0` | `RLIMIT_FSIZE` cap, in MB, for files sandboxed children may create. `0` means no limit. |
+
+Per-platform enforcement:
+
+- **Linux**: Landlock (filesystem) + seccomp (io_uring denial), wrapped through
+  the binary's hidden `sandbox-exec` mode. Resource limits are applied in the
+  wrapper before the sandbox attaches.
+- **macOS**: the Seatbelt profile via `/usr/bin/sandbox-exec`; resource limits
+  ride a second hidden `--rlimit-exec` re-exec wrapper.
+- **Windows**: restricted token + per-command Job Object (kill-on-close,
+  active-process and per-process memory caps). POSIX rlimits cannot be
+  enforced on Windows — a spec that requests them is refused rather than
+  silently promised.
+
+Limits are validated at exec time: `max_procs` outside `[64, 100000]` or
+`max_file_mb` above `1000000` refuses the exec (or the MCP connection) rather
+than silently weakening the sandbox. Invalid `sandbox_mode` values are treated
+as `off`; the `[sandbox]` report in `phosphor_info` surfaces what is actually
+active.
+
 ---
 
 ## Hooks as Security Gateways

@@ -176,6 +176,58 @@ func TestConfineProxyOnlyRequiresValidPort(t *testing.T) {
 	require.Error(t, (landlockIsolator{}).Confine(cmd, spec))
 }
 
+func TestSplitPolicyArgsRLimit(t *testing.T) {
+	t.Parallel()
+
+	_, _, _, _, _, err := splitPolicyArgs([]string{
+		"--exec", "/usr/bin/true",
+		"--rlimit", "nproc=128",
+		"--rlimit", "fsize-mb=512",
+		"--", "true",
+	})
+	require.NoError(t, err)
+
+	_, _, _, _, _, err = splitPolicyArgs([]string{
+		"--exec", "/usr/bin/true",
+		"--rlimit", "nproc=0",
+		"--", "true",
+	})
+	require.Error(t, err, "zero is not a meaningful rlimit")
+
+	_, _, _, _, _, err = splitPolicyArgs([]string{
+		"--exec", "/usr/bin/true",
+		"--rlimit", "bogus=1",
+		"--", "true",
+	})
+	require.Error(t, err, "unknown resource must fail closed")
+
+	_, _, _, _, _, err = splitPolicyArgs([]string{
+		"--exec", "/usr/bin/true",
+		"--rlimit", "nproc",
+		"--", "true",
+	})
+	require.Error(t, err, "missing =value must fail closed")
+}
+
+func TestConfineRLimitArgv(t *testing.T) {
+	t.Parallel()
+
+	if ok, _ := (landlockIsolator{}).Available(); !ok {
+		t.Skip("landlock unavailable on this kernel")
+	}
+
+	cmd := exec.Command("true")
+	cmd.Path = "/usr/bin/true"
+	spec := Spec{
+		WorkspaceRoot: "/ws",
+		Limits:        ResourceLimits{MaxProcs: 128, MaxFileMB: 512},
+	}
+	require.NoError(t, (landlockIsolator{}).Confine(cmd, spec))
+	require.Contains(t, cmd.Args, "--rlimit")
+	require.Contains(t, cmd.Args, "nproc=128")
+	require.Contains(t, cmd.Args, "fsize-mb=512")
+}
+
 func TestConfineRequiresWorkspace(t *testing.T) {
 	t.Parallel()
 

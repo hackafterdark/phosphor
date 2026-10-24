@@ -396,7 +396,7 @@ func createSession(ctx context.Context, name string, m config.MCPConfig, cfg *co
 	// mode degrades with a visible warning.
 	if ct, ok := transport.(*mcp.CommandTransport); ok {
 		mode := cfg.Config().Tools.Bash.BashSandboxMode()
-		spec := sandbox.ForBashMode(mode, cfg.WorkingDir())
+		spec := sandbox.ForBashModeLimits(mode, cfg.WorkingDir(), cfg.Config().Tools.Bash.BashSandboxLimits())
 		degraded, err := sandbox.ManagedConfine(ct.Command, mode, spec)
 		if err != nil {
 			updateState(name, StateError, err, nil, Counts{})
