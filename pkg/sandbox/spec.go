@@ -82,6 +82,17 @@ func SpecFor(workspace string, extraTrustedRoots []string) Spec {
 	}
 }
 
+// ForBashMode builds the sandbox policy for a managed child (bash tool,
+// MCP stdio server) when kernel sandboxing is requested. Returns nil when
+// sandboxing is off, invalid, or no workspace is configured.
+func ForBashMode(mode, workspace string) *Spec {
+	if !ModeEnabled(mode) || workspace == "" {
+		return nil
+	}
+	spec := SpecFor(workspace, nil)
+	return &spec
+}
+
 func existing(paths []string) []string {
 	var out []string
 	for _, p := range paths {
@@ -165,6 +176,18 @@ func Confine(cmd *exec.Cmd, mode string, spec Spec) (degraded bool, err error) {
 	default:
 		return false, nil
 	}
+}
+
+// ManagedConfine confines a long-lived managed child (MCP stdio server)
+// with a policy built once at startup. strict mode returns the error so
+// the caller refuses the connection; workspace mode confines with the
+// strongest posture the host supports and reports degraded=true when the
+// policy could not attach fully. A nil spec leaves the command untouched.
+func ManagedConfine(cmd *exec.Cmd, mode string, spec *Spec) (degraded bool, err error) {
+	if spec == nil {
+		return false, nil
+	}
+	return Confine(cmd, mode, *spec)
 }
 
 // SandboxUnavailableError is returned in strict mode when enforcement
