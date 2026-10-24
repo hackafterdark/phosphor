@@ -511,6 +511,23 @@ than silently weakening the sandbox. Invalid `sandbox_mode` values are treated
 as `off`; the `[sandbox]` report in `phosphor_info` surfaces what is actually
 active.
 
+**Escalation UX.** When a sandboxed command is denied, the tool result is
+marked `sandbox-denial:` and the agent may retry once with
+`sandbox="escalate"`. That retry goes through the permission system as a
+separate, explicit grant ("run this command outside the sandbox"); the user
+must approve it per command. The sandbox is a policy ceiling, never a
+permission gate: approving a command never implies de-escalation, and the
+escalation request is only honored when `sandbox_mode` is `workspace` or
+`strict`.
+
+**Toolchain caches.** The sandbox keeps the common language-runtime caches
+(`~/.npm`, `~/.cache/pip`, `~/.cargo`, `~/.m2`, `~/.gradle`, honoring
+`npm_config_cache`/`PIP_CACHE_DIR`/`CARGO_HOME`/`MAVEN_HOME`/`GRADLE_USER_HOME`)
+writable so workspace builds (`npm install`, `pip install`, `cargo build`,
+`mvn`, `gradle`) keep working inside the sandbox. Security-relevant home paths
+(`~/.ssh`, `~/.aws`, browser profiles) stay outside the writable set; extra
+readable/writable roots can be added with `tools.bash.trusted_extra_roots`.
+
 ---
 
 ## Hooks as Security Gateways

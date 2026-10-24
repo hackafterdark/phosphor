@@ -54,6 +54,14 @@ func userReadOnlyFiles() []string {
 // needs: the OS temp dir, and the active GOCACHE/GOMODCACHE when they live
 // outside the workspace. GOMODCACHE is writable so toolchain downloads
 // (GOTOOLCHAIN) don't wedge; a stricter profile can drop it later.
+//
+// The language-runtime caches (npm, pip, cargo, maven, gradle) are writable
+// for the same reason: workspace builds legitimately download into them, and
+// a sandbox that denies them fails the tool-compat matrix (§9 graduation
+// test). This is the deliberate trade of the workspace posture: the
+// security-relevant home paths (~/.ssh, ~/.aws, browser profiles) stay
+// outside the writable set, and operators who want a stricter policy drop
+// these roots via a custom spec.
 func DefaultReadWriteDirs() []string {
 	var out []string
 	if tmp := os.TempDir(); tmp != "" {
@@ -65,7 +73,40 @@ func DefaultReadWriteDirs() []string {
 	if mod := goModCacheDir(); mod != "" {
 		out = append(out, mod)
 	}
+	for _, dir := range languageCacheDirs() {
+		if dir != "" {
+			out = append(out, dir)
+		}
+	}
 	return out
+}
+
+// languageCacheDirs returns the writable cache roots for the common
+// language toolchains, honoring each tool's canonical override variable
+// (npm_config_cache, CARGO_HOME, MAVEN_HOME, GRADLE_USER_HOME) the same way
+// the tools themselves do. Home-relative fallbacks follow each tool's
+// default.
+func languageCacheDirs() []string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil
+	}
+	return []string{
+		firstNonEmpty(os.Getenv("npm_config_cache"), filepath.Join(home, ".npm")),
+		firstNonEmpty(os.Getenv("PIP_CACHE_DIR"), filepath.Join(home, ".cache", "pip")),
+		firstNonEmpty(os.Getenv("CARGO_HOME"), filepath.Join(home, ".cargo")),
+		firstNonEmpty(os.Getenv("MAVEN_HOME"), filepath.Join(home, ".m2")),
+		firstNonEmpty(os.Getenv("GRADLE_USER_HOME"), filepath.Join(home, ".gradle")),
+	}
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // SpecFor builds the workspace-mode sandbox policy. The workspace root is

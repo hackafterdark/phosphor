@@ -61,6 +61,12 @@ func newSandboxPolicy(mode, workspace string, extraRoots []string, limits sandbo
 	return p
 }
 
+// SandboxRefusalMarker prefixes the stderr line written when the kernel
+// sandbox refuses an exec (strict mode, exit status 126). The bash tool
+// recognizes this marker to distinguish sandbox denials from ordinary
+// command failures.
+const SandboxRefusalMarker = "phosphor: sandbox refused exec"
+
 // confineProcess wraps cmd's argv through the kernel sandbox before exec.
 // Returns a non-nil interp error (exit status 126) when strict mode refuses
 // the exec because enforcement cannot attach; workspace mode degrades to
@@ -71,7 +77,7 @@ func confineProcess(cmd *exec.Cmd, sbx *sandboxPolicy, stderr io.Writer) error {
 	}
 	degraded, err := sandbox.Confine(cmd, sbx.mode, sbx.spec)
 	if err != nil {
-		fmt.Fprintf(stderr, "phosphor: sandbox refused exec: %v\n", err)
+		fmt.Fprintf(stderr, "%s: %v\n", SandboxRefusalMarker, err)
 		return interp.ExitStatus(126)
 	}
 	if degraded && !sbx.degraded {

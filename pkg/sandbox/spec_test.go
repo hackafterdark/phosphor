@@ -2,11 +2,43 @@ package sandbox
 
 import (
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestDefaultReadWriteDirsIncludeToolchainCaches(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	for _, k := range []string{"npm_config_cache", "PIP_CACHE_DIR", "CARGO_HOME", "MAVEN_HOME", "GRADLE_USER_HOME"} {
+		t.Setenv(k, "")
+	}
+
+	dirs := DefaultReadWriteDirs()
+	// Every default toolchain cache resolves to an existing path (the home
+	// fallbacks exist even when empty), so the spec always carries them.
+	for _, suffix := range []string{".npm", filepath.Join(".cache", "pip"), ".cargo", ".m2", ".gradle"} {
+		require.Contains(t, dirs, filepath.Join(home, suffix))
+	}
+}
+
+func TestDefaultReadWriteDirsHonorToolchainOverrides(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	cargo := t.TempDir()
+	t.Setenv("CARGO_HOME", cargo)
+	t.Setenv("npm_config_cache", "")
+	t.Setenv("PIP_CACHE_DIR", "")
+	t.Setenv("MAVEN_HOME", "")
+	t.Setenv("GRADLE_USER_HOME", "")
+
+	dirs := DefaultReadWriteDirs()
+	require.Contains(t, dirs, cargo, "CARGO_HOME override must win over the home fallback")
+}
 
 func TestForBashMode(t *testing.T) {
 	t.Parallel()

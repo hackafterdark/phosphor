@@ -365,6 +365,9 @@ func writeSandbox(b *strings.Builder, cfg *config.ConfigStore) {
 	fmt.Fprintf(b, "mode = %s\n", mode)
 	fmt.Fprintf(b, "available = %v\n", available)
 	fmt.Fprintf(b, "detail = %s\n", detail)
+	if limits := c.Tools.Bash.BashSandboxLimits(); !limits.Empty() {
+		fmt.Fprintf(b, "limits = max_procs=%d max_file_mb=%d\n", limits.MaxProcs, limits.MaxFileMB)
+	}
 	b.WriteString("\n")
 }
 
