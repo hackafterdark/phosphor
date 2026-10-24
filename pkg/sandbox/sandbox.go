@@ -5,6 +5,20 @@ package sandbox
 
 import "os/exec"
 
+// NetworkMode selects kernel-enforced network posture for a confined child.
+type NetworkMode int
+
+const (
+	// NetworkAllow keeps today's behavior: no kernel network policy.
+	NetworkAllow NetworkMode = iota
+	// NetworkDeny blocks all egress from the child.
+	NetworkDeny
+	// NetworkProxyOnly allows egress only to the loopback egress broker on
+	// ProxyPort. The proxy env stays cooperative-client UX; the kernel
+	// policy is the enforcement (invariant 6).
+	NetworkProxyOnly
+)
+
 // Spec is the OS-agnostic sandbox policy. It is derived from config and
 // pathguard.Confinement so kernel policy and in-process policy can never
 // diverge silently.
@@ -20,6 +34,11 @@ type Spec struct {
 	// tools break; ~/.gitconfig must be readable or git fails fatally).
 	ReadOnlyFiles  []string
 	ReadWriteFiles []string
+	// Network selects the kernel network posture. Zero value is
+	// NetworkUnrestricted, which keeps today's behavior.
+	Network NetworkMode
+	// ProxyPort is the broker port when Network is NetworkProxyOnly.
+	ProxyPort int
 }
 
 // Isolator applies a Spec to a child process so the child and all of its

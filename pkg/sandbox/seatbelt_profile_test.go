@@ -99,3 +99,48 @@ func TestSeatbeltProfileBaseCapabilities(t *testing.T) {
 		require.Contains(t, profile, rule)
 	}
 }
+func TestSeatbeltProfileAllowNetworkByDefault(t *testing.T) {
+	t.Parallel()
+
+	profile := seatbeltProfile(seatbeltTestSpec())
+	require.Contains(t, profile, "(allow network*)")
+	require.NotContains(t, profile, "(deny network*)")
+}
+
+func TestSeatbeltProfileProxyOnlyNetwork(t *testing.T) {
+	t.Parallel()
+
+	spec := seatbeltTestSpec()
+	spec.Network = NetworkProxyOnly
+	spec.ProxyPort = 3128
+	profile := seatbeltProfile(spec)
+
+	// ProxyOnly must deny raw egress and allow only the loopback broker.
+	require.Contains(t, profile, "(deny network*)")
+	require.Contains(t, profile, `(allow network-outbound (remote ip "127.0.0.1:3128"))`)
+	require.NotContains(t, profile, "(allow network*)")
+}
+
+func TestSeatbeltProfileProxyOnlyInvalidPortFailsClosed(t *testing.T) {
+	t.Parallel()
+
+	spec := seatbeltTestSpec()
+	spec.Network = NetworkProxyOnly
+	spec.ProxyPort = 0
+	profile := seatbeltProfile(spec)
+
+	// A bad port must fall to deny-all, never the raw network surface.
+	require.Contains(t, profile, "(deny network*)")
+	require.NotContains(t, profile, "(allow network*)")
+}
+
+func TestSeatbeltProfileDenyNetwork(t *testing.T) {
+	t.Parallel()
+
+	spec := seatbeltTestSpec()
+	spec.Network = NetworkDeny
+	profile := seatbeltProfile(spec)
+
+	require.Contains(t, profile, "(deny network*)")
+	require.NotContains(t, profile, "(allow network*)")
+}

@@ -121,6 +121,16 @@ func Load(workingDir, dataDir string, debug bool) (*ConfigStore, error) {
 		return nil, fmt.Errorf("invalid memory configuration: %w", err)
 	}
 
+	// Validate the egress proxy fields after merging: the upstream-proxy
+	// URL and CA bundle fields are reserved for upstream chaining, but
+	// their hygiene rules (no inline credentials, absolute CA path) are
+	// enforced today so a bad value is a load error, never stored config.
+	if cfg.Security != nil && cfg.Security.EgressIsolation != nil {
+		if err := cfg.Security.EgressIsolation.ValidateEgressUpstreamProxy(); err != nil {
+			return nil, fmt.Errorf("invalid egress configuration: %w", err)
+		}
+	}
+
 	if !isInsideWorktree() {
 		const depth = 2
 		const items = 100

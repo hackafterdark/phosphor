@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"syscall"
 )
@@ -31,6 +32,17 @@ func (landlockIsolator) Confine(cmd *exec.Cmd, spec Spec) error {
 	if cmd.Path == "" {
 		return fmt.Errorf("sandbox confine requires cmd.Path")
 	}
+	if spec.Network == NetworkProxyOnly {
+		if spec.ProxyPort <= 0 || spec.ProxyPort > 65535 {
+			return fmt.Errorf("proxy-only network requires a valid broker port")
+		}
+		// TCP port rules need Landlock ABI v4 (kernel 6.7+). Fail at
+		// Confine time, not inside the exec wrapper, so the caller can
+		// degrade (workspace) or refuse (strict) per invariant 6.
+		if abi, err := landlockABIVersion(); err != nil || abi < 4 {
+			return fmt.Errorf("proxy-only network needs landlock abi v4, kernel has v%d", abi)
+		}
+	}
 
 	exe, err := os.Executable()
 	if err != nil {
@@ -54,6 +66,12 @@ func (landlockIsolator) Confine(cmd *exec.Cmd, spec Spec) error {
 	}
 	for _, p := range spec.ReadWriteFiles {
 		argv = append(argv, "--rw", p)
+	}
+	switch spec.Network {
+	case NetworkDeny:
+		argv = append(argv, "--net-deny")
+	case NetworkProxyOnly:
+		argv = append(argv, "--net-proxy", strconv.Itoa(spec.ProxyPort))
 	}
 	argv = append(argv, "--")
 	argv = append(argv, cmd.Args...)
@@ -95,59 +113,79 @@ func landlockABIVersion() (int, error) {
 
 // splitPolicyArgs is exported to internal/cmd for argv parsing of the
 // hidden sandbox-exec subcommand.
-func splitPolicyArgs(args []string) (execPath string, ro, rw []string, argv []string, err error) {
+func splitPolicyArgs(args []string) (execPath string, ro, rw []string, net netPolicy, argv []string, err error) {
 	i := 0
 	for ; i < len(args); i++ {
 		switch args[i] {
 		case "--exec":
 			i++
 			if i >= len(args) {
-				return "", nil, nil, nil, fmt.Errorf("missing argument for --exec")
+				return "", nil, nil, net, nil, fmt.Errorf("missing argument for --exec")
 			}
 			execPath = args[i]
 		case "--ro":
 			i++
 			if i >= len(args) {
-				return "", nil, nil, nil, fmt.Errorf("missing argument for --ro")
+				return "", nil, nil, net, nil, fmt.Errorf("missing argument for --ro")
 			}
 			ro = append(ro, args[i])
 		case "--rw":
 			i++
 			if i >= len(args) {
-				return "", nil, nil, nil, fmt.Errorf("missing argument for --rw")
+				return "", nil, nil, net, nil, fmt.Errorf("missing argument for --rw")
 			}
 			rw = append(rw, args[i])
+		case "--net-deny":
+			net.mode = NetworkDeny
+		case "--net-proxy":
+			i++
+			if i >= len(args) {
+				return "", nil, nil, net, nil, fmt.Errorf("missing argument for --net-proxy")
+			}
+			port, perr := strconv.Atoi(args[i])
+			if perr != nil || port <= 0 || port > 65535 {
+				return "", nil, nil, net, nil, fmt.Errorf("invalid --net-proxy port %q", args[i])
+			}
+			net.mode = NetworkProxyOnly
+			net.port = uint16(port)
 		case "--":
-			return execPath, ro, rw, args[i+1:], nil
+			return execPath, ro, rw, net, args[i+1:], nil
 		default:
-			return "", nil, nil, nil, fmt.Errorf("unexpected argument %q", args[i])
+			return "", nil, nil, net, nil, fmt.Errorf("unexpected argument %q", args[i])
 		}
 	}
-	return "", nil, nil, nil, fmt.Errorf("no -- separator found")
+	return "", nil, nil, net, nil, fmt.Errorf("no -- separator found")
+}
+
+// netPolicy carries the kernel network posture parsed from the wrapped
+// argv. Zero value means no network restriction (NetworkAllow).
+type netPolicy struct {
+	mode NetworkMode
+	port uint16
 }
 
 // RunSandboxExec is the entry point of the hidden sandbox-exec subcommand:
 // it parses the wrapped argv, enforces policy on itself, and execs the
 // payload. It never returns on success.
 func RunSandboxExec(args []string) error {
-	execPath, ro, rw, argv, err := splitPolicyArgs(args)
+	execPath, ro, rw, net, argv, err := splitPolicyArgs(args)
 	if err != nil {
 		return err
 	}
-	return EnforceAndExec(execPath, ro, rw, argv)
+	return EnforceAndExec(execPath, ro, rw, net, argv)
 }
 
 // EnforceAndExec applies NO_NEW_PRIVS, the seccomp denylist, and Landlock
 // path rules to the calling process, then execs the pre-resolved binary
 // with the original argv (argv[0] preserved). It never returns on success.
-func EnforceAndExec(execPath string, ro, rw, argv []string) error {
+func EnforceAndExec(execPath string, ro, rw []string, net netPolicy, argv []string) error {
 	if len(argv) == 0 {
 		return fmt.Errorf("no command given after --")
 	}
 	if execPath == "" {
 		execPath = argv[0]
 	}
-	if err := enforceLandlock(ro, rw); err != nil {
+	if err := enforceLandlock(ro, rw, net); err != nil {
 		return err
 	}
 	return syscallExec(execPath, argv, os.Environ())

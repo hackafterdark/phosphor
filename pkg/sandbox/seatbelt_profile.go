@@ -35,6 +35,34 @@ func seatbeltRuleParams(kind string, paths []string) string {
 	return b.String()
 }
 
+// seatbeltNetworkRules renders the network posture for a Spec. The
+// default keeps raw egress open (v1 workspace tier; hostname policy
+// lives in the egress proxy until the ProxyOnly tier lands, §5 lesson
+// 1). ProxyOnly makes the broker the only egress path: raw egress is
+// denied and only the loopback broker port stays reachable.
+func seatbeltNetworkRules(spec Spec) string {
+	switch spec.Network {
+	case NetworkDeny:
+		return "(deny network*)\n\n"
+	case NetworkProxyOnly:
+		if spec.ProxyPort <= 0 || spec.ProxyPort > 65535 {
+			// Never leave the raw surface open on a bad port;
+			// callers validate, but the profile must fail closed.
+			return "(deny network*)\n\n"
+		}
+		var b strings.Builder
+		b.WriteString("(deny network*)\n")
+		// Outbound to the broker only; the client-side implicit
+		// bind to an ephemeral local port is allowed so connect()
+		// can pick its source port.
+		fmt.Fprintf(&b, "(allow network-outbound (remote ip \"127.0.0.1:%d\"))\n", spec.ProxyPort)
+		b.WriteString("(allow network-bind (local ip \"*:*\"))\n\n")
+		return b.String()
+	default:
+		return "(allow network*)\n\n"
+	}
+}
+
 // seatbeltProfile renders the SBPL for a Spec. Reads are allowed globally
 // per the plan's macOS position (writes are the real boundary); the
 // kernel-enforced write set is workspace plus the spec's RW roots and
@@ -52,10 +80,7 @@ func seatbeltProfile(spec Spec) string {
 	b.WriteString("(allow signal (target same-sandbox))\n")
 	b.WriteString("(allow file-ioctl (regex #\"^/dev/\"))\n")
 	b.WriteString("(allow sysctl-read)\n")
-	// v1 posture, mirroring the Linux workspace tier: raw egress stays
-	// open and hostname policy lives in the egress proxy until the
-	// ProxyOnly tier lands (§5 lesson 1).
-	b.WriteString("(allow network*)\n\n")
+	b.WriteString(seatbeltNetworkRules(spec))
 
 	// Global reads; the write rules below are the boundary.
 	b.WriteString("(allow file-read*)\n\n")

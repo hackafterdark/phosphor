@@ -63,7 +63,7 @@ func killOnParentDeath() syscall.Signal {
 // enforceLandlock applies NO_NEW_PRIVS, the seccomp denylist, and Landlock
 // path rules to the calling process. Landlock is applied last so a failed
 // probe never leaves a half-restricted caller.
-func enforceLandlock(ro, rw []string) error {
+func enforceLandlock(ro, rw []string, net netPolicy) error {
 	if err := unix.Prctl(unix.PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0); err != nil {
 		return err
 	}
@@ -74,7 +74,7 @@ func enforceLandlock(ro, rw []string) error {
 	if err != nil || abi == 0 {
 		return fmt.Errorf("kernel does not support landlock (err=%v)", err)
 	}
-	// BestEffort degrades to the kernel's ABI; the probe above guarantees
+	// BestEffort degrades to the kernel"s ABI; the probe above guarantees
 	// we are not silently sandboxing nothing.
 	rules := []landlock.Rule{
 		landlock.RODirs(dirsOf(ro)...),
@@ -82,7 +82,28 @@ func enforceLandlock(ro, rw []string) error {
 		landlock.RWDirs(dirsOf(rw)...),
 		landlock.RWFiles(filesOf(rw)...),
 	}
-	return landlock.V5.BestEffort().RestrictPaths(rules...)
+	if err := landlock.V5.BestEffort().RestrictPaths(rules...); err != nil {
+		return err
+	}
+	// Network rules are applied strictly (no BestEffort): a kernel that
+	// cannot enforce the requested posture must fail the exec rather than
+	// run with raw egress open (invariant 6, fail closed).
+	switch net.mode {
+	case NetworkProxyOnly:
+		// connect(2) to the broker port only. The kernel"s implicit
+		// bind of the ephemeral source port at connect() time is
+		// covered by the port-0 bind rule, mirroring the UDP
+		// BindUDP(0) pattern in the go-landlock docs.
+		return landlock.V4.RestrictNet(
+			landlock.ConnectTCP(net.port),
+			landlock.BindTCP(0),
+		)
+	case NetworkDeny:
+		// No TCP rules granted: every bind/connect is denied.
+		return landlock.V4.RestrictNet()
+	default:
+		return nil
+	}
 }
 
 // dirsOf/filesOf split paths by type; Landlock rules are typed and

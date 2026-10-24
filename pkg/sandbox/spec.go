@@ -149,6 +149,16 @@ func Confine(cmd *exec.Cmd, mode string, spec Spec) (degraded bool, err error) {
 			if mode == "strict" {
 				return false, err
 			}
+			// Degrade per-tier: drop the network posture the kernel
+			// cannot enforce and retry with the FS boundary only, so
+			// workspace mode keeps the strongest enforcement the host
+			// supports instead of dropping to in-process guards.
+			relaxed := spec
+			relaxed.Network = NetworkAllow
+			relaxed.ProxyPort = 0
+			if err2 := iso.Confine(cmd, relaxed); err2 != nil {
+				return true, nil
+			}
 			return true, nil
 		}
 		return false, nil

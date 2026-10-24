@@ -8,6 +8,7 @@ import (
 	"maps"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -1174,6 +1175,43 @@ type EgressIsolationConfig struct {
 	// destination allowlist. Only effective when Enabled is on. Tri-state: nil means
 	// enabled.
 	RouteSubprocesses *bool `json:"route_subprocesses,omitempty" jsonschema:"description=Route the bash child process through the egress broker,defaults=true"`
+	// UpstreamProxy chains the broker's egress through a corporate proxy (CONNECT
+	// forwarding). Reserved for a future release: the value is validated and stored
+	// but has no effect until upstream chaining is implemented. Credentials must
+	// arrive via file/secret reference — inline user:pass@ userinfo is rejected at
+	// load so it can never leak into stored config.
+	UpstreamProxy string `json:"upstream_proxy,omitempty" jsonschema:"description=Corporate upstream proxy the broker chains through (reserved; validation active, behavior inactive)"`
+	// CABundle is a path to extra trust anchors the broker uses when dialing
+	// upstream (corporate TLS-intercepting proxies present their own CA).
+	// Reserved for a future release: validated at load, no effect until the
+	// broker's TLS dialers consult it.
+	CABundle string `json:"ca_bundle,omitempty" jsonschema:"description=Extra CA bundle for upstream proxy TLS (reserved; validation active, behavior inactive)"`
+}
+
+// ValidateEgressUpstreamProxy rejects inline credentials in upstream proxy
+// URLs and non-absolute CA bundle paths. It is invoked from config load; the
+// fields themselves stay inert until upstream chaining ships.
+func (e *EgressIsolationConfig) ValidateEgressUpstreamProxy() error {
+	if e == nil {
+		return nil
+	}
+	if e.UpstreamProxy != "" {
+		u, err := url.Parse(e.UpstreamProxy)
+		if err != nil {
+			return fmt.Errorf("egress.upstream_proxy: invalid url: %w", err)
+		}
+		if u.Scheme != "http" && u.Scheme != "https" {
+			return fmt.Errorf("egress.upstream_proxy: scheme must be http or https, got %q", u.Scheme)
+		}
+		if u.User != nil {
+			return fmt.Errorf("egress.upstream_proxy: inline credentials are rejected; " +
+				"reference them via file/secret instead")
+		}
+	}
+	if e.CABundle != "" && !filepath.IsAbs(e.CABundle) {
+		return fmt.Errorf("egress.ca_bundle: must be an absolute path, got %q", e.CABundle)
+	}
+	return nil
 }
 
 // DefaultSensitiveFilePatterns is the built-in set the read path treats as
