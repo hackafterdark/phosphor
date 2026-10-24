@@ -86,6 +86,10 @@ internal/
 
 ## Build/Test/Lint Commands
 
+- **Docs**: `go doc <pkg>[.<symbol>]` and `go doc -all <pkg>` for local
+  stdlib and module documentation (no network needed); read dependency
+  source directly under `$(go env GOMODCACHE)` rather than fetching docs
+  when the local toolchain can answer.
 - **Build**: `go build .` or `go run .`
 - **Test**: `task test` or `go test ./...` (run single test:
   `go test ./internal/llm/prompt -run TestGetContextFromPaths`)

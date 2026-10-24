@@ -75,6 +75,25 @@ func DefaultReadWriteDirs() []string {
 	return out
 }
 
+// TrustedToolchainCaches returns the toolchain cache roots the agent is
+// allowed to read and write when tools.bash.trust_toolchain_caches is on:
+// the narrowed language-runtime caches (LanguageCacheDirs) plus the active
+// GOMODCACHE so dependency source can be inspected.
+//
+// The Go standard library is deliberately absent: its source lives under
+// GOROOT, which is already on the kernel read-only roots, and `go doc`
+// resolves stdlib and module packages through the toolchain itself — no
+// pathguard widening required. Enumerating stdlib source directories
+// per-language would leave the two enforcement layers unable to stay in
+// lockstep, so stdlib reads route through `go doc` instead.
+func TrustedToolchainCaches() []string {
+	roots := LanguageCacheDirs()
+	if mod := goModCacheDir(); mod != "" {
+		roots = append(roots, mod)
+	}
+	return roots
+}
+
 // LanguageCacheDirs returns the cache roots for the common language
 // toolchains, honoring each tool's canonical override variable
 // (npm_config_cache, PIP_CACHE_DIR, CARGO_HOME, MAVEN_HOME,

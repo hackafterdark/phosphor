@@ -1667,7 +1667,7 @@
         },
         "trust_toolchain_caches": {
           "type": "boolean",
-          "description": "Trust the language-runtime cache roots (npm"
+          "description": "Trust the language-runtime cache roots and GOMODCACHE for bash path access. Default false because caches seed future builds."
         }
       },
       "additionalProperties": false,

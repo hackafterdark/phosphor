@@ -892,12 +892,14 @@ type ToolBash struct {
 
 	// TrustToolchainCaches, when true, adds the language-runtime cache
 	// roots (npm, pip, cargo registry/git, maven repository, gradle
-	// caches/wrapper) to the bash tool's trusted path set, for both the
-	// kernel sandbox and the in-process pathguard. Cache directories seed
-	// every future build, so trusting them is an explicit opt-in, never a
-	// silent default. Credential files near the caches (cargo credentials,
-	// maven settings.xml, gradle.properties) stay outside the trusted set.
-	TrustToolchainCaches bool `json:"trust_toolchain_caches,omitempty" jsonschema:"description=Trust the language-runtime cache roots (npm, pip, cargo registry/git, maven repository, gradle caches/wrapper) for bash path access. Default false: caches seed future builds, so widening them is an explicit opt-in."`
+	// caches/wrapper) and the active GOMODCACHE to the bash tool's trusted
+	// path set, for both the kernel sandbox and the in-process pathguard.
+	// Cache directories seed every future build, so trusting them is an
+	// explicit opt-in, never a silent default. Credential files near the
+	// caches (cargo credentials, maven settings.xml, gradle.properties)
+	// stay outside the trusted set; the standard library is resolved
+	// through `go doc` and its source dirs are never trusted.
+	TrustToolchainCaches bool `json:"trust_toolchain_caches,omitempty" jsonschema:"description=Trust the language-runtime cache roots and GOMODCACHE for bash path access. Default false because caches seed future builds."`
 }
 
 // ToolBashLimits are the resource caps applied to sandboxed bash

@@ -240,6 +240,10 @@ The agent MUST prefer `workspace_search` for fast full-text lookup, `semantic_se
 
 <documentation_lookup>
 When working with an external library or unfamiliar API:
+- Prefer the local toolchain's own documentation facility: `go doc` for Go,
+  `cargo doc`/`rustdoc` for Rust, `pydoc` for Python, `perldoc` for Perl,
+  `ri` for Ruby, `man` for POSIX. These resolve stdlib and installed-module
+  source locally through the toolchain itself — no network required.
 - Use `agentic_fetch` to fetch official documentation, release notes, or README files.
 - Use `sourcegraph` to find real-world usage examples from public repositories.
 - Never guess API behavior or assume version-specific features without verifying.

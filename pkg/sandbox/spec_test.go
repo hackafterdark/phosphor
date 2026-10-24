@@ -69,6 +69,27 @@ func TestLanguageCacheDirsHonorToolchainOverrides(t *testing.T) {
 	require.NotContains(t, dirs, filepath.Join(home, ".cargo", "registry"))
 }
 
+func TestTrustedToolchainCachesIncludesModuleCache(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	modcache := t.TempDir()
+	t.Setenv("GOMODCACHE", modcache)
+	for _, k := range []string{"npm_config_cache", "PIP_CACHE_DIR", "CARGO_HOME", "MAVEN_HOME", "GRADLE_USER_HOME"} {
+		t.Setenv(k, "")
+	}
+
+	roots := TrustedToolchainCaches()
+	// The module cache is a bounded, well-defined path, so it joins the
+	// trusted set for dependency-source inspection.
+	require.Contains(t, roots, modcache)
+	// The language caches are included unchanged.
+	require.Contains(t, roots, filepath.Join(home, ".npm"))
+	// The standard library is resolved through `go doc`, not by trusting
+	// its source directory; GOROOT must not be widened here.
+	require.NotContains(t, roots, filepath.Join(home, ".cargo"))
+}
+
 func TestForBashMode(t *testing.T) {
 	t.Parallel()
 

@@ -538,7 +538,12 @@ and `~/.gradle/wrapper` (honoring
 — so workspace builds (`npm install`, `pip install`, `cargo build`, `mvn`,
 `gradle`) keep working inside the sandbox, and commands that *name* a cache
 path in argv (`npm cache clean --cache ~/.npm`) pass the pathguard instead of
-producing a confusing denial that looks like a sandbox refusal. The roots are
+producing a confusing denial that looks like a sandbox refusal. The active
+`GOMODCACHE` joins the trusted set for dependency-source inspection. The
+standard library is deliberately excluded: `go doc` (and each toolchain's
+own docs facility) resolves stdlib locally through the toolchain itself, so
+stdlib source directories are never enumerated or trusted — that keeps the
+pathguard and kernel read-only root sets in lockstep. The roots are
 deliberately cache-scoped: `~/.cargo/bin` (on `PATH`), `~/.cargo/credentials`,
 `~/.cargo/config.toml` (which can redirect the registry), `~/.m2/settings.xml`,
 and `~/.gradle/gradle.properties` stay outside the trusted set. Default false;

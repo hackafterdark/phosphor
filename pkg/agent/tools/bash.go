@@ -450,7 +450,7 @@ func NewBashTool(permissions permission.Service, workingDir string, bashCfg conf
 			// enforce one list.
 			trustedRoots := bashCfg.TrustedExtraRoots
 			if bashCfg.BashTrustToolchainCaches() {
-				trustedRoots = append(append([]string{}, trustedRoots...), sandbox.LanguageCacheDirs()...)
+				trustedRoots = append(append([]string{}, trustedRoots...), sandbox.TrustedToolchainCaches()...)
 				span.SetAttributes(attribute.Bool("phosphor.security.trusted_toolchain_caches", true))
 			}
 
