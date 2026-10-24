@@ -889,6 +889,15 @@ type ToolBash struct {
 	// sandboxed bash children. Zero values mean "no limit"; limits are
 	// opt-in so an unset config can never break legitimate toolchains.
 	SandboxLimits ToolBashLimits `json:"sandbox_limits,omitempty" jsonschema:"description=Optional kernel resource caps for sandboxed bash children (RLIMIT_NPROC / RLIMIT_FSIZE). Zero means no limit."`
+
+	// TrustToolchainCaches, when true, adds the language-runtime cache
+	// roots (npm, pip, cargo registry/git, maven repository, gradle
+	// caches/wrapper) to the bash tool's trusted path set, for both the
+	// kernel sandbox and the in-process pathguard. Cache directories seed
+	// every future build, so trusting them is an explicit opt-in, never a
+	// silent default. Credential files near the caches (cargo credentials,
+	// maven settings.xml, gradle.properties) stay outside the trusted set.
+	TrustToolchainCaches bool `json:"trust_toolchain_caches,omitempty" jsonschema:"description=Trust the language-runtime cache roots (npm, pip, cargo registry/git, maven repository, gradle caches/wrapper) for bash path access. Default false: caches seed future builds, so widening them is an explicit opt-in."`
 }
 
 // ToolBashLimits are the resource caps applied to sandboxed bash
@@ -920,6 +929,14 @@ func (t ToolBash) BashSandboxMode() string {
 	default:
 		return SandboxModeOff
 	}
+}
+
+// BashTrustToolchainCaches reports whether the configured policy trusts
+// the language-runtime cache roots for bash path access. The cache list
+// itself is owned by the sandbox layer (sandbox.LanguageCacheDirs) so the
+// kernel spec and the in-process pathguard stay on one source of truth.
+func (t ToolBash) BashTrustToolchainCaches() bool {
+	return t.TrustToolchainCaches
 }
 
 // BashSandboxLimits converts the configured resource caps into the

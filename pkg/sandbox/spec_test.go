@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestDefaultReadWriteDirsIncludeToolchainCaches(t *testing.T) {
+func TestDefaultReadWriteDirsExcludeToolchainCaches(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
@@ -18,14 +18,41 @@ func TestDefaultReadWriteDirsIncludeToolchainCaches(t *testing.T) {
 	}
 
 	dirs := DefaultReadWriteDirs()
-	// Every default toolchain cache resolves to an existing path (the home
-	// fallbacks exist even when empty), so the spec always carries them.
+	// Caches seed every future build; trusting them is an explicit opt-in
+	// (tools.bash.trust_toolchain_caches), so the default writable set must
+	// never carry them.
 	for _, suffix := range []string{".npm", filepath.Join(".cache", "pip"), ".cargo", ".m2", ".gradle"} {
-		require.Contains(t, dirs, filepath.Join(home, suffix))
+		require.NotContains(t, dirs, filepath.Join(home, suffix))
 	}
 }
 
-func TestDefaultReadWriteDirsHonorToolchainOverrides(t *testing.T) {
+func TestLanguageCacheDirsAreCacheScoped(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	for _, k := range []string{"npm_config_cache", "PIP_CACHE_DIR", "CARGO_HOME", "MAVEN_HOME", "GRADLE_USER_HOME"} {
+		t.Setenv(k, "")
+	}
+
+	dirs := LanguageCacheDirs()
+	require.Contains(t, dirs, filepath.Join(home, ".npm"))
+	require.Contains(t, dirs, filepath.Join(home, ".cache", "pip"))
+	require.Contains(t, dirs, filepath.Join(home, ".cargo", "registry"))
+	require.Contains(t, dirs, filepath.Join(home, ".cargo", "git"))
+	require.Contains(t, dirs, filepath.Join(home, ".m2", "repository"))
+	require.Contains(t, dirs, filepath.Join(home, ".gradle", "caches"))
+	require.Contains(t, dirs, filepath.Join(home, ".gradle", "wrapper"))
+
+	// The parent toolchain homes must stay outside the trusted set: they
+	// hold credential and config files (cargo credentials/config.toml,
+	// maven settings.xml, gradle.properties) and, for cargo, a bin/ dir on
+	// PATH. Trusting the caches must not widen access to any of them.
+	require.NotContains(t, dirs, filepath.Join(home, ".cargo"))
+	require.NotContains(t, dirs, filepath.Join(home, ".m2"))
+	require.NotContains(t, dirs, filepath.Join(home, ".gradle"))
+}
+
+func TestLanguageCacheDirsHonorToolchainOverrides(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
@@ -36,8 +63,10 @@ func TestDefaultReadWriteDirsHonorToolchainOverrides(t *testing.T) {
 	t.Setenv("MAVEN_HOME", "")
 	t.Setenv("GRADLE_USER_HOME", "")
 
-	dirs := DefaultReadWriteDirs()
-	require.Contains(t, dirs, cargo, "CARGO_HOME override must win over the home fallback")
+	dirs := LanguageCacheDirs()
+	require.Contains(t, dirs, filepath.Join(cargo, "registry"), "CARGO_HOME override must win over the home fallback")
+	require.Contains(t, dirs, filepath.Join(cargo, "git"))
+	require.NotContains(t, dirs, filepath.Join(home, ".cargo", "registry"))
 }
 
 func TestForBashMode(t *testing.T) {

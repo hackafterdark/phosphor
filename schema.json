@@ -1664,6 +1664,10 @@
         "sandbox_limits": {
           "$ref": "#/$defs/ToolBashLimits",
           "description": "Optional kernel resource caps for sandboxed bash children (RLIMIT_NPROC / RLIMIT_FSIZE). Zero means no limit."
+        },
+        "trust_toolchain_caches": {
+          "type": "boolean",
+          "description": "Trust the language-runtime cache roots (npm"
         }
       },
       "additionalProperties": false,

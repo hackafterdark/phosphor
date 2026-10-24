@@ -486,7 +486,7 @@ func resolveTokenBase(token, base, home string) string {
 // Command substitutions $(…) and backticks are deliberately NOT expanded here
 // (running them would duplicate side effects); they remain the documented
 // residual and are handled by the post-expansion walk discussed in the design.
-func ValidateCommandPaths(command string, absWorkingDir string) error {
+func ValidateCommandPaths(command string, absWorkingDir string, extraTrusted ...string) error {
 	home := ""
 	if h, err := os.UserHomeDir(); err == nil {
 		home = h
@@ -501,8 +501,11 @@ func ValidateCommandPaths(command string, absWorkingDir string) error {
 	// temp-var-literal rule in expandVarsForValidation, not by widening the
 	// filesystem root set (the OS temp directory is large and a workspace is
 	// commonly nested inside it, so trusting it as a root would weaken
-	// traversal detection).
-	trusted := []string{filepath.Clean(absWorkingDir)}
+	// traversal detection). extraTrusted carries the caller's narrow, policy-
+	// trusted roots (e.g. the language-toolchain caches when
+	// tools.bash.trust_toolchain_caches is on); callers pass the exact same
+	// list to the dynamic Confinement so both layers agree.
+	trusted := append([]string{filepath.Clean(absWorkingDir)}, extraTrusted...)
 
 	for _, tok := range scanCommandTokens(command) {
 		raw := tok.text

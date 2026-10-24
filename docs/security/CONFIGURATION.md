@@ -527,13 +527,25 @@ observable: the bash tool span carries `phosphor.security.sandbox_mode`,
 `phosphor.security.sandbox_escalation_denied`, and every escalation is
 logged at warn level.
 
-**Toolchain caches.** The sandbox keeps the common language-runtime caches
-(`~/.npm`, `~/.cache/pip`, `~/.cargo`, `~/.m2`, `~/.gradle`, honoring
+**Toolchain caches (opt-in).** A cache directory is trusted input for every
+future build, so widening the writable set to language-runtime caches is an
+explicit decision, never a silent default. With
+`tools.bash.trust_toolchain_caches: true`, the sandbox and the in-process
+pathguard both trust the narrowed cache roots — `~/.npm`, `~/.cache/pip`,
+`~/.cargo/registry`, `~/.cargo/git`, `~/.m2/repository`, `~/.gradle/caches`,
+and `~/.gradle/wrapper` (honoring
 `npm_config_cache`/`PIP_CACHE_DIR`/`CARGO_HOME`/`MAVEN_HOME`/`GRADLE_USER_HOME`)
-writable so workspace builds (`npm install`, `pip install`, `cargo build`,
-`mvn`, `gradle`) keep working inside the sandbox. Security-relevant home paths
-(`~/.ssh`, `~/.aws`, browser profiles) stay outside the writable set; extra
-readable/writable roots can be added with `tools.bash.trusted_extra_roots`.
+— so workspace builds (`npm install`, `pip install`, `cargo build`, `mvn`,
+`gradle`) keep working inside the sandbox, and commands that *name* a cache
+path in argv (`npm cache clean --cache ~/.npm`) pass the pathguard instead of
+producing a confusing denial that looks like a sandbox refusal. The roots are
+deliberately cache-scoped: `~/.cargo/bin` (on `PATH`), `~/.cargo/credentials`,
+`~/.cargo/config.toml` (which can redirect the registry), `~/.m2/settings.xml`,
+and `~/.gradle/gradle.properties` stay outside the trusted set. Default false;
+a workspace config cannot enable it if the operator floor leaves it off.
+Security-relevant home paths (`~/.ssh`, `~/.aws`, browser profiles) stay
+outside the writable set either way; extra readable/writable roots can be
+added with `tools.bash.trusted_extra_roots`.
 
 ---
 

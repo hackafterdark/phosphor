@@ -116,6 +116,12 @@ func hardenAgainstWorkspaceOverrides(cfg, floor *Config) int {
 		cfg.Tools.Bash.TrustedExtraRoots, floor.Tools.Bash.TrustedExtraRoots,
 		"tools.bash.trusted_extra_roots", nil, revert,
 	)
+	// Trusting toolchain caches widens the writable path set; a workspace
+	// may not open caches the operator left closed.
+	if !floor.Tools.Bash.TrustToolchainCaches && cfg.Tools.Bash.TrustToolchainCaches {
+		cfg.Tools.Bash.TrustToolchainCaches = false
+		revert("tools.bash.trust_toolchain_caches", "workspace attempted to trust toolchain caches")
+	}
 	cfg.Tools.Bash.AllowedEnv = noBroadenAllowList(
 		cfg.Tools.Bash.AllowedEnv, floor.Tools.Bash.AllowedEnv,
 		"tools.bash.allowed_env", shell.SafeDefaultEnv(), revert,

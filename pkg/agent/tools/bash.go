@@ -20,6 +20,7 @@ import (
 	"github.com/hackafterdark/phosphor/pkg/egress"
 	"github.com/hackafterdark/phosphor/pkg/otel"
 	"github.com/hackafterdark/phosphor/pkg/permission"
+	"github.com/hackafterdark/phosphor/pkg/sandbox"
 	"github.com/hackafterdark/phosphor/pkg/shell"
 	"go.opentelemetry.io/otel/attribute"
 )
@@ -443,8 +444,18 @@ func NewBashTool(permissions permission.Service, workingDir string, bashCfg conf
 			// Correct paths using heuristics in command before validating or executing
 			params.Command = pathguard.CorrectCommandPaths(params.Command, absWorkingDir)
 
+			// The trusted extra roots join the workspace for both the static
+			// and dynamic path checks; when toolchain caches are trusted they
+			// are appended here so the pathguard and the kernel sandbox spec
+			// enforce one list.
+			trustedRoots := bashCfg.TrustedExtraRoots
+			if bashCfg.BashTrustToolchainCaches() {
+				trustedRoots = append(append([]string{}, trustedRoots...), sandbox.LanguageCacheDirs()...)
+				span.SetAttributes(attribute.Bool("phosphor.security.trusted_toolchain_caches", true))
+			}
+
 			// Command Parser Guard: Validate file paths in I/O commands
-			if err := pathguard.ValidateCommandPaths(params.Command, absWorkingDir); err != nil {
+			if err := pathguard.ValidateCommandPaths(params.Command, absWorkingDir, trustedRoots...); err != nil {
 				return fantasy.NewTextErrorResponse(err.Error()), nil
 			}
 
@@ -532,7 +543,7 @@ func NewBashTool(permissions permission.Service, workingDir string, bashCfg conf
 				bgManager := shell.GetBackgroundShellManager()
 				bgManager.Cleanup()
 				// Use background context so it continues after tool returns
-				bgShell, err := bgManager.Start(ctx, execWorkingDir, absWorkingDir, blockFuncs(ctx, bashCfg), params.Command, params.Description, shell.WithTrustedRoots(bashCfg.TrustedExtraRoots), shell.WithProxyEnv(egress.SubprocessProxyEnv()), shell.WithSandboxMode(sandboxMode), shell.WithSandboxLimits(bashCfg.BashSandboxLimits()))
+				bgShell, err := bgManager.Start(ctx, execWorkingDir, absWorkingDir, blockFuncs(ctx, bashCfg), params.Command, params.Description, shell.WithTrustedRoots(trustedRoots), shell.WithProxyEnv(egress.SubprocessProxyEnv()), shell.WithSandboxMode(sandboxMode), shell.WithSandboxLimits(bashCfg.BashSandboxLimits()))
 				if err != nil {
 					return fantasy.ToolResponse{}, fmt.Errorf("error starting background shell: %w", err)
 				}
@@ -594,7 +605,7 @@ func NewBashTool(permissions permission.Service, workingDir string, bashCfg conf
 			// Start with detached context so it can survive if moved to background
 			bgManager := shell.GetBackgroundShellManager()
 			bgManager.Cleanup()
-			bgShell, err := bgManager.Start(ctx, execWorkingDir, absWorkingDir, blockFuncs(ctx, bashCfg), params.Command, params.Description, shell.WithTrustedRoots(bashCfg.TrustedExtraRoots), shell.WithProxyEnv(egress.SubprocessProxyEnv()), shell.WithSandboxMode(sandboxMode), shell.WithSandboxLimits(bashCfg.BashSandboxLimits()))
+			bgShell, err := bgManager.Start(ctx, execWorkingDir, absWorkingDir, blockFuncs(ctx, bashCfg), params.Command, params.Description, shell.WithTrustedRoots(trustedRoots), shell.WithProxyEnv(egress.SubprocessProxyEnv()), shell.WithSandboxMode(sandboxMode), shell.WithSandboxLimits(bashCfg.BashSandboxLimits()))
 			if err != nil {
 				return fantasy.ToolResponse{}, fmt.Errorf("error starting shell: %w", err)
 			}
