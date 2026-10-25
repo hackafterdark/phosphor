@@ -46,7 +46,19 @@ var deniedSyscalls = []uint32{
 	unix.SYS_UMOUNT2,
 	unix.SYS_PIVOT_ROOT,
 	unix.SYS_REBOOT,
+	// io_uring lets the kernel perform syscalls on the process's behalf
+	// after the ring is set up, bypassing both this filter and Landlock's
+	// path mediation for the ring's lifetime. Deny the ring itself.
+	unix.SYS_IO_URING_SETUP,
+	unix.SYS_IO_URING_ENTER,
+	unix.SYS_IO_URING_REGISTER,
 }
+
+// x32SyscallBit marks x32-ABI syscall numbers (nr | 0x40000000). They
+// report the same AUDIT_ARCH_X86_64 as native 64-bit code but carry
+// different syscall numbers, so they would slip past the denylist; no
+// legitimate x86_64 exec tree uses them.
+const x32SyscallBit = 0x40000000
 
 func rawLandlockVersion(queryFlag uintptr) (uintptr, uintptr, syscall.Errno) {
 	return unix.RawSyscall(unix.SYS_LANDLOCK_CREATE_RULESET, 0, 0, queryFlag)
@@ -66,18 +78,41 @@ func killOnParentDeath() syscall.Signal {
 // Raising the hard limit requires CAP_SYS_RESOURCE; we lower the soft
 // limit to the requested value and keep the hard limit, so the caps can
 // never outlive the child.
+//
+// RLIMIT_NPROC is enforced by the kernel against the real UID's total
+// process count, not the confined subtree: the cap reads as a per-user
+// ceiling while the wrapper's exec tree is alive. Lowering the soft
+// limit below the current hard limit always succeeds; the hard limit is
+// left untouched so a request above it degrades to the kernel's own
+// ceiling instead of failing the exec with EPERM.
 func applyRLimits(net netPolicy) error {
 	if net.nproc != 0 {
+		var cur unix.Rlimit
+		if err := unix.Getrlimit(unix.RLIMIT_NPROC, &cur); err != nil {
+			return err
+		}
+		soft := net.nproc
+		if cur.Max != 0 && cur.Max < soft {
+			soft = cur.Max
+		}
 		if err := unix.Setrlimit(unix.RLIMIT_NPROC, &unix.Rlimit{
-			Cur: net.nproc, Max: net.nproc,
+			Cur: soft, Max: cur.Max,
 		}); err != nil {
 			return err
 		}
 	}
 	if net.fsizeMB != 0 {
 		limit := net.fsizeMB * 1024 * 1024
+		var cur unix.Rlimit
+		if err := unix.Getrlimit(unix.RLIMIT_FSIZE, &cur); err != nil {
+			return err
+		}
+		soft := limit
+		if cur.Max != 0 && cur.Max < soft {
+			soft = cur.Max
+		}
 		if err := unix.Setrlimit(unix.RLIMIT_FSIZE, &unix.Rlimit{
-			Cur: limit, Max: limit,
+			Cur: soft, Max: cur.Max,
 		}); err != nil {
 			return err
 		}
@@ -156,9 +191,11 @@ func filesOf(paths []string) []string {
 	return out
 }
 
-// installSeccompDenylist attaches a minimal cBPF filter: allow everything
-// except deniedSyscalls (EPERM), kill on foreign-arch execution.
-func installSeccompDenylist() error {
+// seccompProgram builds the cBPF denylist filter: kill on foreign-arch
+// execution, EPERM on any denied syscall or x32-ABI number, ALLOW
+// otherwise. Split from installSeccompDenylist so the jump arithmetic is
+// unit-testable without attaching the filter.
+func seccompProgram() []unix.SockFilter {
 	prog := []unix.SockFilter{
 		{Code: unix.BPF_LD | unix.BPF_W | unix.BPF_ABS, K: 4},
 		{Code: unix.BPF_JMP | unix.BPF_JEQ | unix.BPF_K, K: unix.AUDIT_ARCH_X86_64, Jt: 2},
@@ -173,17 +210,30 @@ func installSeccompDenylist() error {
 			K:    nr,
 		})
 	}
-	// Each deny check jumps over the remaining checks to RET ALLOW on
-	// match; non-matches fall through to the RET ERRNO at the end.
+	// x32-ABI numbers cannot be mapped back to the denylist; reject them
+	// all rather than let them through unfiltered.
+	prog = append(prog, unix.SockFilter{
+		Code: unix.BPF_JMP | unix.BPF_JSET | unix.BPF_K,
+		K:    x32SyscallBit,
+	})
+	// A deny or x32 match jumps to RET ERRNO; a non-match falls through
+	// to the next check, and the last check falls through to RET ALLOW.
 	allowIdx := len(prog)
+	errnoIdx := allowIdx + 1
 	for i := preamble; i < len(prog); i++ {
-		prog[i].Jt = uint8(allowIdx - i - 1)
+		prog[i].Jt = uint8(errnoIdx - i - 1)
 	}
 	prog = append(prog,
 		unix.SockFilter{Code: unix.BPF_RET | unix.BPF_K, K: unix.SECCOMP_RET_ALLOW},
 		unix.SockFilter{Code: unix.BPF_RET | unix.BPF_K, K: unix.SECCOMP_RET_ERRNO | uint32(unix.EPERM)},
 	)
+	return prog
+}
 
+// installSeccompDenylist attaches the cBPF denylist filter to the calling
+// thread.
+func installSeccompDenylist() error {
+	prog := seccompProgram()
 	fprog := unix.SockFprog{Len: uint16(len(prog)), Filter: &prog[0]}
 	return unix.Prctl(unix.PR_SET_SECCOMP, unix.SECCOMP_MODE_FILTER,
 		uintptr(unsafe.Pointer(&fprog)), 0, 0)
