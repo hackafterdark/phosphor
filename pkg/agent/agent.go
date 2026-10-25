@@ -712,7 +712,8 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 	unrecognizedToolCallContinuationsUsed := unrecognizedToolCallContinuationsFromContext(ctx)
 	// emptyTurnContinuationsUsed is the sibling budget for a step that ended
 	// normally but produced nothing actionable: no tool call and no
-	// non-whitespace text (see isEmptyDeadEndTurn).
+	// non-whitespace text, or only short narration announcing a next step
+	// (see isEmptyDeadEndTurn and isNarrationOnlyDeadEndTurn).
 	emptyTurnContinuationsUsed := emptyTurnContinuationsFromContext(ctx)
 	// truncatedToolCallContinuationsUsed is the sibling budget for a step
 	// whose tool call received fantasy's JSON-parse-failure tool result — a
@@ -1790,24 +1791,31 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 		slog.Warn("Unrecognized-tool-call continuation budget exhausted, completing the turn as-is",
 			"used", unrecognizedToolCallContinuationsUsed, "max", defaultMaxUnrecognizedToolCallContinuations)
 	}
-
 	// After Stream returns, check whether the step ended normally but produced
 	// nothing actionable: no tool call and no non-whitespace text. Confirmed
 	// live: the model's own reasoning correctly planned a next step ("I'll read
 	// the target area for editing") but the turn's actual final text was a bare
 	// newline and no tool call followed — a dropped train of thought, not a
 	// deliberate empty response (see isEmptyDeadEndTurn's doc comment for why
-	// this combination is never legitimate). This check stays after the
-	// unrecognized-tool-call one above: the more specific, better-understood
+	// this combination is never legitimate). The narration-only check is the
+	// same dead end when the announced step leaks into the final text instead
+	// of the reasoning (see isNarrationOnlyDeadEndTurn). This check stays after
+	// the unrecognized-tool-call one above: the more specific, better-understood
 	// signature is matched first, this general catch-all second.
 	if err == nil && currentAssistant != nil && currentAssistant.FinishReason() == message.FinishReasonEndTurn &&
-		isEmptyDeadEndTurn(currentAssistant) {
+		(isEmptyDeadEndTurn(currentAssistant) || isNarrationOnlyDeadEndTurn(currentAssistant)) {
 		if emptyTurnContinuationsUsed < defaultMaxEmptyTurnContinuations {
 			slog.Warn("Step ended with no tool call and no output, queueing an automatic continuation",
 				"session_id", call.SessionID, "attempt", emptyTurnContinuationsUsed+1, "max", defaultMaxEmptyTurnContinuations)
 			if !call.IsStateless {
-				a.queueNote(call.SessionID, "Your previous response ended without any output or tool call. Continue with whatever you described doing next.")
+				note := "Your previous response ended without any output or tool call. Continue with whatever you described doing next."
+				if !isEmptyDeadEndTurn(currentAssistant) {
+					note = "Your previous response announced a next step but ended without making the tool call or producing any result. Take that step now."
+				}
+				a.queueNote(call.SessionID, note)
 			}
+			// Re-run with the nudge riding its system block, and with the spent
+			// budget visible to the nested call so the cap holds for the turn.
 			return a.Run(withEmptyTurnContinuations(ctx, emptyTurnContinuationsUsed+1), call)
 		}
 		slog.Warn("Empty-turn continuation budget exhausted, completing the turn as-is",
@@ -2681,6 +2689,40 @@ func looksLikeUnrecognizedToolCall(text string) bool {
 // is always a dropped train of thought, never a legitimate response.
 func isEmptyDeadEndTurn(msg *message.Message) bool {
 	return len(msg.ToolCalls()) == 0 && strings.TrimSpace(msg.Content().Text) == ""
+}
+
+// maxNarrationOnlyTurnChars bounds how long a text may be and still count
+// as narration-only. Real answers carry findings, code, or structure well
+// past this; the observed dead ends are single lines of intent.
+const maxNarrationOnlyTurnChars = 500
+
+// narrationOnlyTurnRegexp matches text that is pure forward-looking intent:
+// the model announcing its next step and stopping there — the non-empty
+// sibling of the empty-train-of-thought dead end (observed live when an
+// agentic_fetch sub-agent returned "I'll route queries through web_fetch"
+// as its final answer instead of any findings). Anchored at the start of
+// the text so genuine answers that merely mention an intention mid-reply
+// are never matched.
+var narrationOnlyTurnRegexp = regexp.MustCompile(
+	"(?i)^(?:so\\s+|alright[,\\s]+|ok[,\\s]+|understood[.,\\s]+)*" +
+		"(?:i(?:'|’)ll|i\\s+will|i(?:'|’)m\\s+going\\s+to|i\\s+am\\s+going\\s+to|" +
+		"let(?:'|’)s|let\\s+me|now\\s+i(?:'|’)ll|i\\s+need\\s+to|i\\s+have\\s+to)\\b")
+
+// isNarrationOnlyDeadEndTurn reports whether an assistant turn ended
+// normally with no tool call and only short, single-line intent text: the
+// model announced its next step instead of taking it. Long or multi-line
+// replies are never flagged, so genuine final answers pass through; a
+// false positive costs one extra continuation turn, capped by the same
+// budget as the empty-turn check.
+func isNarrationOnlyDeadEndTurn(msg *message.Message) bool {
+	if len(msg.ToolCalls()) > 0 {
+		return false
+	}
+	text := strings.TrimSpace(msg.Content().Text)
+	if text == "" || len(text) > maxNarrationOnlyTurnChars || strings.Contains(text, "\n") {
+		return false
+	}
+	return narrationOnlyTurnRegexp.MatchString(text)
 }
 
 // contextWindowSafetyMargin reserves headroom beyond clampMaxOutputTokens's
