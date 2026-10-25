@@ -103,4 +103,5 @@ jobs:
           # BSD-3-Clause; the composite SPDX expression in the module text
           # covers GPL-licensed example binaries that are not linked.
           # Approved 2026-10-25 for the pkg/sandbox Linux backend.
-          allow-dependencies-licenses: kernel.org/pub/linux/libs/security/libcap/psx
+          # The value must be a purl, not a module path.
+          allow-dependencies-licenses: pkg:golang/kernel.org/pub/linux/libs/security/libcap/psx
