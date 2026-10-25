@@ -87,7 +87,7 @@ func TestSeatbeltConfineAppliesRLimitWrapper(t *testing.T) {
 	sep := slices.Index(cmd.Args, "--")
 	require.Greater(t, sep, 0)
 	require.Equal(t, "sandbox-exec", cmd.Args[sep+1])
-	require.Equal(t, []string{"--flag"}, cmd.Args[sep+4:])
+	require.Equal(t, []string{"/bin/true", "--flag"}, cmd.Args[sep+4:])
 }
 
 func TestSeatbeltConfineRequiresWorkspace(t *testing.T) {
