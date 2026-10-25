@@ -5,6 +5,7 @@ import (
 	"context"
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"io"
@@ -129,7 +130,14 @@ func NewSourcegraphTool(client *http.Client) fantasy.AgentTool {
 
 			resp, err := client.Do(req)
 			if err != nil {
-				return fantasy.ToolResponse{}, fmt.Errorf("failed to fetch URL: %w", err)
+				// Security refusals (host trust, urlguard) abort the run: the
+				// model must not loop against a blocked host. Environmental
+				// transport failures (timeout, DNS, reset) are recoverable and
+				// surface as tool errors so the agent can retry or fall back.
+				if errors.Is(err, ErrHostBlocked) {
+					return fantasy.ToolResponse{}, err
+				}
+				return fantasy.NewTextErrorResponse("Failed to fetch URL: " + err.Error()), nil
 			}
 			defer resp.Body.Close()
 
@@ -143,7 +151,7 @@ func NewSourcegraphTool(client *http.Client) fantasy.AgentTool {
 			}
 			body, err := io.ReadAll(resp.Body)
 			if err != nil {
-				return fantasy.ToolResponse{}, fmt.Errorf("failed to read response body: %w", err)
+				return fantasy.NewTextErrorResponse("Failed to read response body: " + err.Error()), nil
 			}
 
 			var result map[string]any

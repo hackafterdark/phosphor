@@ -89,6 +89,39 @@ func TestCheck_LongKeyShortValuePasses(t *testing.T) {
 	require.NoError(t, Check("https://example.com/x?some_extremely_long_parameter_name_that_looks_random_but_is_not=ok"))
 }
 
+func TestCheck_NaturalLanguageQueryPasses(t *testing.T) {
+	// Regression: natural-language search queries are themselves high-entropy
+	// English and must not trip the credential scan. These are the exact query
+	// shapes the guard once refused on.
+	safe := []string{
+		"https://html.duckduckgo.com/html/?q=Microsoft Execution Containers MXC Windows 11 sandbox",
+		"https://lite.duckduckgo.com/lite/?q=execution containers mxc windows",
+		"https://api.github.com/search/repositories?q=execution containers mxc windows&sort=stars",
+	}
+	for _, raw := range safe {
+		require.NoError(t, Check(raw), "natural-language query %q must not be blocked", raw)
+	}
+}
+
+func TestCheck_GitleaksFormatAbortsEvenWithoutEntropy(t *testing.T) {
+	// The gitleaks aws-access-token format value is assembled at runtime: a
+	// literal AKIA… key in this file would be redacted by the write-path
+	// gitleaks scanner before it reached disk. The value is deliberately
+	// low-entropy, so with the speculative entropy pass off, only the gitleaks
+	// pattern pass can refuse these — proving it is an independent detector.
+	prev := HighEntropyDetection()
+	SetHighEntropyDetection(false)
+	t.Cleanup(func() { SetHighEntropyDetection(prev) })
+
+	// The documented AWS sample key is allow-listed by gitleaks itself, so the
+	// fixture uses a same-format key that is not on that allow-list.
+	awsKey := "AKIA" + string([]byte("J7EEXAMPLEXAMPL3"))
+
+	require.ErrorContains(t, Check("https://example.com/log?token="+awsKey), ErrMessage)
+	require.ErrorContains(t, Check("https://example.com/"+awsKey+"/report"), ErrMessage,
+		"a credential-format value in the path must also abort")
+}
+
 func TestScrubURL_RedactsKnownSecret(t *testing.T) {
 	raw := "https://example.com/log?token=" + knownToken
 	scrubbed := ScrubURL(raw)

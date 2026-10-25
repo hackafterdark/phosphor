@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	_ "embed"
+	"errors"
 	"fmt"
 	"html/template"
 	"io"
@@ -128,14 +129,23 @@ func NewFetchTool(permissions permission.Service, workingDir string, cfg *config
 
 			req, err := http.NewRequestWithContext(requestCtx, "GET", params.URL, nil)
 			if err != nil {
-				return fantasy.ToolResponse{}, fmt.Errorf("failed to create request: %w", err)
+				// The URL is model-supplied, so a malformed one is recoverable:
+				// return it as a tool error rather than aborting the run.
+				return fantasy.NewTextErrorResponse("Failed to create request: " + err.Error()), nil
 			}
 
 			req.Header.Set("User-Agent", "phosphor/1.0")
 
 			resp, err := client.Do(req)
 			if err != nil {
-				return fantasy.ToolResponse{}, fmt.Errorf("failed to fetch URL: %w", err)
+				// Security refusals (host trust, urlguard) abort the run: the
+				// model must not loop against a blocked host. Environmental
+				// transport failures (timeout, DNS, reset) are recoverable and
+				// surface as tool errors so the agent can retry or fall back.
+				if errors.Is(err, ErrHostBlocked) {
+					return fantasy.ToolResponse{}, err
+				}
+				return fantasy.NewTextErrorResponse("Failed to fetch URL: " + err.Error()), nil
 			}
 			defer resp.Body.Close()
 
