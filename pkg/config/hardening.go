@@ -122,6 +122,25 @@ func hardenAgainstWorkspaceOverrides(cfg, floor *Config) int {
 		cfg.Tools.Bash.TrustToolchainCaches = false
 		revert("tools.bash.trust_toolchain_caches", "workspace attempted to trust toolchain caches")
 	}
+	// Kernel sandbox mode is operator-only: a repo may move it up (workspace
+	// -> strict) but never down to off.
+	sandboxRank := map[string]int{SandboxModeOff: 0, SandboxModeWorkspace: 1, SandboxModeStrict: 2}
+	if sandboxRank[cfg.Tools.Bash.BashSandboxMode()] < sandboxRank[floor.Tools.Bash.BashSandboxMode()] {
+		cfg.Tools.Bash.SandboxMode = floor.Tools.Bash.SandboxMode
+		revert("tools.bash.sandbox_mode", "workspace attempted to weaken the kernel sandbox mode")
+	}
+	// Resource caps are floors too: a workspace may tighten them but not
+	// loosen or remove a cap the operator set.
+	clampLimit := func(cur *uint64, fl uint64, name string) {
+		if fl != 0 && (*cur == 0 || *cur > fl) {
+			*cur = fl
+			revert(name, "workspace attempted to loosen a sandbox resource cap")
+		}
+	}
+	clampLimit(&cfg.Tools.Bash.SandboxLimits.MaxProcs, floor.Tools.Bash.SandboxLimits.MaxProcs,
+		"tools.bash.sandbox_limits.max_procs")
+	clampLimit(&cfg.Tools.Bash.SandboxLimits.MaxFileMB, floor.Tools.Bash.SandboxLimits.MaxFileMB,
+		"tools.bash.sandbox_limits.max_file_mb")
 	cfg.Tools.Bash.AllowedEnv = noBroadenAllowList(
 		cfg.Tools.Bash.AllowedEnv, floor.Tools.Bash.AllowedEnv,
 		"tools.bash.allowed_env", shell.SafeDefaultEnv(), revert,

@@ -161,6 +161,27 @@ func TestHarden_AllowsLegitimatelyStricterWorkspaceChanges(t *testing.T) {
 	require.True(t, slices.Contains(workspace.Security.SensitiveFilePatterns, "extra.secret"))
 }
 
+// TestHarden_SandboxModeAndLimitsAreOperatorOnly verifies a workspace file
+// cannot weaken the kernel sandbox: turning the mode off or loosening a
+// resource cap the operator set is reverted to the trusted floor.
+func TestHarden_SandboxModeAndLimitsAreOperatorOnly(t *testing.T) {
+	floor := &Config{}
+	floor.setDefaults(t.TempDir(), "")
+	floor.Tools.Bash.SandboxMode = SandboxModeStrict
+	floor.Tools.Bash.SandboxLimits = ToolBashLimits{MaxProcs: 128, MaxFileMB: 512}
+
+	workspace := mustConfig(t, `{"tools":{"bash":{"sandbox_mode":"off","sandbox_limits":{"max_procs":0,"max_file_mb":1024}}}}`)
+	n := hardenAgainstWorkspaceOverrides(workspace, floor)
+
+	require.Equal(t, SandboxModeStrict, workspace.Tools.Bash.BashSandboxMode(),
+		"workspace must not downgrade the kernel sandbox mode")
+	require.Equal(t, uint64(128), workspace.Tools.Bash.SandboxLimits.MaxProcs,
+		"workspace must not remove a resource cap")
+	require.Equal(t, uint64(512), workspace.Tools.Bash.SandboxLimits.MaxFileMB,
+		"workspace must not loosen a resource cap")
+	require.GreaterOrEqual(t, n, 3, "each weakened field must be reported")
+}
+
 // TestHarden_FullMergePath verifies the clamp survives the real jsonmerge flow that
 // the loader uses to fold the workspace file over the baseline.
 func TestHarden_FullMergePath(t *testing.T) {
