@@ -102,7 +102,12 @@ func TestForBashMode(t *testing.T) {
 	spec := ForBashModeLimits("workspace", ws, ResourceLimits{})
 	require.NotNil(t, spec)
 	require.Equal(t, ws, spec.WorkspaceRoot)
-	require.NotEmpty(t, spec.ReadOnlyRoots)
+	if runtime.GOOS != "windows" {
+		// The well-known read-only set is POSIX-shaped and gets filtered
+		// to paths that exist, so on Windows the list can legitimately
+		// come back empty (the v1 tier cannot kernel-enforce it anyway).
+		require.NotEmpty(t, spec.ReadOnlyRoots)
+	}
 }
 
 func TestResourceLimitsValidate(t *testing.T) {
