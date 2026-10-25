@@ -9,6 +9,14 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// bpfClass extracts the 3-bit instruction class from a cBPF opcode. The
+// x/sys/unix class constants (BPF_LD=0x0, BPF_JMP=0x5, BPF_RET=0x6) are
+// class *values*, not bit masks — comparing with a raw bitwise AND
+// against BPF_LD (0x0) always yields 0, so decode the class field first.
+func bpfClass(code uint16) uint16 {
+	return code & 0x07
+}
+
 // evalSeccompProg runs the cBPF interpreter semantics by hand for the
 // two loads the program performs (arch at offset 4, syscall nr at
 // offset 0). It returns the RET value the kernel would produce.
@@ -19,26 +27,31 @@ func evalSeccompProg(t *testing.T, prog []unix.SockFilter, arch, nr uint32) uint
 	for ip < len(prog) {
 		f := prog[ip]
 		next := ip + 1
-		switch {
-		case f.Code&unix.BPF_LD != 0:
+		switch bpfClass(f.Code) {
+		case unix.BPF_LD:
 			if f.K == 4 {
 				load = arch
 			} else {
 				load = nr
 			}
-		case f.Code&unix.BPF_JMP != 0 && f.Code&unix.BPF_JEQ != 0:
-			if load == f.K {
-				next = ip + 1 + int(f.Jt)
-			} else {
-				next = ip + 1 + int(f.Jf)
+		case unix.BPF_JMP:
+			switch f.Code {
+			case unix.BPF_JMP | unix.BPF_JEQ | unix.BPF_K:
+				if load == f.K {
+					next = ip + 1 + int(f.Jt)
+				} else {
+					next = ip + 1 + int(f.Jf)
+				}
+			case unix.BPF_JMP | unix.BPF_JSET | unix.BPF_K:
+				if load&f.K != 0 {
+					next = ip + 1 + int(f.Jt)
+				} else {
+					next = ip + 1 + int(f.Jf)
+				}
+			default:
+				t.Fatalf("unexpected jump at %d: %+v", ip, f)
 			}
-		case f.Code&unix.BPF_JMP != 0 && f.Code&unix.BPF_JSET != 0:
-			if load&f.K != 0 {
-				next = ip + 1 + int(f.Jt)
-			} else {
-				next = ip + 1 + int(f.Jf)
-			}
-		case f.Code&unix.BPF_RET != 0:
+		case unix.BPF_RET:
 			return f.K
 		default:
 			t.Fatalf("unexpected instruction at %d: %+v", ip, f)
