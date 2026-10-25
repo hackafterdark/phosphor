@@ -94,6 +94,10 @@ func (windowsIsolator) Confine(cmd *exec.Cmd, spec Spec) error {
 		// rather than promise caps this host cannot enforce (invariant 1).
 		return fmt.Errorf("sandbox resource limits are POSIX-only and cannot be enforced on Windows")
 	}
+	// DenyRead cannot be enforced with a restricted token (same limitation
+	// as Codex's unelevated tier); the in-process pathguard gates those
+	// paths until the AppContainer backend lands. The spec is still
+	// carried so both layers agree on the secret set.
 	token, err := sharedRestrictedToken()
 	if err != nil {
 		return fmt.Errorf("restricted token: %w", err)

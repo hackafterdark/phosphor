@@ -34,6 +34,16 @@ type Spec struct {
 	// tools break; ~/.gitconfig must be readable or git fails fatally).
 	ReadOnlyFiles  []string
 	ReadWriteFiles []string
+	// DenyRead lists paths the child must not read even when the rest
+	// of the policy would allow it (credential material: SSH keys,
+	// cloud tokens, browser keychains). Enforcement is
+	// backend-dependent: Seatbelt emits explicit deny rules; Landlock
+	// enforces it for any path outside the allowed roots and rejects
+	// deny paths that fall inside an allowed root (allow-list-only,
+	// fail closed at Confine time); the Windows restricted-token tier
+	// cannot deny reads in-kernel and enforces at the tool layer until
+	// the AppContainer backend lands.
+	DenyRead []string
 	// Network selects the kernel network posture. Zero value is
 	// NetworkUnrestricted, which keeps today's behavior.
 	Network NetworkMode

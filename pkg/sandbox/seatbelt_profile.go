@@ -85,6 +85,13 @@ func seatbeltProfile(spec Spec) string {
 	// Global reads; the write rules below are the boundary.
 	b.WriteString("(allow file-read*)\n\n")
 
+	// Deny-read overrides: credential material stays unreadable even
+	// though the global read grant is open. Seatbelt deny rules win
+	// over allows, so order is defensive only.
+	if params := seatbeltRuleParams("subpath", spec.DenyRead); params != "" {
+		fmt.Fprintf(&b, "(deny file-read* %s)\n\n", params)
+	}
+
 	// Writes: workspace plus RW roots and files, kernel-enforced.
 	params := seatbeltRuleParams("subpath", []string{spec.WorkspaceRoot})
 	fmt.Fprintf(&b, "(allow file-write* %s)\n", params)

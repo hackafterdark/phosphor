@@ -1,9 +1,11 @@
 package sandbox
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -136,6 +138,48 @@ func firstNonEmpty(vals ...string) string {
 	return ""
 }
 
+// CredentialDenyPaths returns the built-in deny-read set: well-known
+// credential locations that a confined child must never read. Missing
+// paths are kept (unlike the read-only roots) so a credential file
+// created mid-session stays protected. The list is home-relative and
+// covers the POSIX and Windows layouts; the in-process pathguard reads
+// the same Spec so both layers agree on what is secret.
+//
+// ~/.npmrc is deliberately absent: userReadOnlyFiles grants it read so
+// git/npm registry auth keeps working, and the grant is intentional.
+func CredentialDenyPaths() []string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil
+	}
+	paths := []string{
+		filepath.Join(home, ".ssh"),
+		filepath.Join(home, ".aws"),
+		filepath.Join(home, ".azure"),
+		filepath.Join(home, ".gnupg"),
+		filepath.Join(home, ".git-credentials"),
+		filepath.Join(home, ".netrc"),
+		filepath.Join(home, ".config", "gcloud"),
+		filepath.Join(home, ".config", "gh"),
+		filepath.Join(home, ".docker", "config.json"),
+	}
+	switch runtime.GOOS {
+	case "darwin":
+		paths = append(paths,
+			filepath.Join(home, "Library", "Keychains"),
+			filepath.Join(home, ".config", "huggingface"),
+		)
+	case "windows":
+		appdata := filepath.Join(home, "AppData", "Roaming")
+		paths = append(paths,
+			filepath.Join(appdata, "gcloud"),
+			filepath.Join(appdata, "docker", "config.json"),
+			filepath.Join(home, ".docker", "config.json"),
+		)
+	}
+	return paths
+}
+
 // SpecFor builds the workspace-mode sandbox policy. The workspace root is
 // always writable; ExtraTrustedRoots (pathguard's trusted additions) join
 // the writable set; well-known read-only roots are filtered to paths that
@@ -153,6 +197,7 @@ func SpecForLimits(workspace string, extraTrustedRoots []string, limits Resource
 		ReadWriteRoots: append(append([]string{}, DefaultReadWriteDirs()...), extraTrustedRoots...),
 		ReadOnlyFiles:  userReadOnlyFiles(),
 		ReadWriteFiles: []string{"/dev/null"},
+		DenyRead:       CredentialDenyPaths(),
 		Limits:         limits,
 	}
 }
@@ -175,6 +220,38 @@ func ForBashModeLimits(mode, workspace string, limits ResourceLimits) *Spec {
 	}
 	spec := SpecForLimits(workspace, nil, limits)
 	return &spec
+}
+
+// ValidateDenyRead reports deny-read paths the Landlock backend cannot
+// enforce: deny rules live outside the allow-list, so any overlap
+// between a deny path and an allowed root is unenforceable and must
+// fail loudly rather than silently weaken the policy (Codex
+// config-validation style). Returns nil when every deny path is
+// enforceable.
+func (s Spec) ValidateDenyRead() error {
+	roots := append([]string{s.WorkspaceRoot}, s.ReadOnlyRoots...)
+	roots = append(roots, s.ReadWriteRoots...)
+	roots = append(roots, s.ReadOnlyFiles...)
+	roots = append(roots, s.ReadWriteFiles...)
+	sep := string(filepath.Separator)
+	for _, deny := range s.DenyRead {
+		for _, root := range roots {
+			if root == "" {
+				continue
+			}
+			if deny == root || strings.HasPrefix(deny, root+sep) {
+				return fmt.Errorf(
+					"deny-read path %q is inside allowed root %q; remove one of them",
+					deny, root)
+			}
+			if strings.HasPrefix(root, deny+sep) {
+				return fmt.Errorf(
+					"allowed root %q is inside deny-read path %q; remove one of them",
+					root, deny)
+			}
+		}
+	}
+	return nil
 }
 
 func existing(paths []string) []string {

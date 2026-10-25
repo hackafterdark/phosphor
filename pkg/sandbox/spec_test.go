@@ -1,6 +1,7 @@
 package sandbox
 
 import (
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -200,4 +201,64 @@ func TestManagedConfineHostBehavior(t *testing.T) {
 		require.NoError(t, err)
 		require.False(t, degraded)
 	}
+}
+func TestCredentialDenyPathsInSpec(t *testing.T) {
+	t.Parallel()
+
+	home, err := os.UserHomeDir()
+	require.NoError(t, err)
+
+	spec := SpecFor(t.TempDir(), nil)
+	require.Contains(t, spec.DenyRead, filepath.Join(home, ".ssh"))
+	require.Contains(t, spec.DenyRead, filepath.Join(home, ".aws"))
+	// The read grant for git/npm registry auth must never land in the
+	// deny set, or workspace-confined registry flows would break.
+	require.NotContains(t, spec.DenyRead, filepath.Join(home, ".npmrc"))
+}
+
+func TestValidateDenyRead(t *testing.T) {
+	t.Parallel()
+
+	ws := t.TempDir()
+
+	// Clean spec: deny path outside every allowed root.
+	ok := Spec{
+		WorkspaceRoot: ws,
+		DenyRead:      []string{filepath.Join(ws, "..", "secrets")},
+	}
+	require.NoError(t, ok.ValidateDenyRead())
+
+	// Deny path inside the workspace: Landlock cannot carve it out of
+	// the writable root, so the spec must fail loudly.
+	inside := Spec{
+		WorkspaceRoot: ws,
+		DenyRead:      []string{filepath.Join(ws, "private")},
+	}
+	require.Error(t, inside.ValidateDenyRead())
+
+	// Deny path equal to an allowed root is the same conflict.
+	equal := Spec{
+		WorkspaceRoot: ws,
+		ReadOnlyRoots: []string{"/usr"},
+		DenyRead:      []string{"/usr"},
+	}
+	require.Error(t, equal.ValidateDenyRead())
+
+	// Allowed root nested inside a deny path is also unenforceable.
+	nested := Spec{
+		WorkspaceRoot:  ws,
+		ReadWriteRoots: []string{filepath.Join(ws, "cache")},
+		DenyRead:       []string{filepath.Dir(ws)},
+	}
+	require.Error(t, nested.ValidateDenyRead())
+}
+
+func TestDefaultSpecPassesDenyReadValidation(t *testing.T) {
+	t.Parallel()
+
+	// The built-in credential deny set must never conflict with the
+	// default root set on any host we support — if it does, Confine
+	// would refuse every exec.
+	spec := SpecFor(t.TempDir(), nil)
+	require.NoError(t, spec.ValidateDenyRead())
 }

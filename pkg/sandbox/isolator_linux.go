@@ -29,6 +29,12 @@ func (landlockIsolator) Confine(cmd *exec.Cmd, spec Spec) error {
 	if spec.WorkspaceRoot == "" {
 		return fmt.Errorf("sandbox spec requires a workspace root")
 	}
+	// Landlock is allow-list-only: a deny path inside an allowed root
+	// cannot be enforced, so fail loudly instead of sandboxing less
+	// than the spec claims (invariant 6, fail closed).
+	if err := spec.ValidateDenyRead(); err != nil {
+		return err
+	}
 	if cmd.Path == "" {
 		return fmt.Errorf("sandbox confine requires cmd.Path")
 	}

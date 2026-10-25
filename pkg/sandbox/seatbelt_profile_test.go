@@ -144,3 +144,22 @@ func TestSeatbeltProfileDenyNetwork(t *testing.T) {
 	require.Contains(t, profile, "(deny network*)")
 	require.NotContains(t, profile, "(allow network*)")
 }
+func TestSeatbeltProfileDenyRead(t *testing.T) {
+	t.Parallel()
+
+	spec := seatbeltTestSpec()
+	spec.DenyRead = []string{"/Users/dev/.ssh", "/Users/dev/.aws"}
+	profile := seatbeltProfile(spec)
+
+	// The global read grant stays open, but credential paths carry an
+	// explicit deny (Seatbelt deny rules win over allows).
+	require.Contains(t, profile, "(allow file-read*)")
+	require.Contains(t, profile, `(deny file-read* (subpath "/Users/dev/.ssh") (subpath "/Users/dev/.aws") )`)
+}
+
+func TestSeatbeltProfileNoDenyReadRulesWhenEmpty(t *testing.T) {
+	t.Parallel()
+
+	profile := seatbeltProfile(seatbeltTestSpec())
+	require.NotContains(t, profile, "(deny file-read*")
+}
