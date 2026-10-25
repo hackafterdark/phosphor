@@ -94,7 +94,11 @@ func applyDarwinRLimits(cmd *exec.Cmd, limits ResourceLimits) error {
 		argv = append(argv, "--rlimit", fmt.Sprintf("fsize-mb=%d", limits.MaxFileMB))
 	}
 	argv = append(argv, "--")
-	argv = append(argv, cmd.Args...)
+	// payload[0] is exec'd directly by RunRLimitExec and execve does
+	// not search PATH, so the payload must carry the resolved path
+	// (cmd.Path is seatbeltExecPath here, not the bare argv[0] name).
+	argv = append(argv, cmd.Path)
+	argv = append(argv, cmd.Args[1:]...)
 	cmd.Path = exe
 	cmd.Args = argv
 	return nil
@@ -141,19 +145,40 @@ func parseRLimitArgs(args []string) (rl rlimitArgs, payload []string, err error)
 	return rl, nil, fmt.Errorf("no -- separator found")
 }
 
-// applyRLimits lowers the process limits in the wrapper process.
+// applyRLimits lowers the process limits in the wrapper process. The
+// soft limit is pinned at or below the existing hard limit so a request
+// above the kernel's own ceiling degrades to that ceiling instead of
+// failing with EPERM; the hard limit is preserved (raising it needs
+// CAP_SYS_RESOURCE / root). RLIMIT_NPROC is enforced per-UID on macOS,
+// like Linux: the cap reads as a per-user ceiling for the exec tree.
 func applyRLimits(rl rlimitArgs) error {
 	if rl.nproc != 0 {
+		var cur unix.Rlimit
+		if err := unix.Getrlimit(unix.RLIMIT_NPROC, &cur); err != nil {
+			return err
+		}
+		soft := rl.nproc
+		if cur.Max != 0 && cur.Max < soft {
+			soft = cur.Max
+		}
 		if err := unix.Setrlimit(unix.RLIMIT_NPROC, &unix.Rlimit{
-			Cur: rl.nproc, Max: rl.nproc,
+			Cur: soft, Max: cur.Max,
 		}); err != nil {
 			return err
 		}
 	}
 	if rl.fsizeMB != 0 {
 		limit := rl.fsizeMB * 1024 * 1024
+		var cur unix.Rlimit
+		if err := unix.Getrlimit(unix.RLIMIT_FSIZE, &cur); err != nil {
+			return err
+		}
+		soft := limit
+		if cur.Max != 0 && cur.Max < soft {
+			soft = cur.Max
+		}
 		if err := unix.Setrlimit(unix.RLIMIT_FSIZE, &unix.Rlimit{
-			Cur: limit, Max: limit,
+			Cur: soft, Max: cur.Max,
 		}); err != nil {
 			return err
 		}

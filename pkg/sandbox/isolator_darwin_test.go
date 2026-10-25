@@ -79,14 +79,15 @@ func TestSeatbeltConfineAppliesRLimitWrapper(t *testing.T) {
 
 	// The Seatbelt-wrapped argv is itself wrapped through the hidden
 	// --rlimit-exec mode; the payload (sandbox-exec + profile + cmd)
-	// rides behind the -- separator unchanged.
+	// rides behind the -- separator unchanged. The payload executable
+	// must be the resolved path — execve does not search PATH.
 	require.Equal(t, "--rlimit-exec", cmd.Args[1])
 	require.Contains(t, cmd.Args, "--rlimit")
 	require.Contains(t, cmd.Args, "nproc=128")
 	require.Contains(t, cmd.Args, "fsize-mb=512")
 	sep := slices.Index(cmd.Args, "--")
 	require.Greater(t, sep, 0)
-	require.Equal(t, "sandbox-exec", cmd.Args[sep+1])
+	require.Equal(t, seatbeltExecPath, cmd.Args[sep+1])
 	require.Equal(t, []string{"/bin/true", "--flag"}, cmd.Args[sep+4:])
 }
 
