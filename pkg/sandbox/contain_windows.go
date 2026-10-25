@@ -19,16 +19,23 @@ const (
 	jobProcessMemoryLimit = 4 * 1024 * 1024 * 1024
 )
 
-// ContainProcess assigns cmd to a fresh Job Object with kill-on-close,
-// an active-process cap, and a per-process memory cap. The returned
-// release function closes the job handle; keep it alive for the whole
-// lifetime of the command — closing it while the child runs terminates
-// the child and its descendants (the kill-on-close guarantee).
+// ContainProcess assigns cmd to a fresh Job Object with kill-on-close so
+// cancelling or exiting Phosphor terminates the child and its descendants
+// (Windows' equivalent of the Unix negative-PID process-group kill). The
+// returned release function closes the job handle; keep it alive for the
+// whole lifetime of the command — closing it while the child runs
+// terminates the child and its descendants (the kill-on-close guarantee).
+//
+// When limits is true the job additionally caps the active process count
+// and per-process memory — the sandbox-tier limits, applied only when a
+// kernel sandbox policy is active. With limits false the job stays a pure
+// cleanup mechanism, matching the Unix behavior where process-group
+// isolation applies regardless of sandbox mode.
 //
 // Assignment happens after spawn: Go's exec on Windows offers no
 // pre-spawn job hook, so a grandchild spawned within microseconds of
 // start can theoretically escape the job. Acceptable for v1.
-func ContainProcess(cmd *exec.Cmd) (release func(), err error) {
+func ContainProcess(cmd *exec.Cmd, limits bool) (release func(), err error) {
 	if cmd.Process == nil {
 		return nil, fmt.Errorf("containment requires a started process")
 	}
@@ -38,10 +45,14 @@ func ContainProcess(cmd *exec.Cmd) (release func(), err error) {
 	}
 	info := windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION{
 		BasicLimitInformation: windows.JOBOBJECT_BASIC_LIMIT_INFORMATION{
-			LimitFlags:         windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | windows.JOB_OBJECT_LIMIT_ACTIVE_PROCESS,
-			ActiveProcessLimit: jobActiveProcessLimit,
+			LimitFlags: windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
 		},
-		ProcessMemoryLimit: jobProcessMemoryLimit,
+	}
+	if limits {
+		info.BasicLimitInformation.LimitFlags |= windows.JOB_OBJECT_LIMIT_ACTIVE_PROCESS |
+			windows.JOB_OBJECT_LIMIT_PROCESS_MEMORY
+		info.BasicLimitInformation.ActiveProcessLimit = jobActiveProcessLimit
+		info.ProcessMemoryLimit = jobProcessMemoryLimit
 	}
 	if _, err := windows.SetInformationJobObject(job, windows.JobObjectExtendedLimitInformation,
 		uintptr(unsafe.Pointer(&info)), uint32(unsafe.Sizeof(info))); err != nil {

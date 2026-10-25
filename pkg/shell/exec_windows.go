@@ -55,7 +55,10 @@ func processGroupExecHandler(killTimeout time.Duration, sbx *sandboxPolicy) inte
 
 		err = cmd.Start()
 		if err == nil {
-			release, cerr := sandbox.ContainProcess(&cmd)
+			// Kill-on-close is the Windows-side cleanup for every
+			// exec (Unix parity); the resource caps attach only
+			// when a sandbox policy is active.
+			release, cerr := sandbox.ContainProcess(&cmd, sbx != nil)
 			if cerr != nil {
 				fmt.Fprintf(hc.Stderr, "phosphor: containment failed: %v\n", cerr)
 			}

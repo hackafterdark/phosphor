@@ -44,7 +44,7 @@ func TestWindowsContainmentKillOnClose(t *testing.T) {
 	cmd := exec.Command("cmd.exe", "/c", "ping -n 30 127.0.0.1 >nul")
 	require.NoError(t, cmd.Start())
 
-	release, err := ContainProcess(cmd)
+	release, err := ContainProcess(cmd, true)
 	require.NoError(t, err)
 	require.NotNil(t, release)
 

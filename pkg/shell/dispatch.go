@@ -221,7 +221,7 @@ func dispatchShebang(ctx context.Context, scriptPath string, probe []byte, args 
 
 	err = cmd.Start()
 	if err == nil {
-		release, cerr := sandbox.ContainProcess(cmd)
+		release, cerr := sandbox.ContainProcess(cmd, sbx != nil)
 		if cerr != nil {
 			fmt.Fprintf(hc.Stderr, "phosphor: containment failed: %v\n", cerr)
 		}
