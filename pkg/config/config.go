@@ -907,8 +907,9 @@ type ToolBash struct {
 // out-of-range values refuse the exec rather than silently weakening
 // the sandbox.
 type ToolBashLimits struct {
-	// MaxProcs caps the child's process/thread count (RLIMIT_NPROC).
-	MaxProcs uint64 `json:"max_procs,omitempty" jsonschema:"description=Cap on processes/threads the sandboxed child may create (RLIMIT_NPROC). 0 = no limit."`
+	// MaxProcs caps the per-user process/thread count while the sandboxed
+	// child runs (RLIMIT_NPROC is enforced against the real UID's total).
+	MaxProcs uint64 `json:"max_procs,omitempty" jsonschema:"description=Per-user RLIMIT_NPROC cap while the sandboxed child runs (0 = no limit)."`
 	// MaxFileMB caps the size of files the child may create
 	// (RLIMIT_FSIZE), in megabytes.
 	MaxFileMB uint64 `json:"max_file_mb,omitempty" jsonschema:"description=Cap on the size of files the sandboxed child may create, in MB (RLIMIT_FSIZE). 0 = no limit."`

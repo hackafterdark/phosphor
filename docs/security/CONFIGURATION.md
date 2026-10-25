@@ -491,7 +491,7 @@ with kernel primitives instead of relying only on in-process guards:
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `sandbox_mode` | `string` | `off` | `off`, `workspace` (confine the filesystem kernel-side, degrade to in-process guards with a visible warning when unavailable), or `strict` (refuse to exec when enforcement cannot attach). |
-| `sandbox_limits.max_procs` | `uint64` | `0` | `RLIMIT_NPROC` cap for sandboxed children. `0` means no limit. |
+| `sandbox_limits.max_procs` | `uint64` | `0` | `RLIMIT_NPROC` cap. The kernel enforces it per-user (against all processes of the real UID), not per-subtree. `0` means no limit. |
 | `sandbox_limits.max_file_mb` | `uint64` | `0` | `RLIMIT_FSIZE` cap, in MB, for files sandboxed children may create. `0` means no limit. |
 | `trust_toolchain_caches` | `bool` | `false` | Trust the language-runtime cache roots and `GOMODCACHE` for bash path access. `false` because caches seed future builds, so widening them is an explicit opt-in. |
 

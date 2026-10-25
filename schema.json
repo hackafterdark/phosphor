@@ -1677,7 +1677,7 @@
       "properties": {
         "max_procs": {
           "type": "integer",
-          "description": "Cap on processes/threads the sandboxed child may create (RLIMIT_NPROC). 0 = no limit."
+          "description": "Per-user RLIMIT_NPROC cap while the sandboxed child runs (0 = no limit)."
         },
         "max_file_mb": {
           "type": "integer",

@@ -6,7 +6,9 @@ import "fmt"
 // children. Zero values mean "no limit" — limits are opt-in so an
 // unset config can never break legitimate toolchains.
 type ResourceLimits struct {
-	// MaxProcs caps the child's process/thread count (RLIMIT_NPROC).
+	// MaxProcs caps the per-user process/thread count while the sandboxed
+	// child runs (RLIMIT_NPROC). The kernel enforces it against every process
+	// owned by the real UID, not just the confined subtree.
 	MaxProcs uint64
 	// MaxFileMB caps the size of files the child may create
 	// (RLIMIT_FSIZE), in megabytes.

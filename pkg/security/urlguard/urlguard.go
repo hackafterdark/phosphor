@@ -80,6 +80,11 @@ var gitleaksDetector = sync.OnceValue(func() *gl.Detector {
 	d.MaxDecodeDepth = 1
 	d.MaxTargetMegaBytes = 20
 	d.Verbose = false
+	// A URL is attacker-constructible, so an inline "gitleaks:allow"
+	// marker smuggled into the query would suppress the detector's own
+	// finding for a credential riding in the same input. Ignore the
+	// marker here; it only makes sense for file scanning.
+	d.IgnoreGitleaksAllow = true
 	return d
 })
 
@@ -153,20 +158,27 @@ func Check(rawURL string) error {
 	// blob in ?token= is caught.
 	for _, values := range parsed.Query() {
 		for _, v := range values {
-			if looksLikeCredential(v) {
-				return fmt.Errorf("%s", ErrMessage)
+			// Scan each whitespace-delimited run independently: a
+			// trailing decoded space ("?sig=<token>%20") must not
+			// exempt the intact credential token inside the value.
+			for _, tok := range strings.Fields(v) {
+				if looksLikeCredential(tok) {
+					return fmt.Errorf("%s", ErrMessage)
+				}
 			}
 		}
 	}
 	return nil
 }
 
-// looksLikeCredential reports whether a decoded query value has the statistical
-// shape of a credential: long, high-entropy, and drawn from a wide character
-// set. The credentialLike gate mirrors gitleaks' own value rules: a genuine
-// credential is one unbroken run of credential-class characters, so values
-// containing whitespace (search queries, filter phrases) never trip the
-// entropy scan — prose over twenty characters is itself high-entropy English.
+// looksLikeCredential reports whether a decoded query value (or one
+// whitespace-delimited run within it) has the statistical shape of a
+// credential: long, high-entropy, and drawn from a wide character set. The
+// credentialLike gate mirrors gitleaks' own value rules: a genuine
+// credential is one unbroken run of credential-class characters, so
+// whitespace-separated prose is judged run by run — a long English query
+// stays open while a credential token padded with encoded whitespace does
+// not slip through.
 func looksLikeCredential(v string) bool {
 	if len(v) < minTokenLen || !credentialLike(v) {
 		return false
