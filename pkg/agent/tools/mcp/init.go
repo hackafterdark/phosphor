@@ -10,7 +10,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -25,6 +24,7 @@ import (
 	"github.com/hackafterdark/phosphor/pkg/pubsub"
 	"github.com/hackafterdark/phosphor/pkg/sandbox"
 	"github.com/hackafterdark/phosphor/pkg/security/urlguard"
+	"github.com/hackafterdark/phosphor/pkg/shell"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -518,7 +518,11 @@ func createTransport(ctx context.Context, m config.MCPConfig, resolver config.Va
 			return nil, err
 		}
 		cmd := exec.CommandContext(ctx, home.Long(command), args...)
-		cmd.Env = append(os.Environ(), envs...)
+		// Third-party stdio servers get the shell's filtered child
+		// environment, not the ambient one: the operator-declared envs
+		// still arrive (resolved in-process), but provider tokens and
+		// other ambient credentials stop leaking into every server.
+		cmd.Env = shell.FilteredChildEnv(envs)
 		return &mcp.CommandTransport{
 			Command: cmd,
 		}, nil

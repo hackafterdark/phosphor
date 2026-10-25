@@ -72,3 +72,19 @@ func joinEnv(env []string) string {
 	}
 	return out
 }
+func TestFilteredChildEnv_StripsAmbientSecretsKeepsDeclared(t *testing.T) {
+	t.Setenv("PHOSPHOR_TEST_AMBIENT_TOKEN", "ambient-secret")
+	t.Setenv("PHOSPHOR_TEST_BENIGN", "harmless")
+
+	env := FilteredChildEnv([]string{"DECLARED_VALUE=operator-intended"})
+	joined := joinEnv(env)
+
+	// Ambient non-allowlisted variables never reach the child, and
+	// secret-shaped ambient keys are doubly excluded.
+	require.NotContains(t, joined, "ambient-secret")
+	require.NotContains(t, joined, "harmless")
+	// Operator-declared entries survive the filter.
+	require.Contains(t, joined, "DECLARED_VALUE=operator-intended")
+	// The child still gets the runtime essentials.
+	require.Contains(t, joined, "PATH=")
+}
