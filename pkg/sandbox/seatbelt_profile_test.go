@@ -99,6 +99,25 @@ func TestSeatbeltProfileBaseCapabilities(t *testing.T) {
 		require.Contains(t, profile, rule)
 	}
 }
+
+func TestSeatbeltProfileMachLookupGrants(t *testing.T) {
+	t.Parallel()
+
+	// DNS resolution and TLS trust evaluation reach these Mach
+	// services; without the grants a confined child's getaddrinfo or
+	// certificate validation fails under (deny default).
+	profile := seatbeltProfile(seatbeltTestSpec())
+	for _, name := range []string{
+		"com.apple.dnssd.service",
+		"com.apple.SystemConfiguration.configd",
+		"com.apple.SystemConfiguration.DNSConfiguration",
+		"com.apple.SecurityServer",
+		"com.apple.trustd.agent",
+	} {
+		require.Contains(t, profile, `(global-name "`+name+`")`)
+	}
+}
+
 func TestSeatbeltProfileAllowNetworkByDefault(t *testing.T) {
 	t.Parallel()
 

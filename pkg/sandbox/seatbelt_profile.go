@@ -80,6 +80,16 @@ func seatbeltProfile(spec Spec) string {
 	b.WriteString("(allow signal (target same-sandbox))\n")
 	b.WriteString("(allow file-ioctl (regex #\"^/dev/\"))\n")
 	b.WriteString("(allow sysctl-read)\n")
+	// DNS resolution and TLS trust evaluation reach these Mach
+	// services even when raw network access is allowed; under
+	// (deny default) getaddrinfo and certificate validation fail
+	// without these grants.
+	b.WriteString("(allow mach-lookup\n")
+	b.WriteString("  (global-name \"com.apple.dnssd.service\")\n")
+	b.WriteString("  (global-name \"com.apple.SystemConfiguration.configd\")\n")
+	b.WriteString("  (global-name \"com.apple.SystemConfiguration.DNSConfiguration\")\n")
+	b.WriteString("  (global-name \"com.apple.SecurityServer\")\n")
+	b.WriteString("  (global-name \"com.apple.trustd.agent\"))\n")
 	b.WriteString(seatbeltNetworkRules(spec))
 
 	// Global reads; the write rules below are the boundary.
