@@ -72,6 +72,7 @@ func TestEscapeHatchReasonEnvNestedShellOnDegradedHost(t *testing.T) {
 		{"env", "FOO=bar", "ls"},
 		{"env", "sh", "script.sh"},
 		{"env", "echo", "hi"},
+		{"bash", "--", "-c", "echo hi"}, // `--` ends options; `-c` is an operand
 	} {
 		require.Empty(t, EscapeHatchReason(argv, false), "argv %q must pass", argv)
 	}
