@@ -529,19 +529,20 @@ observable: the bash tool span carries `phosphor.security.sandbox_mode`,
 `phosphor.security.sandbox_escalation_denied`, and every escalation is
 logged at warn level.
 
-**Escape-hatch gating.** Some binaries leave the host security domain in
-ways kernel confinement cannot reach: `wsl` executes inside the WSL2 VM
-kernel, and inline shell invocations (`sh -c '<payload>'`, `bash -c`,
-`zsh -s`, …) hide their payload inside a quoted argument that argv-based
-policy never parses. While `sandbox_mode` is `workspace` or `strict`,
-these `argv[0]`s are denied by default — `wsl`, `cmd`, `powershell`,
-`pwsh`, and inline-exec forms of `sh`/`bash`/`zsh`/`dash`/`ksh`/`ash`/
-`busybox` — with the standard sandbox-denial contract, so the escalation
-flow above is the only way through. Conventional script invocation
-(`sh script.sh`) is unaffected: the script dispatcher confines the script
-file itself via pathguard. The gate runs ahead of path confinement so the
-refusal is always the marker + exit-126 contract rather than a confusing
-path-guard parse of host-shell arguments.
+**Escape-hatch gating.** Some binaries leave the host security domain even
+under kernel confinement: `wsl` hands execution to the WSL2 VM kernel,
+which host-side Landlock/seccomp cannot reach, and inline shell
+invocations (`sh -c '<payload>'`, `bash -lc`, `zsh -s`, …) hide their
+payload inside a quoted argument that argv-based policy never parses.
+While `sandbox_mode` is `workspace` or `strict`, these `argv[0]`s are
+denied by default — `wsl`, `cmd`, `powershell`, `pwsh`, and inline-exec
+forms of `sh`/`bash`/`zsh`/`dash`/`ksh`/`ash`/`busybox` — with the
+standard sandbox-denial contract, so the escalation flow above is the
+only way through. Conventional script invocation (`sh script.sh`) is
+unaffected: the script dispatcher confines the script file itself via
+pathguard. The gate runs ahead of path confinement so the refusal is
+always the marker + exit-126 contract rather than a confusing path-guard
+parse of host-shell arguments.
 
 **Toolchain caches (opt-in).** A cache directory is trusted input for every
 future build, so widening the writable set to language-runtime caches is an

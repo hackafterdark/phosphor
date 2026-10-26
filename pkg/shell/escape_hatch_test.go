@@ -29,6 +29,8 @@ func TestEscapeHatchGateDenies(t *testing.T) {
 		{"pwsh", `pwsh -c "echo hi"`},
 		{"sh -c", `sh -c 'echo hi'`},
 		{"bash -c", `bash -c 'echo hi'`},
+		{"bash -lc", `bash -lc 'echo hi'`},
+		{"busybox sh -c", `busybox sh -c 'echo hi'`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()

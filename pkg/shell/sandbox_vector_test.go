@@ -36,14 +36,19 @@ func TestSandboxKernelDeniesWriteOutsideWorkspace(t *testing.T) {
 	// spawned by `env` at the kernel level (the Phase-6 gate sees only
 	// `env` and confines its children through the inherited boundary),
 	// so the kernel sandbox itself — not the escape-hatch gate — is what
-	// denies the write.
+	// denies the write. The marker echo proves the nested shell reached
+	// the write attempt: without it, an `env` that failed before spawning
+	// `sh` would leave the file absent and pass the test vacuously.
 	result, err := RunAndCapture(t.Context(), RunOptions{
-		Command:     fmt.Sprintf(`env sh -c 'echo pwned > %s'`, escape),
+		Command: fmt.Sprintf(
+			`env sh -c 'echo reached; echo pwned > %s'`, escape),
 		Cwd:         workspace,
 		Workspace:   workspace,
 		SandboxMode: "workspace",
 	})
 	t.Logf("sandboxed escape attempt: exit=%d output=%q err=%v", result.ExitCode, result.Output, err)
+	require.Contains(t, result.Output, "reached",
+		"nested shell must run up to the denied write")
 	require.NoFileExists(t, escape, "kernel sandbox must deny writes outside the workspace")
 }
 

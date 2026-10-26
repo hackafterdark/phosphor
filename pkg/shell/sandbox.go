@@ -91,11 +91,12 @@ func confineProcess(cmd *exec.Cmd, sbx *sandboxPolicy, stderr io.Writer) error {
 
 // escapeHatchHandler returns middleware that denies host escape-hatch
 // binaries (wsl, cmd, powershell) and inline shell execution (sh -c etc.)
-// while the sandbox is active. Kernel confinement cannot reach a payload
-// that crosses kernel boundaries (wsl) or hides inside a quoted inline
-// argument, so the control is deny-by-default: the refusal carries the
-// sandbox refusal marker and exit status 126, which the bash tool
-// recognizes as a sandbox denial and pairs with the escalation guidance.
+// while the sandbox is active. `wsl` crosses the host kernel boundary,
+// which kernel confinement cannot follow; inline shell payloads hide
+// inside a quoted argument that argv-based policy never parses. Either
+// way the control is deny-by-default: the refusal carries the sandbox
+// refusal marker and exit status 126, which the bash tool recognizes as
+// a sandbox denial and pairs with the escalation guidance.
 // An escalated run (sandbox policy nil) skips the gate entirely — the user
 // grant for an unsandboxed run is the only way through.
 func escapeHatchHandler(sbx *sandboxPolicy) func(next interp.ExecHandlerFunc) interp.ExecHandlerFunc {
@@ -104,7 +105,12 @@ func escapeHatchHandler(sbx *sandboxPolicy) func(next interp.ExecHandlerFunc) in
 			if sbx == nil || len(args) == 0 {
 				return next(ctx, args)
 			}
-			if reason := sandbox.EscapeHatchReason(args); reason != "" {
+			// Kernel availability is static for the host; when no boundary
+			// can attach, env-wrapped nested shells are gated as well
+			// because they would escape the in-process guards with no
+			// kernel confinement to inherit.
+			boundary, _ := sandbox.Available()
+			if reason := sandbox.EscapeHatchReason(args, boundary); reason != "" {
 				hc := interp.HandlerCtx(ctx)
 				fmt.Fprintf(hc.Stderr, "%s: %s\n", SandboxRefusalMarker, reason)
 				slog.Warn("Escape-hatch command denied by sandbox",
