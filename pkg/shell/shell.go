@@ -25,6 +25,7 @@ import (
 	"github.com/charmbracelet/x/exp/slice"
 	"github.com/hackafterdark/phosphor/internal/filepathext"
 	"github.com/hackafterdark/phosphor/internal/pathguard"
+	"github.com/hackafterdark/phosphor/pkg/sandbox"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"mvdan.cc/sh/v3/interp"
@@ -77,6 +78,7 @@ type Shell struct {
 	logger      Logger
 	blockFuncs  []BlockFunc
 	confinement *pathguard.Confinement
+	sandbox     *sandboxPolicy
 }
 
 // Options for creating a new shell
@@ -100,9 +102,17 @@ type Options struct {
 	// egress broker's HTTP_PROXY/HTTPS_PROXY and proxy-auth token) that are
 	// appended to the child environment *after* allowlist filtering, so an
 	// operator's allowed_env list cannot accidentally drop them and a credential-
-	// named variable still cannot leak through the allowlist. It is nil in a
-	// normal session; only the opt-in egress-isolation tier populates it.
+	// credential-named variable still cannot leak through the allowlist. It is
+	// nil in a normal session; only the opt-in egress-isolation tier populates it.
 	ProxyEnv []string
+	// SandboxMode selects kernel-enforced sandboxing of child processes:
+	// "workspace" confines the filesystem kernel-side (degrading to in-process
+	// guards with a visible warning when unavailable), "strict" refuses to exec
+	// when enforcement cannot attach. Empty or "off" keeps today's behavior.
+	SandboxMode string
+	// SandboxLimits carries optional kernel resource caps for sandboxed
+	// children; see [sandbox.ResourceLimits]. Zero values mean no limit.
+	SandboxLimits sandbox.ResourceLimits
 }
 
 // NewShell creates a new shell instance with the given options
@@ -146,7 +156,15 @@ func NewShell(opts *Options) *Shell {
 		logger:      logger,
 		blockFuncs:  opts.BlockFuncs,
 		confinement: newConfinement(opts.Workspace, opts.ExtraTrustedRoots, opts.DisableTempRoot),
+		sandbox:     newSandboxPolicy(opts.SandboxMode, opts.Workspace, opts.ExtraTrustedRoots, opts.SandboxLimits),
 	}
+}
+
+// SandboxDegraded reports whether kernel sandboxing was requested but could
+// not attach on this host. Callers surface [SandboxDegradedWarning] once the
+// degraded execution's output is reported.
+func (s *Shell) SandboxDegraded() bool {
+	return s.sandbox != nil && s.sandbox.degraded
 }
 
 // Exec executes a command in the shell
@@ -471,7 +489,7 @@ func splitArgsFlags(parts []string) (args []string, flags []string) {
 // newInterp creates a new interpreter with the current shell state. A nil
 // stdin is equivalent to an empty input stream.
 func (s *Shell) newInterp(stdin io.Reader, stdout, stderr io.Writer) (*interp.Runner, error) {
-	return newRunner(s.cwd, s.env, stdin, stdout, stderr, s.blockFuncs, s.confinement)
+	return newRunner(s.cwd, s.env, stdin, stdout, stderr, s.blockFuncs, s.confinement, s.sandbox)
 }
 
 // updateShellFromRunner updates the shell from the interpreter after execution.

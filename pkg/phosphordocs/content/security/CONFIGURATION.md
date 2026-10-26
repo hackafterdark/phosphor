@@ -467,6 +467,93 @@ start, read URLs from files, or invoke other network-capable child processes
 may bypass argv inspection. This is not a replacement for OS network isolation,
 a brokered egress proxy, or provider-side network controls.
 
+### Kernel Sandboxing For Bash Children
+
+`tools.bash.sandbox_mode` confines bash child processes (and stdio MCP servers)
+with kernel primitives instead of relying only on in-process guards:
+
+```json
+{
+  "$schema": "https://github.com/hackafterdark/phosphor/blob/main/schema.json",
+  "tools": {
+    "bash": {
+      "sandbox_mode": "workspace",
+      "sandbox_limits": {
+        "max_procs": 512,
+        "max_file_mb": 1024
+      },
+      "trust_toolchain_caches": false
+    }
+  }
+}
+```
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `sandbox_mode` | `string` | `off` | `off`, `workspace` (confine the filesystem kernel-side, degrade to in-process guards with a visible warning when unavailable), or `strict` (refuse to exec when enforcement cannot attach). |
+| `sandbox_limits.max_procs` | `uint64` | `0` | `RLIMIT_NPROC` cap. The kernel enforces it per-user (against all processes of the real UID), not per-subtree. `0` means no limit. |
+| `sandbox_limits.max_file_mb` | `uint64` | `0` | `RLIMIT_FSIZE` cap, in MB, for files sandboxed children may create. `0` means no limit. |
+| `trust_toolchain_caches` | `bool` | `false` | Trust the language-runtime cache roots and `GOMODCACHE` for bash path access. `false` because caches seed future builds, so widening them is an explicit opt-in. |
+
+Per-platform enforcement:
+
+- **Linux**: Landlock (filesystem) + seccomp (io_uring denial), wrapped through
+  the binary's hidden `sandbox-exec` mode. Resource limits are applied in the
+  wrapper before the sandbox attaches.
+- **macOS**: the Seatbelt profile via `/usr/bin/sandbox-exec`; resource limits
+  ride a second hidden `--rlimit-exec` re-exec wrapper.
+- **Windows**: restricted token + per-command Job Object (kill-on-close,
+  active-process and per-process memory caps). POSIX rlimits cannot be
+  enforced on Windows — a spec that requests them is refused rather than
+  silently promised.
+
+Limits are validated at exec time: `max_procs` outside `[64, 100000]` or
+`max_file_mb` above `1000000` refuses the exec (or the MCP connection) rather
+than silently weakening the sandbox. Invalid `sandbox_mode` values are treated
+as `off`; the `[sandbox]` report in `phosphor_info` surfaces what is actually
+active.
+
+**Escalation UX.** When a sandboxed command is denied, the tool result is
+marked `sandbox-denial:` and the agent may retry once with
+`sandbox="escalate"`. That retry goes through the permission system as a
+separate, explicit grant ("Run command outside the sandbox"); the user
+must approve it per command. The sandbox is a policy ceiling, never a
+permission gate: approving a command never implies de-escalation, and the
+escalation request is only honored when `sandbox_mode` is `workspace` or
+`strict`. The escalation prompt uses the permission service's
+`BypassShortcuts` path: YOLO mode, tool allowlists, hook pre-approvals,
+auto-approved sessions, and session permission caches all **never** grant
+it — every escalation is an explicit user decision. Escalations are
+observable: the bash tool span carries `phosphor.security.sandbox_mode`,
+`phosphor.security.sandbox_escalated`, and
+`phosphor.security.sandbox_escalation_denied`, and every escalation is
+logged at warn level.
+
+**Toolchain caches (opt-in).** A cache directory is trusted input for every
+future build, so widening the writable set to language-runtime caches is an
+explicit decision, never a silent default. With
+`tools.bash.trust_toolchain_caches: true`, the sandbox and the in-process
+pathguard both trust the narrowed cache roots — `~/.npm`, `~/.cache/pip`,
+`~/.cargo/registry`, `~/.cargo/git`, `~/.m2/repository`, `~/.gradle/caches`,
+and `~/.gradle/wrapper` (honoring
+`npm_config_cache`/`PIP_CACHE_DIR`/`CARGO_HOME`/`MAVEN_HOME`/`GRADLE_USER_HOME`)
+— so workspace builds (`npm install`, `pip install`, `cargo build`, `mvn`,
+`gradle`) keep working inside the sandbox, and commands that *name* a cache
+path in argv (`npm cache clean --cache ~/.npm`) pass the pathguard instead of
+producing a confusing denial that looks like a sandbox refusal. The active
+`GOMODCACHE` joins the trusted set for dependency-source inspection. The
+standard library is deliberately excluded: `go doc` (and each toolchain's
+own docs facility) resolves stdlib locally through the toolchain itself, so
+stdlib source directories are never enumerated or trusted — that keeps the
+pathguard and kernel read-only root sets in lockstep. The roots are
+deliberately cache-scoped: `~/.cargo/bin` (on `PATH`), `~/.cargo/credentials`,
+`~/.cargo/config.toml` (which can redirect the registry), `~/.m2/settings.xml`,
+and `~/.gradle/gradle.properties` stay outside the trusted set. Default false;
+a workspace config cannot enable it if the operator floor leaves it off.
+Security-relevant home paths (`~/.ssh`, `~/.aws`, browser profiles) stay
+outside the writable set either way; extra readable/writable roots can be
+added with `tools.bash.trusted_extra_roots`.
+
 ---
 
 ## Hooks as Security Gateways

@@ -24,6 +24,10 @@ func (m *mockPermissionService) Request(ctx context.Context, req permission.Crea
 	return true, nil
 }
 
+func (m *mockPermissionService) BypassShortcuts(ctx context.Context, req permission.CreatePermissionRequest) (bool, error) {
+	return true, nil
+}
+
 func (m *mockPermissionService) Grant(req permission.PermissionRequest) bool { return true }
 
 func (m *mockPermissionService) Deny(req permission.PermissionRequest) bool { return true }

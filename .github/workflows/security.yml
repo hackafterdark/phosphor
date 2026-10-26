@@ -98,3 +98,10 @@ jobs:
         with:
           fail-on-severity: critical
           allow-licenses: BSD-2-Clause, BSD-3-Clause, MIT, MIT-0, Apache-2.0, MPL-2.0, ISC, LicenseRef-scancode-google-patent-license-golang, Unlicense
+          # kernel.org libcap's psx helper, pulled in by go-landlock to
+          # apply Landlock across all OS threads. The library itself is
+          # BSD-3-Clause; the composite SPDX expression in the module text
+          # covers GPL-licensed example binaries that are not linked.
+          # Approved 2026-10-25 for the pkg/sandbox Linux backend.
+          # The value must be a purl, not a module path.
+          allow-dependencies-licenses: pkg:golang/kernel.org/pub/linux/libs/security/libcap/psx

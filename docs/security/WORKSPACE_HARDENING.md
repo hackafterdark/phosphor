@@ -277,7 +277,9 @@ The following components intentionally operate outside the workspace sandbox. Th
 
 ### Skills and MCP Servers
 
-Skills and MCP servers are **user-installed extensions** that execute with the agent's privileges. Phosphor cannot sandbox them without breaking their intended functionality — a skill or MCP server that needs to read a global config file would be useless if locked to the workspace. This is an accepted tradeoff: the security boundary covers everything the agent ships with, but user-installed extensions are trusted by definition (the user chose to install them).
+Skills are **user-installed extensions** that execute with the agent's privileges; the kernel sandbox does not wrap them, and they remain trusted by definition (the user chose to install them).
+
+MCP servers split by transport. **stdio servers** inherit the kernel sandbox: when `tools.bash.sandbox_mode` is `workspace` or `strict`, the server process (and its descendants) is confined with the same `sandbox.Spec` the bash tool uses — filesystem writes outside the workspace and well-known toolchain roots are denied, `tools.bash.sandbox_limits` (`max_procs`/`max_file_mb`) apply the same `RLIMIT_NPROC`/`RLIMIT_FSIZE` caps, and in `strict` mode the connection is refused if enforcement cannot attach. **HTTP/SSE servers** run out-of-process and cannot be wrapped; their egress is guarded by the egress broker and the URL guard (`pkg/security/urlguard`) instead.
 
 If a future feature requires the agent to read configuration or resources outside the workspace (e.g. a global `phosphor.json`), the architecture supports adding an allowlist bypass before the `IsInside` check — similar to how builtin skills accessed via `phosphor://skills/...` remain accessible through a separate code path.
 

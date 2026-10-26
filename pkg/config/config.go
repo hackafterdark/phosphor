@@ -8,6 +8,7 @@ import (
 	"maps"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"github.com/hackafterdark/phosphor/internal/oauth"
 	"github.com/hackafterdark/phosphor/internal/oauth/copilot"
 	"github.com/hackafterdark/phosphor/pkg/csync"
+	"github.com/hackafterdark/phosphor/pkg/sandbox"
 	"github.com/invopop/jsonschema"
 )
 
@@ -875,6 +877,81 @@ type ToolBash struct {
 	TrustedExtraRoots []string `json:"trusted_extra_roots,omitempty" jsonschema:"description=Additional absolute directories that bash may access alongside the workspace. The OS temporary directory is trusted by default."`
 
 	Network *ToolBashNetwork `json:"network,omitempty" jsonschema:"description=Optional opt-in network egress policy for bash commands."`
+
+	// SandboxMode selects kernel-enforced sandboxing of bash child
+	// processes. "off" (default) uses in-process guards only; "workspace"
+	// confines the filesystem kernel-side and degrades to in-process
+	// guards with a visible warning when the primitives are unavailable;
+	// "strict" refuses to exec when enforcement cannot attach.
+	SandboxMode string `json:"sandbox_mode,omitempty" jsonschema:"enum=off,enum=workspace,enum=strict,description=Kernel-enforced sandbox for bash children: off, workspace (degrade with warning), or strict (refuse if unavailable). Default off."`
+
+	// SandboxLimits carries optional kernel resource caps applied to
+	// sandboxed bash children. Zero values mean "no limit"; limits are
+	// opt-in so an unset config can never break legitimate toolchains.
+	SandboxLimits ToolBashLimits `json:"sandbox_limits,omitempty" jsonschema:"description=Optional kernel resource caps for sandboxed bash children (RLIMIT_NPROC / RLIMIT_FSIZE). Zero means no limit."`
+
+	// TrustToolchainCaches, when true, adds the language-runtime cache
+	// roots (npm, pip, cargo registry/git, maven repository, gradle
+	// caches/wrapper) and the active GOMODCACHE to the bash tool's trusted
+	// path set, for both the kernel sandbox and the in-process pathguard.
+	// Cache directories seed every future build, so trusting them is an
+	// explicit opt-in, never a silent default. Credential files near the
+	// caches (cargo credentials, maven settings.xml, gradle.properties)
+	// stay outside the trusted set; the standard library is resolved
+	// through `go doc` and its source dirs are never trusted.
+	TrustToolchainCaches bool `json:"trust_toolchain_caches,omitempty" jsonschema:"description=Trust the language-runtime cache roots and GOMODCACHE for bash path access. Default false because caches seed future builds."`
+}
+
+// ToolBashLimits are the resource caps applied to sandboxed bash
+// children (and MCP stdio servers). Values are validated at exec time;
+// out-of-range values refuse the exec rather than silently weakening
+// the sandbox.
+type ToolBashLimits struct {
+	// MaxProcs caps the per-user process/thread count while the sandboxed
+	// child runs (RLIMIT_NPROC is enforced against the real UID's total).
+	MaxProcs uint64 `json:"max_procs,omitempty" jsonschema:"description=Per-user RLIMIT_NPROC cap while the sandboxed child runs (0 = no limit)."`
+	// MaxFileMB caps the size of files the child may create
+	// (RLIMIT_FSIZE), in megabytes.
+	MaxFileMB uint64 `json:"max_file_mb,omitempty" jsonschema:"description=Cap on the size of files the sandboxed child may create, in MB (RLIMIT_FSIZE). 0 = no limit."`
+}
+
+// Sandbox modes for ToolBash.SandboxMode.
+const (
+	SandboxModeOff       = "off"
+	SandboxModeWorkspace = "workspace"
+	SandboxModeStrict    = "strict"
+)
+
+// BashSandboxMode returns the validated sandbox mode, defaulting to off.
+// Invalid values are treated as off so a typo can never silently weaken
+// strict mode; the [sandbox] report surfaces what is actually active.
+func (t ToolBash) BashSandboxMode() string {
+	switch t.SandboxMode {
+	case SandboxModeWorkspace, SandboxModeStrict:
+		return t.SandboxMode
+	default:
+		return SandboxModeOff
+	}
+}
+
+// BashTrustToolchainCaches reports whether the configured policy trusts
+// the language-runtime cache roots for bash path access. The cache list
+// itself is owned by the sandbox layer (sandbox.LanguageCacheDirs) so the
+// kernel spec and the in-process pathguard stay on one source of truth.
+func (t ToolBash) BashTrustToolchainCaches() bool {
+	return t.TrustToolchainCaches
+}
+
+// BashSandboxLimits converts the configured resource caps into the
+// sandbox layer's representation. Zero values mean "no limit"; range
+// validation happens at exec time (see [sandbox.ResourceLimits.Validate]),
+// so a bad value refuses the exec rather than silently weakening the
+// sandbox.
+func (t ToolBash) BashSandboxLimits() sandbox.ResourceLimits {
+	return sandbox.ResourceLimits{
+		MaxProcs:  t.SandboxLimits.MaxProcs,
+		MaxFileMB: t.SandboxLimits.MaxFileMB,
+	}
 }
 
 type ToolBashNetwork struct {
@@ -1148,6 +1225,43 @@ type EgressIsolationConfig struct {
 	// destination allowlist. Only effective when Enabled is on. Tri-state: nil means
 	// enabled.
 	RouteSubprocesses *bool `json:"route_subprocesses,omitempty" jsonschema:"description=Route the bash child process through the egress broker,defaults=true"`
+	// UpstreamProxy chains the broker's egress through a corporate proxy (CONNECT
+	// forwarding). Reserved for a future release: the value is validated and stored
+	// but has no effect until upstream chaining is implemented. Credentials must
+	// arrive via file/secret reference — inline user:pass@ userinfo is rejected at
+	// load so it can never leak into stored config.
+	UpstreamProxy string `json:"upstream_proxy,omitempty" jsonschema:"description=Corporate upstream proxy the broker chains through (reserved; validation active, behavior inactive)"`
+	// CABundle is a path to extra trust anchors the broker uses when dialing
+	// upstream (corporate TLS-intercepting proxies present their own CA).
+	// Reserved for a future release: validated at load, no effect until the
+	// broker's TLS dialers consult it.
+	CABundle string `json:"ca_bundle,omitempty" jsonschema:"description=Extra CA bundle for upstream proxy TLS (reserved; validation active, behavior inactive)"`
+}
+
+// ValidateEgressUpstreamProxy rejects inline credentials in upstream proxy
+// URLs and non-absolute CA bundle paths. It is invoked from config load; the
+// fields themselves stay inert until upstream chaining ships.
+func (e *EgressIsolationConfig) ValidateEgressUpstreamProxy() error {
+	if e == nil {
+		return nil
+	}
+	if e.UpstreamProxy != "" {
+		u, err := url.Parse(e.UpstreamProxy)
+		if err != nil {
+			return fmt.Errorf("egress.upstream_proxy: invalid url: %w", err)
+		}
+		if u.Scheme != "http" && u.Scheme != "https" {
+			return fmt.Errorf("egress.upstream_proxy: scheme must be http or https, got %q", u.Scheme)
+		}
+		if u.User != nil {
+			return fmt.Errorf("egress.upstream_proxy: inline credentials are rejected; " +
+				"reference them via file/secret instead")
+		}
+	}
+	if e.CABundle != "" && !filepath.IsAbs(e.CABundle) {
+		return fmt.Errorf("egress.ca_bundle: must be an absolute path, got %q", e.CABundle)
+	}
+	return nil
 }
 
 // DefaultSensitiveFilePatterns is the built-in set the read path treats as

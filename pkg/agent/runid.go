@@ -232,10 +232,11 @@ func unrecognizedToolCallContinuationsFromContext(ctx context.Context) int {
 // emptyTurnContinuationsContextKey is the unexported context key that
 // carries how many automatic continuations this turn has already spent
 // recovering from a step that ended normally (FinishReasonEndTurn) but
-// produced nothing actionable: no tool call and no non-whitespace text —
-// see isEmptyDeadEndTurn in agent.go. Kept as its own key for the same
-// reason as the siblings: nothing was truncated, so this budget is
-// unrelated to the forced-stop or token-budget ones.
+// produced nothing actionable: no tool call and either no non-whitespace
+// text or only short narration announcing a next step — see
+// isEmptyDeadEndTurn and isNarrationOnlyDeadEndTurn in agent.go. Kept as
+// its own key for the same reason as the siblings: nothing was truncated,
+// so this budget is unrelated to the forced-stop or token-budget ones.
 type emptyTurnContinuationsContextKey struct{}
 
 // defaultMaxEmptyTurnContinuations bounds those automatic continuations.

@@ -558,6 +558,28 @@ func TestConfinement_ExtraRoots(t *testing.T) {
 	require.Error(t, strict.Blocked([]string{"cp", extraFile, "./dst"}, workspace))
 }
 
+// TestValidateCommandPaths_ExtraTrustedRoots pins that the static pass honors
+// the same trusted roots as the dynamic Confinement: a toolchain cache path
+// passes when trusted, and sibling credential/config files that live under
+// the excluded parent stay confined.
+func TestValidateCommandPaths_ExtraTrustedRoots(t *testing.T) {
+	t.Parallel()
+
+	workspace := t.TempDir()
+	home := t.TempDir()
+	cache := filepath.Join(home, ".cargo", "registry")
+	require.NoError(t, os.MkdirAll(cache, 0o755))
+
+	// The cache root is trusted: naming a path inside it passes.
+	require.NoError(t, ValidateCommandPaths("du "+cache, workspace, cache))
+	// The untrusted parent (cargo home) keeps its credential and bin paths
+	// confined even though the cache below it is trusted.
+	require.Error(t, ValidateCommandPaths("cat "+filepath.Join(home, ".cargo", "credentials"), workspace, cache))
+	require.Error(t, ValidateCommandPaths("cat "+filepath.Join(home, ".cargo", "config.toml"), workspace, cache))
+	// Without the trusted root even the cache path is confined.
+	require.Error(t, ValidateCommandPaths("du "+cache, workspace))
+}
+
 // TestConfinement_DisabledWhenNoWorkspace pins the trusted hook runner case: a
 // zero-value Confinement (empty WorkspaceRoot) never blocks anything.
 func TestConfinement_DisabledWhenNoWorkspace(t *testing.T) {

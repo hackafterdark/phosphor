@@ -7,6 +7,7 @@ import (
 	_ "embed"
 	"fmt"
 	"html/template"
+	"log/slog"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -19,6 +20,7 @@ import (
 	"github.com/hackafterdark/phosphor/pkg/egress"
 	"github.com/hackafterdark/phosphor/pkg/otel"
 	"github.com/hackafterdark/phosphor/pkg/permission"
+	"github.com/hackafterdark/phosphor/pkg/sandbox"
 	"github.com/hackafterdark/phosphor/pkg/shell"
 	"go.opentelemetry.io/otel/attribute"
 )
@@ -29,6 +31,7 @@ type BashParams struct {
 	WorkingDir          string `json:"working_dir,omitempty" description:"The working directory to execute the command in (defaults to current directory)"`
 	RunInBackground     bool   `json:"run_in_background,omitempty" description:"Set to true (boolean) to run this command in the background. Use job_output to read the output later."`
 	AutoBackgroundAfter int    `json:"auto_background_after,omitempty" description:"Seconds to wait before automatically moving the command to a background job (default: 60)"`
+	Sandbox             string `json:"sandbox,omitempty" description:"Set to \"escalate\" to request running the command outside the sandbox after a sandbox denial was observed. The user must approve this escalation explicitly; do not request it preemptively."`
 }
 
 type BashPermissionsParams struct {
@@ -37,6 +40,7 @@ type BashPermissionsParams struct {
 	WorkingDir          string `json:"working_dir"`
 	RunInBackground     bool   `json:"run_in_background"`
 	AutoBackgroundAfter int    `json:"auto_background_after"`
+	Sandbox             string `json:"sandbox"`
 }
 
 type BashResponseMetadata struct {
@@ -73,6 +77,7 @@ type bashDescriptionData struct {
 	RgAvailable     bool
 	GhAvailable     bool
 	WorkspaceRoot   string
+	SandboxMode     string
 }
 
 var bannedCommands = []string{
@@ -247,6 +252,62 @@ func normalizeBashCommand(cmd string) string {
 	return strings.TrimSuffix(cmd, ".exe")
 }
 
+// Sandbox escalation (plan §4): when a sandboxed command is denied, the
+// agent may retry with sandbox="escalate", which routes through the
+// permission system for a one-time user approval and then runs the
+// command unsandboxed. The sandbox stays a policy ceiling, never a
+// permission gate: approval of the command itself never implies
+// de-escalation.
+const (
+	BashSandboxEscalate = "escalate"
+
+	// sandboxDenialSentinel marks the escalation guidance already present
+	// in output, so repeated calls cannot stack it.
+	sandboxDenialSentinel = "sandbox-denial:"
+
+	sandboxDenialGuidance = "<system>" + sandboxDenialSentinel +
+		" this command was denied by the sandbox. If it legitimately needs to run " +
+		"outside the sandbox, retry once with sandbox=\"escalate\"; the user will " +
+		"be asked to approve the escalation. Do not escalate for commands that can " +
+		"be rewritten to stay inside the workspace.</system>"
+)
+
+// sandboxDenialRequested reports whether the model asked for an
+// unsandboxed rerun of this command.
+func sandboxDenialRequested(params BashParams) bool {
+	return strings.EqualFold(params.Sandbox, BashSandboxEscalate)
+}
+
+// isSandboxDenial reports whether a failed command's output looks like a
+// sandbox refusal: the kernel tier marks its refusal explicitly (exit
+// 126), the in-process path guard reports out-of-workspace operands.
+// Genuine in-command errors are deliberately not matched — a `gcc`
+// EACCES on a stray path is not the sandbox talking.
+func isSandboxDenial(output string, exitCode int, sandboxActive bool) bool {
+	if !sandboxActive {
+		return false
+	}
+	if strings.Contains(output, shell.SandboxRefusalMarker) {
+		return true
+	}
+	if strings.Contains(output, "outside workspace") {
+		return true
+	}
+	return sandboxActive && exitCode == 126
+}
+
+// appendSandboxGuidance adds the escalation guidance to failed output
+// when the sandbox is active and the run was not itself an escalation.
+func appendSandboxGuidance(stdout string, exitCode int, sandboxActive, escalated bool) string {
+	if escalated || !isSandboxDenial(stdout, exitCode, sandboxActive) {
+		return stdout
+	}
+	if strings.Contains(stdout, sandboxDenialSentinel) {
+		return stdout
+	}
+	return stdout + "\n\n" + sandboxDenialGuidance
+}
+
 func bashDescription(workspaceRoot string, cfg config.ToolBash, attribution *config.Attribution, modelID string) string {
 	bannedCommandsStr := strings.Join(effectiveBannedCommands(cfg), ", ")
 	var attr config.Attribution
@@ -262,6 +323,7 @@ func bashDescription(workspaceRoot string, cfg config.ToolBash, attribution *con
 		RgAvailable:     getRg() != "",
 		GhAvailable:     ghAvailable,
 		WorkspaceRoot:   workspaceRoot,
+		SandboxMode:     cfg.BashSandboxMode(),
 	}); err != nil {
 		// this should never happen.
 		panic("failed to execute bash description template: " + err.Error())
@@ -382,8 +444,18 @@ func NewBashTool(permissions permission.Service, workingDir string, bashCfg conf
 			// Correct paths using heuristics in command before validating or executing
 			params.Command = pathguard.CorrectCommandPaths(params.Command, absWorkingDir)
 
+			// The trusted extra roots join the workspace for both the static
+			// and dynamic path checks; when toolchain caches are trusted they
+			// are appended here so the pathguard and the kernel sandbox spec
+			// enforce one list.
+			trustedRoots := bashCfg.TrustedExtraRoots
+			if bashCfg.BashTrustToolchainCaches() {
+				trustedRoots = append(append([]string{}, trustedRoots...), sandbox.TrustedToolchainCaches()...)
+				span.SetAttributes(attribute.Bool("phosphor.security.trusted_toolchain_caches", true))
+			}
+
 			// Command Parser Guard: Validate file paths in I/O commands
-			if err := pathguard.ValidateCommandPaths(params.Command, absWorkingDir); err != nil {
+			if err := pathguard.ValidateCommandPaths(params.Command, absWorkingDir, trustedRoots...); err != nil {
 				return fantasy.NewTextErrorResponse(err.Error()), nil
 			}
 
@@ -426,13 +498,52 @@ func NewBashTool(permissions permission.Service, workingDir string, bashCfg conf
 				}
 			}
 
+			// Sandbox escalation is a separate, explicit grant: the
+			// permission above covers running the command, this one covers
+			// running it *outside* the sandbox (plan §4). The sandbox is a
+			// policy ceiling, never a permission gate — approving the
+			// command never implies de-escalation.
+			sandboxMode := bashCfg.BashSandboxMode()
+			span.SetAttributes(attribute.String("phosphor.security.sandbox_mode", sandboxMode))
+			escalated := sandboxMode != config.SandboxModeOff && sandboxDenialRequested(params)
+			if escalated {
+				// BypassShortcuts: YOLO mode, tool allowlists, hook
+				// pre-approvals, and session permission caches must never
+				// grant an unsandboxed run — the user sees every escalation
+				// prompt, per command.
+				p, err := permissions.BypassShortcuts(
+					ctx,
+					permission.CreatePermissionRequest{
+						SessionID:   sessionID,
+						Path:        execWorkingDir,
+						ToolCallID:  call.ID,
+						ToolName:    BashToolName,
+						Action:      "execute",
+						Description: fmt.Sprintf("Run command outside the sandbox: %s", params.Command),
+						Params:      BashPermissionsParams(params),
+					},
+				)
+				if err != nil {
+					return fantasy.ToolResponse{}, err
+				}
+				if !p {
+					span.SetAttributes(attribute.Bool("phosphor.security.sandbox_escalation_denied", true))
+					slog.Warn("Sandbox escalation denied by user", "command", params.Command)
+					return NewPermissionDeniedResponse(), nil
+				}
+				span.SetAttributes(attribute.Bool("phosphor.security.sandbox_escalated", true))
+				slog.Warn("Sandbox escalation approved by user; running unsandboxed", "command", params.Command, "sandbox_mode", sandboxMode)
+				sandboxMode = config.SandboxModeOff
+			}
+			sandboxActive := sandboxMode != config.SandboxModeOff
+
 			// If explicitly requested as background, start immediately with detached context
 			if params.RunInBackground {
 				startTime := time.Now()
 				bgManager := shell.GetBackgroundShellManager()
 				bgManager.Cleanup()
 				// Use background context so it continues after tool returns
-				bgShell, err := bgManager.Start(ctx, execWorkingDir, absWorkingDir, blockFuncs(ctx, bashCfg), params.Command, params.Description, shell.WithTrustedRoots(bashCfg.TrustedExtraRoots), shell.WithProxyEnv(egress.SubprocessProxyEnv()))
+				bgShell, err := bgManager.Start(ctx, execWorkingDir, absWorkingDir, blockFuncs(ctx, bashCfg), params.Command, params.Description, shell.WithTrustedRoots(trustedRoots), shell.WithProxyEnv(egress.SubprocessProxyEnv()), shell.WithSandboxMode(sandboxMode), shell.WithSandboxLimits(bashCfg.BashSandboxLimits()))
 				if err != nil {
 					return fantasy.ToolResponse{}, fmt.Errorf("error starting background shell: %w", err)
 				}
@@ -452,6 +563,10 @@ func NewBashTool(permissions permission.Service, workingDir string, bashCfg conf
 					}
 
 					stdout = formatOutput(stdout, stderr, execErr, params.Command, policy)
+					stdout = appendSandboxGuidance(stdout, shell.ExitCode(execErr), sandboxActive, escalated)
+					if bgShell.Shell.SandboxDegraded() {
+						stdout = shell.SandboxDegradedWarning + "\n\n" + stdout
+					}
 
 					metadata := BashResponseMetadata{
 						StartTime:        startTime.UnixMilli(),
@@ -478,6 +593,9 @@ func NewBashTool(permissions permission.Service, workingDir string, bashCfg conf
 					ShellID:          bgShell.ID,
 				}
 				response := fmt.Sprintf("Background shell started with ID: %s\n\nUse job_output tool to view output or job_kill to terminate.", bgShell.ID)
+				if bgShell.Shell.SandboxDegraded() {
+					response += "\n\n<system>" + shell.SandboxDegradedWarning + "</system>"
+				}
 				return fantasy.WithResponseMetadata(fantasy.NewTextResponse(response), metadata), nil
 			}
 
@@ -487,7 +605,7 @@ func NewBashTool(permissions permission.Service, workingDir string, bashCfg conf
 			// Start with detached context so it can survive if moved to background
 			bgManager := shell.GetBackgroundShellManager()
 			bgManager.Cleanup()
-			bgShell, err := bgManager.Start(ctx, execWorkingDir, absWorkingDir, blockFuncs(ctx, bashCfg), params.Command, params.Description, shell.WithTrustedRoots(bashCfg.TrustedExtraRoots), shell.WithProxyEnv(egress.SubprocessProxyEnv()))
+			bgShell, err := bgManager.Start(ctx, execWorkingDir, absWorkingDir, blockFuncs(ctx, bashCfg), params.Command, params.Description, shell.WithTrustedRoots(trustedRoots), shell.WithProxyEnv(egress.SubprocessProxyEnv()), shell.WithSandboxMode(sandboxMode), shell.WithSandboxLimits(bashCfg.BashSandboxLimits()))
 			if err != nil {
 				return fantasy.ToolResponse{}, fmt.Errorf("error starting shell: %w", err)
 			}
@@ -536,6 +654,7 @@ func NewBashTool(permissions permission.Service, workingDir string, bashCfg conf
 				}
 
 				stdout = formatOutput(stdout, stderr, execErr, params.Command, policy)
+				stdout = appendSandboxGuidance(stdout, exitCode, sandboxActive, escalated)
 
 				metadata := BashResponseMetadata{
 					StartTime:        startTime.UnixMilli(),
@@ -562,6 +681,9 @@ func NewBashTool(permissions permission.Service, workingDir string, bashCfg conf
 				ShellID:          bgShell.ID,
 			}
 			response := fmt.Sprintf("Command is taking longer than expected and has been moved to background.\n\nBackground shell ID: %s\n\nUse job_output tool to view output or job_kill to terminate.", bgShell.ID)
+			if bgShell.Shell.SandboxDegraded() {
+				response += "\n\n<system>" + shell.SandboxDegradedWarning + "</system>"
+			}
 			return fantasy.WithResponseMetadata(fantasy.NewTextResponse(response), metadata), nil
 		},
 	)

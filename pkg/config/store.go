@@ -88,6 +88,11 @@ func (s *ConfigStore) Resolver() VariableResolver {
 	return s.resolver
 }
 
+// SetResolver installs the variable resolver on the store.
+func (s *ConfigStore) SetResolver(resolver VariableResolver) {
+	s.resolver = resolver
+}
+
 // Resolve resolves a variable reference using the configured resolver.
 func (s *ConfigStore) Resolve(key string) (string, error) {
 	if s.resolver == nil {

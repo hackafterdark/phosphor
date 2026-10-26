@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -98,6 +99,15 @@ func (t *securityTransport) Unwrap() http.RoundTripper {
 	return t.inner
 }
 
+// ErrHostBlocked marks denials issued by the security transport itself:
+// host-trust refusals (deny list, raw IP, unapproved host, user-declined) and
+// URL-credential refusals from the urlguard. Callers of tools built on the
+// secured client use errors.Is(err, ErrHostBlocked) to separate fail-closed
+// security refusals — which must abort the run so the model cannot loop
+// against a blocked host — from environmental transport failures (timeouts,
+// DNS, resets), which are recoverable and surface as tool errors instead.
+var ErrHostBlocked = errors.New("host blocked")
+
 // RoundTrip intercepts each request, validates the host against the trust
 // hierarchy (deny list → workspace allow list → global allow list → user prompt),
 // then delegates to the inner transport.
@@ -108,7 +118,7 @@ func (t *securityTransport) RoundTrip(req *http.Request) (*http.Response, error)
 	// query string smuggles a known secret or high-entropy token is refused here
 	// too, so any caller that reaches this transport directly is still covered.
 	if err := urlguard.Check(req.URL.String()); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %s", ErrHostBlocked, err)
 	}
 
 	// Strip the port for allow-list lookups.
@@ -148,7 +158,7 @@ func (t *securityTransport) RoundTrip(req *http.Request) (*http.Response, error)
 			attribute.String("gen_ai.network.target", ipHost),
 			attribute.String("gen_ai.network.source", "block"),
 		)
-		return nil, fmt.Errorf("web_fetch request to %s blocked (raw IP)", ipHost)
+		return nil, fmt.Errorf("%w: web_fetch request to %s blocked (raw IP)", ErrHostBlocked, ipHost)
 	}
 
 	// Check layered trust hierarchy.
@@ -161,7 +171,8 @@ func (t *securityTransport) RoundTrip(req *http.Request) (*http.Response, error)
 				attribute.String("gen_ai.network.reason", "no_prompt_handler"),
 			)
 			return nil, fmt.Errorf(
-				"web_fetch request to %s blocked (host not in any allow list and no prompt handler configured)",
+				"%w: web_fetch request to %s blocked (host not in any allow list and no prompt handler configured)",
+				ErrHostBlocked,
 				lookupHost,
 			)
 		}
@@ -173,14 +184,17 @@ func (t *securityTransport) RoundTrip(req *http.Request) (*http.Response, error)
 				attribute.String("gen_ai.network.reason", "prompt_error"),
 				attribute.String("gen_ai.network.error", err.Error()),
 			)
-			return nil, err
+			// The trust decision itself failed: fail closed the same way an
+			// explicit denial does, so the run aborts rather than the model
+			// retrying against an undecided host.
+			return nil, fmt.Errorf("%w: web_fetch prompt for %s failed: %w", ErrHostBlocked, lookupHost, err)
 		}
 		if !allowed {
 			span.SetAttributes(
 				attribute.String("gen_ai.network.target", lookupHost),
 				attribute.String("gen_ai.network.reason", "user_declined"),
 			)
-			return nil, fmt.Errorf("web_fetch request to %s is blocked by user policy", lookupHost)
+			return nil, fmt.Errorf("%w: web_fetch request to %s is blocked by user policy", ErrHostBlocked, lookupHost)
 		}
 		// User approved — write to the in-memory allow list so we don't re-prompt.
 		markHostAllowed(lookupHost)

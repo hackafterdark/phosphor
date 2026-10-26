@@ -408,8 +408,9 @@ everything else):
 
 Per-tool security knobs. The bash tool confines the agent's shell: which env
 vars survive, which extra commands are banned, whether inline interpreter
-execution (`python -c …`) is allowed, which extra roots are trusted, and an
-opt-in network egress policy. The web tools can allowlist private IP ranges:
+execution (`python -c …`) is allowed, which extra roots are trusted, an
+opt-in kernel sandbox for child processes, and an opt-in network egress
+policy. The web tools can allowlist private IP ranges:
 
 ```json
 {
@@ -419,6 +420,9 @@ opt-in network egress policy. The web tools can allowlist private IP ranges:
       "banned_commands": ["shutdown"],
       "allow_inline_execution": false,
       "trusted_extra_roots": ["D:/shared-build-cache"],
+      "sandbox_mode": "workspace",
+      "sandbox_limits": { "max_procs": 512, "max_file_mb": 1024 },
+      "trust_toolchain_caches": false,
       "network": {
         "enabled": true,
         "allowed_commands": ["git", "ping"],

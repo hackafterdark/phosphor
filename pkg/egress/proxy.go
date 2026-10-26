@@ -175,8 +175,8 @@ func (p *Proxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 		hostport = r.URL.Host
 	}
 	if act, reason := p.policy.CheckHostContext(r.Context(), hostport); act == Deny {
-		slog.Debug("Egress proxy refused CONNECT", "target", hostport, "reason", reason)
-		http.Error(w, "egress denied: "+reason, http.StatusForbidden)
+		slog.Warn("Egress proxy refused CONNECT", "target", hostport, "reason", reason)
+		http.Error(w, "egress denied: "+reason+"\n"+DenialAdvice(hostport), http.StatusForbidden)
 		return
 	}
 
@@ -227,8 +227,8 @@ func (p *Proxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 // open, so an opaque handle never reaches the destination.
 func (p *Proxy) handleForward(w http.ResponseWriter, r *http.Request) {
 	if act, reason := p.policy.CheckContext(r.Context(), r.URL); act == Deny {
-		slog.Debug("Egress proxy refused forward", "url", r.URL.String(), "reason", reason)
-		http.Error(w, "egress denied: "+reason, http.StatusForbidden)
+		slog.Warn("Egress proxy refused forward", "target", r.URL.Host, "reason", reason)
+		http.Error(w, "egress denied: "+reason+"\n"+DenialAdvice(r.URL.Host), http.StatusForbidden)
 		return
 	}
 

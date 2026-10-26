@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"os"
 	"runtime"
 	"strings"
 
@@ -196,4 +197,17 @@ func scrubProxyCreds(val string) string {
 
 	// Reconstruct without userinfo.
 	return val[:protoStart+2] + val[protoStart+2+atIdx+1:]
+}
+
+// FilteredChildEnv returns the ambient environment filtered by the safe
+// default allowlist and the secret-name deny floor, with caller-declared
+// entries appended last. Use it for child processes that are not the
+// agent's own shell or toolchain helpers — third-party servers (MCP
+// stdio) must not inherit provider tokens or other ambient credentials
+// they were never configured to use. Declared entries are operator
+// intent and bypass the filter, mirroring the ProxyEnv contract in
+// [Options].
+func FilteredChildEnv(declared []string) []string {
+	env := filterEnv(os.Environ(), buildAllowlist(SafeDefaultEnv()))
+	return append(env, declared...)
 }

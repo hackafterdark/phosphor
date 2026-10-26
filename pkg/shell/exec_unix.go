@@ -41,7 +41,11 @@ func isolateProcess(cmd *exec.Cmd) {
 // The implementation mirrors interp.DefaultExecHandler with two additions:
 // isolateProcess(&cmd) after construction, and negative-PID signal targeting
 // in the cancellation callback so the entire child process group is killed.
-func processGroupExecHandler(killTimeout time.Duration) interp.ExecHandlerFunc {
+//
+// When sbx is non-nil the child is additionally wrapped through the kernel
+// sandbox (see [confineProcess]); a strict-mode refusal surfaces as exit
+// status 126 with the reason on stderr instead of execing the command.
+func processGroupExecHandler(killTimeout time.Duration, sbx *sandboxPolicy) interp.ExecHandlerFunc {
 	return func(ctx context.Context, args []string) error {
 		hc := interp.HandlerCtx(ctx)
 		path, err := interp.LookPathDir(hc.Dir, hc.Env, args[0])
@@ -60,6 +64,9 @@ func processGroupExecHandler(killTimeout time.Duration) interp.ExecHandlerFunc {
 			Stderr: hc.Stderr,
 		}
 		isolateProcess(&cmd)
+		if refused := confineProcess(&cmd, sbx, hc.Stderr); refused != nil {
+			return refused
+		}
 
 		err = cmd.Start()
 		if err == nil {

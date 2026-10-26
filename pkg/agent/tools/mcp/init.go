@@ -10,7 +10,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -23,7 +22,9 @@ import (
 	"github.com/hackafterdark/phosphor/pkg/egress"
 	"github.com/hackafterdark/phosphor/pkg/permission"
 	"github.com/hackafterdark/phosphor/pkg/pubsub"
+	"github.com/hackafterdark/phosphor/pkg/sandbox"
 	"github.com/hackafterdark/phosphor/pkg/security/urlguard"
+	"github.com/hackafterdark/phosphor/pkg/shell"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -220,7 +221,7 @@ func Initialize(ctx context.Context, permissions permission.Service, cfg *config
 				}
 			}()
 
-			if err := initClient(ctx, cfg, name, m, cfg.Resolver()); err != nil {
+			if err := initClient(ctx, cfg, name, m); err != nil {
 				slog.Debug("Failed to initialize MCP client", "name", name, "error", err)
 			}
 		}(name, m)
@@ -253,16 +254,16 @@ func InitializeSingle(ctx context.Context, name string, cfg *config.ConfigStore)
 		return nil
 	}
 
-	return initClient(ctx, cfg, name, m, cfg.Resolver())
+	return initClient(ctx, cfg, name, m)
 }
 
 // initClient initializes a single MCP client with the given configuration.
-func initClient(ctx context.Context, cfg *config.ConfigStore, name string, m config.MCPConfig, resolver config.VariableResolver) error {
+func initClient(ctx context.Context, cfg *config.ConfigStore, name string, m config.MCPConfig) error {
 	// Set initial starting state.
 	updateState(name, StateStarting, nil, nil, Counts{})
 
 	// createSession handles its own timeout internally.
-	session, err := createSession(ctx, name, m, resolver)
+	session, err := createSession(ctx, name, m, cfg)
 	if err != nil {
 		return err
 	}
@@ -337,7 +338,7 @@ func getOrRenewClient(ctx context.Context, cfg *config.ConfigStore, name string)
 	}
 	updateState(name, StateError, maybeTimeoutErr(err, timeout), nil, state.Counts)
 
-	sess, err = createSession(ctx, name, m, cfg.Resolver())
+	sess, err = createSession(ctx, name, m, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -374,18 +375,40 @@ func updateState(name string, state State, err error, client *ClientSession, cou
 	})
 }
 
-func createSession(ctx context.Context, name string, m config.MCPConfig, resolver config.VariableResolver) (*ClientSession, error) {
+func createSession(ctx context.Context, name string, m config.MCPConfig, cfg *config.ConfigStore) (*ClientSession, error) {
 	timeout := mcpTimeout(m)
 	mcpCtx, cancel := context.WithCancel(ctx)
 	cancelTimer := time.AfterFunc(timeout, cancel)
 
-	transport, err := createTransport(mcpCtx, m, resolver)
+	transport, err := createTransport(mcpCtx, m, cfg.Resolver())
 	if err != nil {
 		updateState(name, StateError, err, nil, Counts{})
 		slog.Error("Error creating MCP client", "error", err, "name", name)
 		cancel()
 		cancelTimer.Stop()
 		return nil, err
+	}
+
+	// Kernel sandboxing for stdio servers: the same bash sandbox policy
+	// that confines agent commands applies to the server process and its
+	// descendants (Phase 5 of _PLANS/NATIVE_SANDBOX.md). strict mode
+	// refuses the connection when enforcement cannot attach; workspace
+	// mode degrades with a visible warning.
+	if ct, ok := transport.(*mcp.CommandTransport); ok {
+		mode := cfg.Config().Tools.Bash.BashSandboxMode()
+		spec := sandbox.ForBashModeLimits(mode, cfg.WorkingDir(), cfg.Config().Tools.Bash.BashSandboxLimits())
+		degraded, err := sandbox.ManagedConfine(ct.Command, mode, spec)
+		if err != nil {
+			updateState(name, StateError, err, nil, Counts{})
+			slog.Error("MCP sandbox refused stdio server", "error", err, "name", name)
+			cancel()
+			cancelTimer.Stop()
+			return nil, err
+		}
+		if degraded {
+			slog.Warn("Kernel sandbox unavailable for MCP stdio server; running unconfined",
+				"name", name, "mode", mode)
+		}
 	}
 
 	client := mcp.NewClient(
@@ -495,7 +518,11 @@ func createTransport(ctx context.Context, m config.MCPConfig, resolver config.Va
 			return nil, err
 		}
 		cmd := exec.CommandContext(ctx, home.Long(command), args...)
-		cmd.Env = append(os.Environ(), envs...)
+		// Third-party stdio servers get the shell's filtered child
+		// environment, not the ambient one: the operator-declared envs
+		// still arrive (resolved in-process), but provider tokens and
+		// other ambient credentials stop leaking into every server.
+		cmd.Env = shell.FilteredChildEnv(envs)
 		return &mcp.CommandTransport{
 			Command: cmd,
 		}, nil

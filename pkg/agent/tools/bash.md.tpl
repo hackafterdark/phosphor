@@ -26,6 +26,9 @@ Common shell builtins and core utils available on Windows.
 - Each command runs in independent shell (no state persistence between calls)
 - Prefer absolute paths over 'cd' (use 'cd' only if user explicitly requests)
 - **SANDBOX**: You are running inside a workspace sandbox. Any attempt to access files or directories outside the workspace root will be blocked by the system. The `working_dir` parameter is also constrained to the workspace. Do not try to escape.
+{{- if ne .SandboxMode "off" }}
+- **SANDBOX ESCALATION**: If a command is denied by the sandbox (the output is marked `sandbox-denial:`), and it genuinely cannot run inside the sandbox, retry it once with `sandbox="escalate"`. The user is asked to approve running that single command unsandboxed; never request escalation preemptively, and never escalate for commands that can be rewritten to stay inside the workspace.
+{{- end }}
 {{- if .RgAvailable }}
 - Ripgrep (`rg`) is available; prefer it over `grep` for faster, more intuitive searching
 {{- end }}

@@ -3,6 +3,8 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -162,6 +164,53 @@ func TestSecuredHTTPClientFailsClosedOnUnknownHost(t *testing.T) {
 		require.Error(t, err)
 	})
 }
+
+// TestFetchTool_TransportFailureIsToolErrorNotAbort pins the split between
+// environmental transport failures and security refusals: a timeout (or any
+// non-security dial error) must surface as a recoverable tool error so the
+// agent can retry or fall back, while the fail-closed security denials keep
+// aborting the run (TestFetchDownloadToolsRouteThroughSecuredClient).
+func TestFetchTool_TransportFailureIsToolErrorNotAbort(t *testing.T) {
+	failing := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return nil, &net.OpError{Op: "dial", Err: &net.DNSError{Err: "no such host", Name: "unreachable.example"}}
+	})}
+
+	tool := NewFetchTool(&mockPermissionService{}, t.TempDir(), nil, failing)
+	input, err := json.Marshal(FetchParams{URL: "https://unreachable.example/x", Format: "text"})
+	require.NoError(t, err)
+
+	resp, err := tool.Run(guardSessionCtx(), fantasy.ToolCall{
+		ID: "fetch-timeout", Name: FetchToolName, Input: string(input),
+	})
+	require.NoError(t, err, "a transport failure must not abort the run")
+	require.True(t, resp.IsError, "the transport failure must surface as a tool error")
+	require.Contains(t, resp.Content, "Failed to fetch URL")
+}
+
+// TestSourcegraphTool_TransportFailureIsToolErrorNotAbort pins the same split
+// for the sourcegraph tool: the sourcegraph.com timeout that once killed whole
+// agentic_fetch runs must degrade to a tool error the sub-agent can recover
+// from, while a security refusal still aborts.
+func TestSourcegraphTool_TransportFailureIsToolErrorNotAbort(t *testing.T) {
+	failing := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return nil, errors.New("net/http: request canceled (Client.Timeout exceeded while awaiting headers)")
+	})}
+
+	tool := NewSourcegraphTool(failing)
+	input, err := json.Marshal(SourcegraphParams{Query: "fake token"})
+	require.NoError(t, err)
+
+	resp, err := tool.Run(guardSessionCtx(), fantasy.ToolCall{
+		ID: "sg-timeout", Name: SourcegraphToolName, Input: string(input),
+	})
+	require.NoError(t, err, "a transport failure must not abort the run")
+	require.True(t, resp.IsError, "the transport failure must surface as a tool error")
+	require.Contains(t, resp.Content, "Failed to fetch URL")
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
 
 // TestFetchDownloadToolsRouteThroughSecuredClient verifies the fetch and
 // download tools refuse an unapproved host even when the tool permission

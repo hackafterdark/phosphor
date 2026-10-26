@@ -12,6 +12,7 @@ import (
 	"github.com/hackafterdark/phosphor/pkg/config"
 	"github.com/hackafterdark/phosphor/pkg/lsp"
 	"github.com/hackafterdark/phosphor/pkg/otel"
+	"github.com/hackafterdark/phosphor/pkg/sandbox"
 	"github.com/hackafterdark/phosphor/pkg/skills"
 	"go.opentelemetry.io/otel/attribute"
 )
@@ -57,6 +58,7 @@ func buildPhosphorInfo(cfg *config.ConfigStore, lspManager *lsp.Manager, allSkil
 	writeMCP(&b, mcp.GetStates(), cfg)
 	writeSkills(&b, allSkills, activeSkills, skillTracker, cfg)
 	writeHooks(&b, cfg)
+	writeSandbox(&b, cfg)
 	writePermissions(&b, cfg)
 	writeDisabledTools(&b, cfg)
 	writeOptions(&b, cfg)
@@ -351,6 +353,20 @@ func writeSkills(b *strings.Builder, allSkills []*skills.Skill, activeSkills []*
 	fmt.Fprintf(b, "loaded_this_session = %d/%d\n", tracker.LoadedCount(), len(activeSkills))
 	for _, e := range entries {
 		fmt.Fprintf(b, "%s = %s, %s\n", e.name, e.origin, e.state)
+	}
+	b.WriteString("\n")
+}
+
+func writeSandbox(b *strings.Builder, cfg *config.ConfigStore) {
+	c := cfg.Config()
+	mode := c.Tools.Bash.BashSandboxMode()
+	available, detail := sandbox.Available()
+	b.WriteString("[sandbox]\n")
+	fmt.Fprintf(b, "mode = %s\n", mode)
+	fmt.Fprintf(b, "available = %v\n", available)
+	fmt.Fprintf(b, "detail = %s\n", detail)
+	if limits := c.Tools.Bash.BashSandboxLimits(); !limits.Empty() {
+		fmt.Fprintf(b, "limits = max_procs=%d max_file_mb=%d\n", limits.MaxProcs, limits.MaxFileMB)
 	}
 	b.WriteString("\n")
 }

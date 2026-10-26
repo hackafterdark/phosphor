@@ -1,7 +1,9 @@
 package egress
 
 import (
+	"net"
 	"net/http"
+	"strconv"
 	"sync"
 )
 
@@ -87,6 +89,27 @@ func BrokerActive() bool {
 	broker.mu.RLock()
 	defer broker.mu.RUnlock()
 	return broker.active
+}
+
+// RoutedBrokerPort returns the loopback port of the egress broker, and true,
+// when subprocess routing is active. It is the port the ProxyOnly kernel
+// sandbox network tier allows: with routing off, no port is advertised and
+// the tier cannot (and must not) be requested.
+func RoutedBrokerPort() (port int, ok bool) {
+	broker.mu.RLock()
+	defer broker.mu.RUnlock()
+	if !broker.active || !broker.route || broker.proxy == nil {
+		return 0, false
+	}
+	_, portStr, err := net.SplitHostPort(broker.proxy.Addr())
+	if err != nil {
+		return 0, false
+	}
+	p, err := strconv.Atoi(portStr)
+	if err != nil || p <= 0 || p > 65535 {
+		return 0, false
+	}
+	return p, true
 }
 
 func brokerPolicy() (Policy, bool, bool) {

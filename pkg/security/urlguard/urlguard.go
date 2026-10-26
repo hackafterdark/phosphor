@@ -4,16 +4,21 @@
 // "https://attacker.example/log?token=<provider api key>".
 //
 // The check runs on the raw target URL before a request is dialed. It leans on
-// two complementary detectors:
+// three complementary detectors:
 //
 //  1. The process-wide known-value registry (pkg/secrets). It holds the exact
 //     credential strings this process loaded (provider keys, OAuth tokens, MCP
 //     headers), so it erases — here, detects — the secrets we already know we
 //     own. This is high-precision and zero false positives.
-//  2. A conservative Shannon-entropy scan of the query parameter *values*. It
+//  2. The gitleaks ruleset (github.com/zricethezav/gitleaks). It catches the
+//     known vendor credential formats (AKIA…, sk-…, ghp_…, …) carried in a URL
+//     regardless of the parameter name they ride in.
+//  3. A conservative Shannon-entropy scan of the query parameter *values*. It
 //     catches high-entropy blobs the registry was never told about (a secret the
-//     agent copied out of a file mid-session). The thresholds are deliberately
-//     strict so ordinary query strings ("?q=hello world", "?page=2") pass.
+//     agent copied out of a file mid-session). The credentialLike gate keeps the
+//     scan on credential-shaped values only, so natural-language query strings
+//     ("?q=how does mxc sandboxing work on windows") pass while
+//     "?token=aXk7...base64..." trips.
 //
 // It is a hard gate: on a hit the caller must abort the request rather than
 // dispatch it, because the whole point of the vector is that the secret rides the
@@ -24,6 +29,10 @@ import (
 	"fmt"
 	"math"
 	"net/url"
+	"strings"
+	"sync"
+
+	gl "github.com/zricethezav/gitleaks/v8/detect"
 
 	"github.com/hackafterdark/phosphor/pkg/secrets"
 )
@@ -58,10 +67,46 @@ func SetHighEntropyDetection(on bool) { highEntropyEnabled = on }
 // HighEntropyDetection reports whether the entropy pass is enabled.
 func HighEntropyDetection() bool { return highEntropyEnabled }
 
-// Check inspects the raw target URL and returns ErrMessage when a known secret or
-// a high-entropy credential token is present in the URL query string. A nil error
-// means the URL is safe to dial. An unparseable URL returns nil: parsing is not
-// this guard's job, and callers already validate URLs on their own path.
+// gitleaksDetector is the lazy process-wide gitleaks detector for the pattern
+// pass. It is built once: construction parses the embedded ruleset and compiles
+// 700+ RE2 regexes plus an Aho-Corasick keyword prefilter, which is far too
+// expensive to redo per call. Detector.DetectString only reads immutable
+// post-construction state, so concurrent calls are safe.
+var gitleaksDetector = sync.OnceValue(func() *gl.Detector {
+	d, err := gl.NewDetectorDefaultConfig()
+	if err != nil {
+		return nil
+	}
+	d.MaxDecodeDepth = 1
+	d.MaxTargetMegaBytes = 20
+	d.Verbose = false
+	// A URL is attacker-constructible, so an inline "gitleaks:allow"
+	// marker smuggled into the query would suppress the detector's own
+	// finding for a credential riding in the same input. Ignore the
+	// marker here; it only makes sense for file scanning.
+	d.IgnoreGitleaksAllow = true
+	return d
+})
+
+// gitleaksDetects reports whether the gitleaks ruleset identifies a
+// credential-shaped value in s. The prefilter and short inputs keep this
+// cheap enough to run on every guarded URL.
+func gitleaksDetects(s string) bool {
+	if s == "" {
+		return false
+	}
+	d := gitleaksDetector()
+	if d == nil {
+		return false
+	}
+	return len(d.DetectString(s)) > 0
+}
+
+// Check inspects the raw target URL and returns ErrMessage when a known secret,
+// a gitleaks-detected credential format, or a high-entropy credential token is
+// present in the URL query string. A nil error means the URL is safe to dial.
+// An unparseable URL returns nil: parsing is not this guard's job, and callers
+// already validate URLs on their own path.
 func Check(rawURL string) error {
 	if rawURL == "" {
 		return nil
@@ -72,6 +117,13 @@ func Check(rawURL string) error {
 	// certain known-secret match — no false positives. Running it over the full
 	// URL (not just the query) also catches a credential embedded in a path.
 	if secrets.Scrub(rawURL) != rawURL {
+		return fmt.Errorf("%s", ErrMessage)
+	}
+
+	// Gitleaks pattern pass over the raw URL: known vendor credential formats
+	// (AKIA…, sk-…, ghp_…, …) are caught by format regardless of the parameter
+	// name, before any speculative scanning runs.
+	if gitleaksDetects(rawURL) {
 		return fmt.Errorf("%s", ErrMessage)
 	}
 
@@ -91,6 +143,9 @@ func Check(rawURL string) error {
 			if secrets.Scrub(v) != v {
 				return fmt.Errorf("%s", ErrMessage)
 			}
+			if gitleaksDetects(v) {
+				return fmt.Errorf("%s", ErrMessage)
+			}
 		}
 	}
 
@@ -103,18 +158,29 @@ func Check(rawURL string) error {
 	// blob in ?token= is caught.
 	for _, values := range parsed.Query() {
 		for _, v := range values {
-			if looksLikeCredential(v) {
-				return fmt.Errorf("%s", ErrMessage)
+			// Scan each whitespace-delimited run independently: a
+			// trailing decoded space ("?sig=<token>%20") must not
+			// exempt the intact credential token inside the value.
+			for _, tok := range strings.Fields(v) {
+				if looksLikeCredential(tok) {
+					return fmt.Errorf("%s", ErrMessage)
+				}
 			}
 		}
 	}
 	return nil
 }
 
-// looksLikeCredential reports whether a decoded query value has the statistical
-// shape of a credential: long, high-entropy, and drawn from a wide character set.
+// looksLikeCredential reports whether a decoded query value (or one
+// whitespace-delimited run within it) has the statistical shape of a
+// credential: long, high-entropy, and drawn from a wide character set. The
+// credentialLike gate mirrors gitleaks' own value rules: a genuine
+// credential is one unbroken run of credential-class characters, so
+// whitespace-separated prose is judged run by run — a long English query
+// stays open while a credential token padded with encoded whitespace does
+// not slip through.
 func looksLikeCredential(v string) bool {
-	if len(v) < minTokenLen {
+	if len(v) < minTokenLen || !credentialLike(v) {
 		return false
 	}
 	distinct := entropy(v)
@@ -122,6 +188,12 @@ func looksLikeCredential(v string) bool {
 		return false
 	}
 	return distinct >= minEntropy && countDistinct(v) >= minDistinctChars
+}
+
+// credentialLike reports whether v is a single unbroken run of characters,
+// disqualifying anything containing whitespace or control bytes.
+func credentialLike(v string) bool {
+	return !strings.ContainsAny(v, " \t\r\n\v\f\x00")
 }
 
 // entropy returns the Shannon entropy in bits per character of s, used as the
