@@ -104,6 +104,11 @@ func containerSidFor(workspace string) (*windows.SID, error) {
 // workspace root is always writable; declared read-only roots are
 // granted read+execute.
 //
+// Roots that do not exist yet (GOCACHE-style caches created lazily by
+// the toolchain) are skipped — their absence is not a policy failure,
+// and the kernel default-denies the child for that path until the
+// directory appears.
+//
 // System program directories are NOT touched: stock Windows already
 // grants ALL APPLICATION PACKAGES read+execute there, and attempting
 // a DACL change on them is both refused and (worse) can block on
@@ -113,22 +118,34 @@ func containerSidFor(workspace string) (*windows.SID, error) {
 // Grants are additive and linger after the child exits (same posture
 // as the MXC backends); removal is a tracked Phase-2 follow-up.
 func prepareConfinedRoots(sid *windows.SID, spec Spec) error {
-	if err := grantAccess(spec.WorkspaceRoot, sid, accessFor(false)); err != nil {
+	if err := grantRoot(spec.WorkspaceRoot, sid, accessFor(false)); err != nil {
 		return err
 	}
 	for _, root := range spec.ReadOnlyRoots {
-		if err := grantAccess(root, sid, accessFor(true)); err != nil {
+		if err := grantRoot(root, sid, accessFor(true)); err != nil {
 			return err
 		}
 	}
 	for _, root := range spec.ReadWriteRoots {
-		if err := grantAccess(root, sid, accessFor(false)); err != nil {
+		if err := grantRoot(root, sid, accessFor(false)); err != nil {
 			return err
 		}
 	}
 	// DenyRead needs no code here: everything outside the granted
 	// roots is default-denied for the container identity.
 	return nil
+}
+
+// grantRoot applies grantAccess, tolerating roots the toolchain has
+// not created yet.
+func grantRoot(path string, sid *windows.SID, accessMask windows.ACCESS_MASK) error {
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	return grantAccess(path, sid, accessMask)
 }
 
 // grantLaunchBinary grants the container read+execute on the launched
@@ -317,6 +334,16 @@ func SpawnConfined(argv []string, env []string, dir string, spec Spec, stdin io.
 	}
 	if spec.WorkspaceRoot == "" {
 		return nil, fmt.Errorf("sandbox spec requires a workspace root")
+	}
+	// exec.Cmd leaves Stdout/Stderr nil when the caller doesn't wire
+	// them; the stdio bridge needs a writer to drain the pipes, and
+	// io.Discard keeps the child's output flowing (and Wait
+	// unblocked) without a destination.
+	if stdout == nil {
+		stdout = io.Discard
+	}
+	if stderr == nil {
+		stderr = io.Discard
 	}
 	sid, err := containerSidFor(spec.WorkspaceRoot)
 	if err != nil {

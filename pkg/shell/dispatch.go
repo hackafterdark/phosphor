@@ -215,8 +215,30 @@ func dispatchShebang(ctx context.Context, scriptPath string, probe []byte, args 
 	cmd.Stdout = hc.Stdout
 	cmd.Stderr = hc.Stderr
 	isolateProcess(cmd)
-	if refused := confineProcess(cmd, sbx, hc.Stderr); refused != nil {
+	child, refused := confineSpawn(cmd, sbx, hc.Stderr)
+	if refused != nil {
 		return refused
+	}
+	if child != nil {
+		// Windows 11 AppContainer tier: the kernel launched the
+		// interpreter; wait on the confined child instead. The
+		// context cancellation must target the child directly —
+		// exec.CommandContext's auto-kill never sees it.
+		stopf := context.AfterFunc(ctx, func() { _ = child.Kill() })
+		defer stopf()
+		_, err = child.Wait()
+		if err != nil {
+			var exitErr *exec.ExitError
+			if errors.As(err, &exitErr) {
+				code := exitErr.ExitCode()
+				if code < 0 {
+					code = 1
+				}
+				return interp.ExitStatus(uint8(code))
+			}
+			return err
+		}
+		return nil
 	}
 
 	err = cmd.Start()

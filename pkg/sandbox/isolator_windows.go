@@ -113,5 +113,9 @@ func (windowsIsolator) Available() (bool, string) {
 	if _, err := sharedRestrictedToken(); err != nil {
 		return false, "restricted token unavailable: " + err.Error()
 	}
+	if selectedTier() == tierAppContainer {
+		return true, "windows v2: AppContainer workspace FS boundary kernel-enforced; " +
+			"restricted token + job containment for the fallback tier"
+	}
 	return false, "windows v1: restricted-token + job containment kernel-enforced; workspace FS boundary advisory until AppContainer phase"
 }

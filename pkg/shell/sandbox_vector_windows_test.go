@@ -3,7 +3,9 @@
 package shell
 
 import (
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -56,4 +58,42 @@ func TestSandboxWindowsStrictRefusesExec(t *testing.T) {
 	require.Equal(t, 126, result.ExitCode)
 	require.Contains(t, result.Output, "sandbox refused exec")
 	_, _ = os.UserHomeDir() // keep imports obvious for future escape vectors
+}
+
+// TestSandboxWindowsKernelDeniesWriteOutsideWorkspace drives the same
+// kernel vector as the Unix suite: `env sh -c` builds the target path
+// itself, and the kernel boundary must deny the write. The Phase-6 gate
+// passes env-wrapped nested shells once a kernel boundary is attached —
+// the boundary itself is the control.
+func TestSandboxWindowsKernelDeniesWriteOutsideWorkspace(t *testing.T) {
+	t.Parallel()
+
+	if ok, _ := sandbox.Available(); !ok {
+		t.Skip("host enforces no kernel boundary; the vector would be vacuous")
+	}
+	if _, err := exec.LookPath("env"); err != nil {
+		t.Skip("env binary not on PATH (needs Git for Windows)")
+	}
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh not on PATH (needs Git for Windows)")
+	}
+
+	workspace := t.TempDir()
+	home, err := os.UserHomeDir()
+	require.NoError(t, err)
+	escape := filepath.Join(home, fmt.Sprintf("phosphor_sandbox_escape_%d", os.Getpid()))
+	t.Cleanup(func() { _ = os.Remove(escape) })
+	require.NoFileExists(t, escape)
+
+	result, err := RunAndCapture(t.Context(), RunOptions{
+		Command: fmt.Sprintf(
+			`env sh -c 'echo reached; echo pwned > %s'`, escape),
+		Cwd:         workspace,
+		Workspace:   workspace,
+		SandboxMode: "workspace",
+	})
+	t.Logf("sandboxed escape attempt: exit=%d output=%q err=%v", result.ExitCode, result.Output, err)
+	require.Contains(t, result.Output, "reached",
+		"nested shell must run up to the denied write")
+	require.NoFileExists(t, escape, "kernel sandbox must deny writes outside the workspace")
 }

@@ -110,3 +110,48 @@ func TestAppContainerWorkspaceReadBack(t *testing.T) {
 	require.Equal(t, 0, code)
 	require.Contains(t, out.String(), "ok")
 }
+
+// TestSpawnConfinedChildRoutesByTier pins the routing contract: on
+// AppContainer hosts the confinement travels through the returned
+// ConfinedChild (kernel-launched, workspace writable); on
+// restricted-token hosts SpawnConfinedChild hands the exec.Cmd path
+// back untouched.
+func TestSpawnConfinedChildRoutesByTier(t *testing.T) {
+	requireAppContainer(t)
+	ws := t.TempDir()
+
+	cmd := exec.Command(cmdExe(t), "/c", "echo x > marker.txt")
+	cmd.Dir = ws
+	child, err := SpawnConfinedChild(cmd, "workspace", Spec{WorkspaceRoot: ws})
+	require.NoError(t, err)
+	require.NotNil(t, child, "AppContainer tier must kernel-launch the child")
+
+	code, err := child.Wait()
+	require.NoError(t, err)
+	require.Equal(t, 0, code)
+	_, err = os.Stat(filepath.Join(ws, "marker.txt"))
+	require.NoError(t, err, "kernel-launched child must keep the workspace writable")
+}
+
+// TestSpawnConfinedChildSkipsMissingCacheRoots pins the graceful
+// degradation for lazily-created toolchain caches: a ReadWriteRoots
+// entry that does not exist yet must not veto the kernel boundary for
+// the whole launch.
+func TestSpawnConfinedChildSkipsMissingCacheRoots(t *testing.T) {
+	requireAppContainer(t)
+	ws := t.TempDir()
+	missing := filepath.Join(t.TempDir(), "not-created-yet")
+
+	cmd := exec.Command(cmdExe(t), "/c", "echo x > marker.txt")
+	cmd.Dir = ws
+	spec := Spec{WorkspaceRoot: ws, ReadWriteRoots: []string{missing}}
+	child, err := SpawnConfinedChild(cmd, "workspace", spec)
+	require.NoError(t, err, "missing optional root must not drop the launch to v1")
+	require.NotNil(t, child)
+
+	code, err := child.Wait()
+	require.NoError(t, err)
+	require.Equal(t, 0, code)
+	_, err = os.Stat(filepath.Join(ws, "marker.txt"))
+	require.NoError(t, err)
+}
