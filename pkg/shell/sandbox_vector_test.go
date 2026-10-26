@@ -32,9 +32,13 @@ func TestSandboxKernelDeniesWriteOutsideWorkspace(t *testing.T) {
 
 	// BlockFuncs nil mirrors the hook trust posture that lets `sh -c`
 	// through: the point is that even when the in-process blocklist is
-	// bypassed, the kernel still denies the escape.
+	// bypassed, the kernel still denies the escape. The nested shell is
+	// spawned by `env` at the kernel level (the Phase-6 gate sees only
+	// `env` and confines its children through the inherited boundary),
+	// so the kernel sandbox itself — not the escape-hatch gate — is what
+	// denies the write.
 	result, err := RunAndCapture(t.Context(), RunOptions{
-		Command:     fmt.Sprintf(`sh -c 'echo pwned > %s'`, escape),
+		Command:     fmt.Sprintf(`env sh -c 'echo pwned > %s'`, escape),
 		Cwd:         workspace,
 		Workspace:   workspace,
 		SandboxMode: "workspace",

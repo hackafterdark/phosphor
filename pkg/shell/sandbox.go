@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log/slog"
@@ -86,4 +87,31 @@ func confineProcess(cmd *exec.Cmd, sbx *sandboxPolicy, stderr io.Writer) error {
 			"mode", sbx.mode, "workspace", sbx.spec.WorkspaceRoot)
 	}
 	return nil
+}
+
+// escapeHatchHandler returns middleware that denies host escape-hatch
+// binaries (wsl, cmd, powershell) and inline shell execution (sh -c etc.)
+// while the sandbox is active. Kernel confinement cannot reach a payload
+// that crosses kernel boundaries (wsl) or hides inside a quoted inline
+// argument, so the control is deny-by-default: the refusal carries the
+// sandbox refusal marker and exit status 126, which the bash tool
+// recognizes as a sandbox denial and pairs with the escalation guidance.
+// An escalated run (sandbox policy nil) skips the gate entirely — the user
+// grant for an unsandboxed run is the only way through.
+func escapeHatchHandler(sbx *sandboxPolicy) func(next interp.ExecHandlerFunc) interp.ExecHandlerFunc {
+	return func(next interp.ExecHandlerFunc) interp.ExecHandlerFunc {
+		return func(ctx context.Context, args []string) error {
+			if sbx == nil || len(args) == 0 {
+				return next(ctx, args)
+			}
+			if reason := sandbox.EscapeHatchReason(args); reason != "" {
+				hc := interp.HandlerCtx(ctx)
+				fmt.Fprintf(hc.Stderr, "%s: %s\n", SandboxRefusalMarker, reason)
+				slog.Warn("Escape-hatch command denied by sandbox",
+					"argv0", args[0], "reason", reason, "mode", sbx.mode)
+				return interp.ExitStatus(126)
+			}
+			return next(ctx, args)
+		}
+	}
 }
