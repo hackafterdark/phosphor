@@ -1,7 +1,6 @@
 package sandbox
 
 import (
-	"path/filepath"
 	"strings"
 )
 
@@ -66,9 +65,13 @@ func EscapeHatchReason(argv []string) string {
 // normalizeBinary reduces argv[0] to a lowercase base name without the
 // Windows .exe suffix, so path-prefixed and case-variant spellings
 // (C:\Windows\System32\cmd.exe, C:/WINDOWS/system32/WindowsPowerShell/v1.0/powershell.EXE)
-// all match the same deny entries.
+// all match the same deny entries. Splits on both separators on every
+// platform — the sandbox may gate Windows-style paths from a cross-compiled
+// or WSL-adjacent context, and filepath.Base is OS-dependent.
 func normalizeBinary(argv0 string) string {
-	base := filepath.Base(argv0)
-	base = strings.TrimSuffix(strings.ToLower(base), ".exe")
-	return base
+	base := strings.ToLower(argv0)
+	if i := strings.LastIndexAny(base, `/\`); i >= 0 {
+		base = base[i+1:]
+	}
+	return strings.TrimSuffix(base, ".exe")
 }
