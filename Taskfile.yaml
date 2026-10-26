@@ -40,6 +40,11 @@ tasks:
     env:
       GOEXPERIMENT: null
 
+  vuln:scan:
+    desc: Scan workspace dependencies for vulnerabilities with grype
+    cmds:
+      - grype dir:. --exclude "./_other_project_research/**" --fail-on=high
+
   build:
     desc: Run build
     deps:
