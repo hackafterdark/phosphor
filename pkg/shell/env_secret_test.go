@@ -72,6 +72,7 @@ func joinEnv(env []string) string {
 	}
 	return out
 }
+
 func TestFilteredChildEnv_StripsAmbientSecretsKeepsDeclared(t *testing.T) {
 	t.Setenv("PHOSPHOR_TEST_AMBIENT_TOKEN", "ambient-secret")
 	t.Setenv("PHOSPHOR_TEST_BENIGN", "harmless")
