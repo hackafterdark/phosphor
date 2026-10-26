@@ -328,6 +328,9 @@ func TestMidCommandCDEscapeBlocked(t *testing.T) {
 		"cd ~ && ls .ssh",
 		// cd outside, then write through a redirection operand.
 		"cd " + shellQuote(filepath.ToSlash(outside)) + "; echo hi > leak.txt",
+		// Relative traversal out of the workspace — the shape the original
+		// audit found; no absolute path ever appears in the command.
+		"cd ../outside && cat secret.txt",
 	}
 
 	for _, cmd := range vectors {
@@ -369,6 +372,45 @@ func TestMidCommandCDEscapeBlocked(t *testing.T) {
 	}
 	require.NotContains(t, globOut.String(), "secret.txt",
 		"escaped glob must not list outside directory entries")
+
+	// Variable target: the static AST defers `$D`, so only the runtime
+	// post-expansion gate can refuse the escaped cwd.
+	err = Run(t.Context(), RunOptions{
+		Command:         `cd "$D" && cat secret.txt`,
+		Cwd:             workspace,
+		Workspace:       workspace,
+		Env:             []string{"D=" + filepath.ToSlash(outside)},
+		Stdout:          io.Discard,
+		DisableTempRoot: true,
+	})
+	require.Error(t, err, "variable-target vector must be refused")
+	require.Contains(t, err.Error(), "outside workspace")
+
+	// Bare `cd` lands in the interpreter's HOME; an inline HOME override
+	// (`HOME=... cd`) must not smuggle the cwd outside the workspace.
+	err = Run(t.Context(), RunOptions{
+		Command:         "HOME=" + shellQuote(filepath.ToSlash(outside)) + " cd && cat secret.txt",
+		Cwd:             workspace,
+		Workspace:       workspace,
+		Stdout:          io.Discard,
+		DisableTempRoot: true,
+	})
+	require.Error(t, err, "HOME-override vector must be refused")
+	require.Contains(t, err.Error(), "outside workspace")
+
+	// `cd -` jumps to OLDPWD and prints it. Seed OLDPWD directly: the
+	// runtime gate must validate it even when no prior gated cd established
+	// it (the run may start at an externally provided Dir).
+	err = Run(t.Context(), RunOptions{
+		Command:         "cd -",
+		Cwd:             workspace,
+		Workspace:       workspace,
+		Env:             []string{"OLDPWD=" + filepath.ToSlash(outside)},
+		Stdout:          io.Discard,
+		DisableTempRoot: true,
+	})
+	require.Error(t, err, "OLDPWD vector must be refused")
+	require.Contains(t, err.Error(), "outside workspace")
 }
 
 // TestMidCommandCDInTreeAllowed proves the fixes do not over-constrain

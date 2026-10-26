@@ -207,6 +207,7 @@ func TestManagedConfineHostBehavior(t *testing.T) {
 		require.False(t, degraded)
 	}
 }
+
 func TestCredentialDenyPathsInSpec(t *testing.T) {
 	t.Parallel()
 

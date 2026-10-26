@@ -456,6 +456,7 @@ func TestInlineExecutionWarnFunc_NeverBlocks(t *testing.T) {
 		})
 	}
 }
+
 func TestCommandsBlockerWrapperBypass(t *testing.T) {
 	t.Parallel()
 

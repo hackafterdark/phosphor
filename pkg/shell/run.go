@@ -361,20 +361,27 @@ func withNonInteractiveEnv(env []string) []string {
 
 // standardHandlers returns the exec-handler middleware chain used by both
 // [Run] and [Shell]. Order matters:
-//  1. post-expansion path confinement — first, so it bounds-checks the fully
-//     expanded argv of *every* command, including the Phosphor builtins
-//     dispatched below (notably jq, whose positional file operands are opened
-//     in-process); placing it after the builtin dispatch would let a builtin
-//     short-circuit the chain and reach conf.Blocked never;
-//  2. builtins (so Phosphor's in-process jq still wins over any PATH binary);
-//  3. script dispatch (shebang / binary / shell-source for path-prefixed
+//  1. escape-hatch gating (sandbox on only) — host escape binaries and
+//     inline shell execution are denied before any in-process dispatch so
+//     the payload can neither hide from argv policy nor cross the host
+//     security domain. Ahead of path confinement so the refusal is the
+//     sandbox-denial contract (marker + exit 126, escalation guidance)
+//     rather than a pathguard parse of the opaque host-shell arguments;
+//  2. post-expansion path confinement — bounds-checks the fully expanded
+//     argv of *every* non-gated command, including the Phosphor builtins
+//     dispatched below (notably jq, whose positional file operands are
+//     opened in-process); placing it after the builtin dispatch would let
+//     a builtin short-circuit the chain and reach conf.Blocked never;
+//  3. builtins (so Phosphor's in-process jq still wins over any PATH binary);
+//  4. script dispatch (shebang / binary / shell-source for path-prefixed
 //     argv[0], no-op for bare commands) — runs before the block list so
 //     that deny rules see the already-resolved argv of anything the
 //     script exec's rather than the outer path-prefixed wrapper;
-//  4. block list;
-//  5. optional Go coreutils (only when useGoCoreUtils is on).
+//  5. block list;
+//  6. optional Go coreutils (only when useGoCoreUtils is on).
 func standardHandlers(blockFuncs []BlockFunc, conf *pathguard.Confinement, sbx *sandboxPolicy) []func(next interp.ExecHandlerFunc) interp.ExecHandlerFunc {
 	handlers := []func(next interp.ExecHandlerFunc) interp.ExecHandlerFunc{
+		escapeHatchHandler(sbx),
 		pathConfinementHandler(conf, blockFuncs),
 		builtinHandler(conf),
 		scriptDispatchHandler(blockFuncs, conf, sbx),

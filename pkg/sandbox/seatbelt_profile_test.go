@@ -163,6 +163,7 @@ func TestSeatbeltProfileDenyNetwork(t *testing.T) {
 	require.Contains(t, profile, "(deny network*)")
 	require.NotContains(t, profile, "(allow network*)")
 }
+
 func TestSeatbeltProfileDenyRead(t *testing.T) {
 	t.Parallel()
 
