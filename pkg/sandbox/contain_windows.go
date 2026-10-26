@@ -39,6 +39,19 @@ func ContainProcess(cmd *exec.Cmd, limits bool) (release func(), err error) {
 	if cmd.Process == nil {
 		return nil, fmt.Errorf("containment requires a started process")
 	}
+	ph, err := windows.OpenProcess(windows.PROCESS_SET_QUOTA|windows.PROCESS_TERMINATE, false, uint32(cmd.Process.Pid))
+	if err != nil {
+		return nil, fmt.Errorf("open process: %w", err)
+	}
+	defer windows.CloseHandle(ph)
+	return attachContainmentJob(ph, limits)
+}
+
+// attachContainmentJob applies the containment job policy to an
+// already-open process handle. Shared by the exec.Cmd path
+// (ContainProcess) and the AppContainer launcher, which has the
+// process handle in hand.
+func attachContainmentJob(h windows.Handle, limits bool) (release func(), err error) {
 	job, err := windows.CreateJobObject(nil, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create job object: %w", err)
@@ -59,13 +72,7 @@ func ContainProcess(cmd *exec.Cmd, limits bool) (release func(), err error) {
 		windows.CloseHandle(job)
 		return nil, fmt.Errorf("configure job object: %w", err)
 	}
-	ph, err := windows.OpenProcess(windows.PROCESS_SET_QUOTA|windows.PROCESS_TERMINATE, false, uint32(cmd.Process.Pid))
-	if err != nil {
-		windows.CloseHandle(job)
-		return nil, fmt.Errorf("open process: %w", err)
-	}
-	defer windows.CloseHandle(ph)
-	if err := windows.AssignProcessToJobObject(job, ph); err != nil {
+	if err := windows.AssignProcessToJobObject(job, h); err != nil {
 		windows.CloseHandle(job)
 		return nil, fmt.Errorf("assign process to job: %w", err)
 	}
