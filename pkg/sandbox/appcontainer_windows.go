@@ -324,6 +324,44 @@ func (c *ConfinedProcess) Wait() (int, error) {
 // Kill terminates the child; the job's kill-on-close covers descendants.
 func (c *ConfinedProcess) Kill() error { return c.proc.Kill() }
 
+// internetClientCap builds the internetClient capability SID
+// (S-1-15-3-1) for network egress. Capability SIDs are synthetic:
+// they live under the APPLICATION PACKAGE AUTHORITY and never need to
+// exist on disk, so the kernel validates them purely by structure.
+func internetClientCap() (*windows.SID, error) {
+	var sid *windows.SID
+	err := windows.AllocateAndInitializeSid(
+		&windows.SidIdentifierAuthority{Value: [6]byte{0, 0, 0, 0, 0, 15}},
+		2, // two sub-authorities follow
+		3, // capability SIDs
+		1, // internetClient
+		0, 0, 0, 0, 0, 0,
+		&sid,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return sid, nil
+}
+
+// networkCapabilitiesFor maps the spec's network posture onto the
+// kernel capability list. The default posture (NetworkAllow, and the
+// tool-layer cooperative egress policy of NetworkProxyOnly) keeps
+// egress open, matching the tool layer's default-allow behavior;
+// NetworkDeny is the only kernel-deny mode.
+func networkCapabilitiesFor(spec Spec) ([]sidAndAttributes, func(), error) {
+	if spec.Network == NetworkDeny {
+		return nil, func() {}, nil
+	}
+	sid, err := internetClientCap()
+	if err != nil {
+		return nil, nil, err
+	}
+	// AccessAttributes 0 marks the capability active (SE_GROUP_ENABLED
+	// semantics for capability SIDs).
+	return []sidAndAttributes{{Sid: sid}}, func() { windows.FreeSid(sid) }, nil
+}
+
 // SpawnConfined launches argv inside the workspace's AppContainer with
 // the spec's grants applied and the containment job attached. The
 // kernel boundary denies everything outside the granted roots, so
@@ -357,12 +395,20 @@ func SpawnConfined(argv []string, env []string, dir string, spec Spec, stdin io.
 	grantLaunchBinary(sid, argv[0])
 
 	// SECURITY_CAPABILITIES: run the child in the workspace's
-	// AppContainer with no static capabilities — the per-file ACE
-	// grants carry the filesystem policy. No network capability is
-	// granted, so egress stays kernel-default-deny.
+	// AppContainer. The per-file ACE grants carry the filesystem policy;
+	// the capability list carries the network posture (internetClient
+	// unless the spec denies egress).
 	var sc securityCapabilities
 	sc.AppContainerSid = sid
-	sc.CapabilityCount = 0
+	caps, freeCaps, err := networkCapabilitiesFor(spec)
+	if err != nil {
+		return nil, fmt.Errorf("network capability: %w", err)
+	}
+	defer freeCaps()
+	if len(caps) > 0 {
+		sc.Capabilities = &caps[0]
+		sc.CapabilityCount = uint32(len(caps))
+	}
 
 	al, err := windows.NewProcThreadAttributeList(2)
 	if err != nil {

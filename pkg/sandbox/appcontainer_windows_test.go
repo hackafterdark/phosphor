@@ -111,6 +111,26 @@ func TestAppContainerWorkspaceReadBack(t *testing.T) {
 	require.Contains(t, out.String(), "ok")
 }
 
+// TestNetworkCapabilitiesForDefaultAllow pins the network posture:
+// the default spec (NetworkAllow) and the tool-layer egress tiers get
+// the internetClient capability, matching the tool layer's default
+// allow; only NetworkDeny stays kernel-denied.
+func TestNetworkCapabilitiesForDefaultAllow(t *testing.T) {
+	t.Parallel()
+
+	for _, mode := range []NetworkMode{NetworkAllow, NetworkProxyOnly} {
+		caps, free, err := networkCapabilitiesFor(Spec{Network: mode})
+		require.NoError(t, err)
+		require.Len(t, caps, 1, "mode %d must grant internetClient", mode)
+		require.Equal(t, "S-1-15-3-1", caps[0].Sid.String())
+		free()
+	}
+	caps, free, err := networkCapabilitiesFor(Spec{Network: NetworkDeny})
+	require.NoError(t, err)
+	require.Empty(t, caps, "NetworkDeny must grant no capability")
+	free()
+}
+
 // TestSpawnConfinedChildRoutesByTier pins the routing contract: on
 // AppContainer hosts the confinement travels through the returned
 // ConfinedChild (kernel-launched, workspace writable); on
