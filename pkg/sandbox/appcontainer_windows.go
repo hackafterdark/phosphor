@@ -4,6 +4,7 @@ package sandbox
 
 import (
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -48,6 +49,12 @@ const procThreadAttributeSecurityCapability = 0x00020009
 // readers) into the child, and the copy goroutines never see EOF.
 // ProcThreadAttributeValue(2, FALSE, TRUE, FALSE) per winbase.h.
 const procThreadAttributeHandleList = 0x00020002
+
+// createSuspended (CREATE_SUSPENDED, winbase.h): the child's primary
+// thread stays suspended until the containment job is attached, so the
+// process never runs a single instruction outside the boundary.
+// x/sys does not export the flag.
+const createSuspended = 0x00000004
 
 // containerNameFor derives the stable AppContainer profile name for a
 // workspace root. The name is deterministic so ACEs granted on host
@@ -137,7 +144,10 @@ func prepareConfinedRoots(sid *windows.SID, spec Spec) error {
 }
 
 // grantRoot applies grantAccess, tolerating roots the toolchain has
-// not created yet.
+// not created yet and roots we do not own: a read-only root that
+// refuses the ACE (POSIX-style paths like /dev, foreign-volume
+// directories) stays default-denied for the container, which is the
+// safe direction — the kernel boundary still holds everywhere else.
 func grantRoot(path string, sid *windows.SID, accessMask windows.ACCESS_MASK) error {
 	if _, err := os.Stat(path); err != nil {
 		if os.IsNotExist(err) {
@@ -145,7 +155,11 @@ func grantRoot(path string, sid *windows.SID, accessMask windows.ACCESS_MASK) er
 		}
 		return err
 	}
-	return grantAccess(path, sid, accessMask)
+	err := grantAccess(path, sid, accessMask)
+	if err != nil && errors.Is(err, windows.ERROR_ACCESS_DENIED) {
+		return nil
+	}
+	return err
 }
 
 // grantLaunchBinary grants the container read+execute on the launched
@@ -156,31 +170,65 @@ func grantRoot(path string, sid *windows.SID, accessMask windows.ACCESS_MASK) er
 // that is neither grants access nor has the stock ACE stays
 // default-denied, and the launch fails closed.
 func grantLaunchBinary(sid *windows.SID, binary string) {
-	dir := filepath.Dir(binary)
-	if dir == "" {
+	if !grantsOwnDirectory(binary) {
 		return
 	}
-	_ = grantAccess(dir, sid, accessFor(true))
+	_ = grantAccess(filepath.Dir(binary), sid, accessFor(true))
 }
 
-// quoteCmdline joins argv into a Windows command line. The algorithm
-// is the one the CRT documents: quote tokens containing spaces and
-// escape embedded quotes.
-func quoteCmdline(argv []string) string {
-	var b strings.Builder
-	for i, arg := range argv {
-		if i > 0 {
-			b.WriteByte(' ')
-		}
-		if arg == "" || strings.ContainsAny(arg, " \t\"") {
-			b.WriteByte('"')
-			b.WriteString(strings.ReplaceAll(arg, `"`, `\"`))
-			b.WriteByte('"')
-		} else {
-			b.WriteString(arg)
-		}
+// grantsOwnDirectory reports whether binary's directory is one we can
+// and should grant on: absolute (a bare or relative name would resolve
+// against the parent's cwd, not the binary) and outside %SystemRoot%
+// (stock Windows already grants ALL APPLICATION PACKAGES there, and
+// touching those DACLs is refused — and can block on Defender tamper
+// protection).
+func grantsOwnDirectory(binary string) bool {
+	if !filepath.IsAbs(binary) {
+		return false
 	}
-	return b.String()
+	sysRoot := os.Getenv("SystemRoot")
+	if sysRoot == "" {
+		return true
+	}
+	dir := filepath.Dir(binary)
+	rel, err := filepath.Rel(sysRoot, dir)
+	if err != nil {
+		return true // different volume: outside the system tree
+	}
+	if insideRel(rel) {
+		return false
+	}
+	// A mismatch can be a symlink or short-name disguise; resolve both
+	// sides once and re-check before granting.
+	dirR, err1 := filepath.EvalSymlinks(dir)
+	sysR, err2 := filepath.EvalSymlinks(sysRoot)
+	if err1 != nil || err2 != nil {
+		return true // outside on the fast path, unresolvable: grant
+	}
+	rel, err = filepath.Rel(sysR, dirR)
+	if err != nil {
+		return true
+	}
+	return !insideRel(rel)
+}
+
+// insideRel reports whether filepath.Rel's result stays inside the
+// base (i.e. is neither "." nor climbs with "..").
+func insideRel(rel string) bool {
+	return rel != "." && rel != ".." && !strings.HasPrefix(rel, "..\\") &&
+		!strings.HasPrefix(rel, "../")
+}
+
+// quoteCmdline joins argv into a Windows command line using the
+// documented CRT escaping rules (windows.EscapeArg): backslashes
+// before a quote are doubled, embedded quotes are backslash-escaped,
+// and arguments containing whitespace are wrapped in quotes.
+func quoteCmdline(argv []string) string {
+	parts := make([]string, len(argv))
+	for i, arg := range argv {
+		parts[i] = windows.EscapeArg(arg)
+	}
+	return strings.Join(parts, " ")
 }
 
 // envBlock encodes env (KEY=VALUE strings) as the UTF-16,
@@ -304,12 +352,19 @@ type ConfinedProcess struct {
 	proc    *os.Process
 	release func()
 	copiers *sync.WaitGroup
+	once    sync.Once
 }
+
+// doRelease closes the containment job exactly once. Kill uses it too:
+// a descendant that inherited an output pipe can hold the pipe open
+// after the main process dies, and Wait's copier drain would then
+// block before its deferred release runs.
+func (c *ConfinedProcess) doRelease() { c.once.Do(c.release) }
 
 // Wait blocks until the child exits and its stdio copiers drain, then
 // returns the exit code.
 func (c *ConfinedProcess) Wait() (int, error) {
-	defer c.release()
+	defer c.doRelease()
 	state, err := c.proc.Wait()
 	c.copiers.Wait()
 	if err != nil {
@@ -322,7 +377,13 @@ func (c *ConfinedProcess) Wait() (int, error) {
 }
 
 // Kill terminates the child; the job's kill-on-close covers descendants.
-func (c *ConfinedProcess) Kill() error { return c.proc.Kill() }
+// The job is released here as well, so cancellation cannot strand the
+// child's descendants behind a copier that never sees EOF.
+func (c *ConfinedProcess) Kill() error {
+	err := c.proc.Kill()
+	c.doRelease()
+	return err
+}
 
 // internetClientCap builds the internetClient capability SID
 // (S-1-15-3-1) for network egress. Capability SIDs are synthetic:
@@ -464,11 +525,12 @@ func SpawnConfined(argv []string, env []string, dir string, spec Spec, stdin io.
 	var pi windows.ProcessInformation
 	// EXTENDED_STARTUPINFO_PRESENT: the kernel reads the extended
 	// STARTUPINFOEX (attribute list). CREATE_UNICODE_ENVIRONMENT:
-	// lpEnvironment is a UTF-16 block.
+	// lpEnvironment is a UTF-16 block. CREATE_SUSPENDED: the primary
+	// thread waits until the containment job is attached below.
 	if err := windows.CreateProcess(
 		nil, cmdLine, nil, nil,
 		true, // inherit stdio handles
-		windows.EXTENDED_STARTUPINFO_PRESENT|windows.CREATE_UNICODE_ENVIRONMENT,
+		windows.EXTENDED_STARTUPINFO_PRESENT|windows.CREATE_UNICODE_ENVIRONMENT|createSuspended,
 		envBlock(env), dirPtr, &si.StartupInfo, &pi,
 	); err != nil {
 		return nil, fmt.Errorf("create process in appcontainer: %w", err)
@@ -477,10 +539,13 @@ func SpawnConfined(argv []string, env []string, dir string, spec Spec, stdin io.
 	// them alive until the kernel has consumed them.
 	runtime.KeepAlive(handles)
 	runtime.KeepAlive(sc)
-	_ = windows.CloseHandle(pi.Thread)
 
 	proc, err := os.FindProcess(int(pi.ProcessId))
 	if err != nil {
+		// The child exists suspended; tearing down without
+		// terminating it would leak an uncontained (if paused)
+		// process into the session.
+		_ = windows.TerminateProcess(pi.Process, 1)
 		windows.CloseHandle(pi.Process)
 		return nil, err
 	}
@@ -488,9 +553,19 @@ func SpawnConfined(argv []string, env []string, dir string, spec Spec, stdin io.
 	// launcher's copy after the job assignment keeps one alive.
 	releaseJob, cerr := attachContainmentJob(pi.Process, true)
 	if cerr != nil {
+		_ = windows.TerminateProcess(pi.Process, 1)
 		windows.CloseHandle(pi.Process)
 		return nil, cerr
 	}
+	// Containment is in place: let the child run.
+	if _, err := windows.ResumeThread(pi.Thread); err != nil {
+		releaseJob()
+		_ = windows.TerminateProcess(pi.Process, 1)
+		windows.CloseHandle(pi.Process)
+		windows.CloseHandle(pi.Thread)
+		return nil, fmt.Errorf("resume confined child: %w", err)
+	}
+	windows.CloseHandle(pi.Thread)
 	return &ConfinedProcess{proc: proc, release: func() {
 		releaseJob()
 		windows.CloseHandle(pi.Process)

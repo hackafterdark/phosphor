@@ -4,12 +4,16 @@ package sandbox
 
 import (
 	"bytes"
+	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"syscall"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"golang.org/x/sys/windows"
 )
 
 // confineTestHelper skips the kernel validation tests on hosts where
@@ -174,4 +178,76 @@ func TestSpawnConfinedChildSkipsMissingCacheRoots(t *testing.T) {
 	require.Equal(t, 0, code)
 	_, err = os.Stat(filepath.Join(ws, "marker.txt"))
 	require.NoError(t, err)
+}
+
+// TestQuoteCmdlineEscaping pins the CRT argument-escaping rules:
+// backslashes before quotes are doubled, embedded quotes are
+// backslash-escaped, and trailing backslashes cannot escape the
+// closing quote.
+func TestQuoteCmdlineEscaping(t *testing.T) {
+	for _, tc := range []struct {
+		arg, want string
+	}{
+		{`C:\Program Files\dir\`, `"C:\Program Files\dir\\"`},
+		{`echo \"hi\"`, `"echo \\\"hi\\\""`},
+		{`plain`, `plain`},
+		{`with space`, `"with space"`},
+		{``, `""`},
+	} {
+		require.Equal(t, tc.want, quoteCmdline([]string{tc.arg}))
+	}
+}
+
+// TestGrantLaunchBinarySkipsRelativeAndSystem guards against DACL
+// writes on the wrong directory: a bare or relative name resolves
+// against the parent's cwd, and %SystemRoot% trees are off-limits
+// (stock ACEs already cover them; writes can block on Defender tamper
+// protection).
+func TestGrantLaunchBinarySkipsRelativeAndSystem(t *testing.T) {
+	require.False(t, grantsOwnDirectory("git"), "bare name must not grant")
+	require.False(t, grantsOwnDirectory(`..\tool.exe`), "relative path must not grant")
+
+	sysRoot := os.Getenv("SystemRoot")
+	require.NotEmpty(t, sysRoot)
+	require.False(t, grantsOwnDirectory(filepath.Join(sysRoot, "System32", "cmd.exe")),
+		"system directory must not grant")
+
+	outside := filepath.Join(t.TempDir(), "tool.exe")
+	require.True(t, grantsOwnDirectory(outside), "third-party directory must grant")
+}
+
+// TestConfinedProcessKillReleasesJob pins the cancellation contract:
+// Kill releases the containment job (kill-on-close terminates
+// descendants) even when Wait is blocked on stdio copiers, and release
+// is idempotent across the two paths. The kernel check is observable:
+// with the job released, the ping descendant is gone; without it, the
+// child survives Kill until Wait drains.
+func TestConfinedProcessKillReleasesJob(t *testing.T) {
+	requireAppContainer(t)
+	ws := t.TempDir()
+	spec := Spec{WorkspaceRoot: ws}
+
+	// ping -t runs until killed; its copiers stay blocked until the
+	// child's handles close.
+	proc, err := SpawnConfined(
+		[]string{"ping.exe", "-t", "127.0.0.1"},
+		os.Environ(), ws, spec,
+		nil, io.Discard, io.Discard,
+	)
+	require.NoError(t, err)
+
+	require.NoError(t, proc.Kill())
+	// Kill released the job; closing it terminated the child and its
+	// descendants via kill-on-close. Wait must observe the termination
+	// (the copiers drain once the child's handles close) within a
+	// bounded window.
+	code, err := proc.Wait()
+	t.Logf("killed child exited %d (%v)", code, err)
+	if err == nil {
+		t.Fatal("killed child reported success; termination was not observed")
+	}
+	var errno syscall.Errno
+	if errors.As(err, &errno) && errno == windows.ERROR_ACCESS_DENIED {
+		t.Fatal("confined child outlived the job handle; kill-on-close did not fire")
+	}
 }

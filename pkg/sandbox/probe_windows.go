@@ -42,6 +42,18 @@ var userenv = syscall.NewLazyDLL("userenv.dll")
 
 var procDeriveAppContainerSid = userenv.NewProc("DeriveAppContainerSidFromAppContainerName")
 
+// procDeleteAppContainerProfile removes a throwaway profile again; x/sys
+// does not export a wrapper for it.
+var procDeleteAppContainerProfile = userenv.NewProc("DeleteAppContainerProfile")
+
+// statusAppContainerAlreadyExists is the STATUS code (and its HRESULT
+// form) returned when the profile is already registered; the probe
+// treats either as success.
+const (
+	statusAppContainerAlreadyExists = 0x007A0054
+	hresultAlreadyExists            = 0x800700B7
+)
+
 // deriveContainerSid derives the deterministic AppContainer SID for a
 // stable container name (same name always yields the same SID, and
 // Phosphor derives the name from the workspace root). The caller must
@@ -65,8 +77,12 @@ func deriveContainerSid(name string) (*windows.SID, error) {
 // windowsTierProbe selects the enforcement tier for this host. The
 // build check alone is not the capability: a policy-restricted host
 // (WDAC, lockdown GPO) can refuse AppContainer derivation, so the
-// probe exercises the real primitive with a throwaway name and falls
-// back to the restricted-token tier on any failure.
+// probe exercises the real primitives — SID derivation and profile
+// registration — with a throwaway name and falls back to the
+// restricted-token tier on any failure. Registering the profile is
+// what the launch path (containerSidFor) actually does; Derive alone
+// is pure computation and can succeed while profile creation is
+// blocked.
 func windowsTierProbe() windowsTier {
 	if hostWindowsBuild() < win11MinBuild {
 		return tierRestrictedToken
@@ -76,7 +92,52 @@ func windowsTierProbe() windowsTier {
 		return tierRestrictedToken
 	}
 	windows.FreeSid(sid)
-	return tierAppContainer
+
+	// Exercise profile registration, the capability the kernel checks
+	// at confined launch. Clean the throwaway profile up on every
+	// path that created it.
+	created := registerProbeProfile()
+	if created {
+		namePtr, err := windows.UTF16PtrFromString("phosphor.sandbox.probe")
+		if err == nil {
+			procDeleteAppContainerProfile.Call(uintptr(unsafe.Pointer(namePtr)))
+		}
+		return tierAppContainer
+	}
+	return tierRestrictedToken
+}
+
+// registerProbeProfile reports whether the throwaway AppContainer
+// profile can be registered, which is the gate for the launch path.
+func registerProbeProfile() bool {
+	namePtr, err := windows.UTF16PtrFromString("phosphor.sandbox.probe")
+	if err != nil {
+		return false
+	}
+	display, err := windows.UTF16PtrFromString("Phosphor sandbox probe")
+	if err != nil {
+		return false
+	}
+	desc, err := windows.UTF16PtrFromString("Phosphor capability probe")
+	if err != nil {
+		return false
+	}
+	var sid *windows.SID
+	hr, _, _ := procCreateAppContainerProfile.Call(
+		uintptr(unsafe.Pointer(namePtr)),
+		uintptr(unsafe.Pointer(display)),
+		uintptr(unsafe.Pointer(desc)),
+		0,
+		0,
+		uintptr(unsafe.Pointer(&sid)),
+	)
+	if sid != nil {
+		windows.FreeSid(sid)
+	}
+	// The probe may run where the profile is already registered from
+	// an earlier session; that still proves the capability.
+	return int32(hr) == 0 || uint32(hr) == statusAppContainerAlreadyExists ||
+		uint32(hr) == hresultAlreadyExists
 }
 
 // selectedTier caches the probe per process: the capability is static

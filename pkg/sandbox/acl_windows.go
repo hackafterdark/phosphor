@@ -5,6 +5,7 @@ package sandbox
 import (
 	"fmt"
 	"runtime"
+	"sync"
 
 	"golang.org/x/sys/windows"
 )
@@ -21,7 +22,26 @@ import (
 // ACEs are preserved (SetEntriesInAclW merges). Objects with a NULL
 // DACL (allow-all) keep their semantics; the container grant is added
 // on top.
+//
+// The Get→merge→Set sequence is a read-modify-write on the object's
+// DACL, so it runs under aclMu: concurrent launches that share a root
+// (e.g. a toolchain cache) must not overwrite each other's ACE.
+// Successful grants are memoized — SetNamedSecurityInfo on a directory
+// propagates the inheritable ACE to the whole tree, which is expensive
+// on large workspaces and would otherwise repeat on every launch.
+var (
+	aclMu      sync.Mutex
+	grantedAce = map[string]struct{}{}
+)
+
 func grantAccess(path string, sid *windows.SID, accessMask windows.ACCESS_MASK) error {
+	key := path + "\x00" + sid.String() + "\x00" + fmt.Sprint(uint32(accessMask))
+	aclMu.Lock()
+	defer aclMu.Unlock()
+	if _, ok := grantedAce[key]; ok {
+		return nil
+	}
+
 	trustee := windows.TRUSTEE{
 		TrusteeForm:  windows.TRUSTEE_IS_SID,
 		TrusteeType:  windows.TRUSTEE_IS_WELL_KNOWN_GROUP,
@@ -54,6 +74,7 @@ func grantAccess(path string, sid *windows.SID, accessMask windows.ACCESS_MASK) 
 		windows.DACL_SECURITY_INFORMATION, nil, nil, newAcl, nil); err != nil {
 		return fmt.Errorf("set DACL %q: %w", path, err)
 	}
+	grantedAce[key] = struct{}{}
 	return nil
 }
 

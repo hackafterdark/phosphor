@@ -24,5 +24,13 @@ func spawnConfinedChild(cmd *exec.Cmd, spec Spec) (ConfinedChild, error) {
 	if cmd.Path == "" {
 		return nil, errNoPath
 	}
-	return SpawnConfined(cmd.Args, cmd.Env, cmd.Dir, spec, cmd.Stdin, cmd.Stdout, cmd.Stderr)
+	// argv[0] must be the resolved binary: the kernel resolves a bare
+	// or relative name with its own search order, not the shell's PATH
+	// and Dir, and grantLaunchBinary needs the absolute path to grant
+	// the launch directory.
+	argv := []string{cmd.Path}
+	if len(cmd.Args) > 1 {
+		argv = append(argv, cmd.Args[1:]...)
+	}
+	return SpawnConfined(argv, cmd.Env, cmd.Dir, spec, cmd.Stdin, cmd.Stdout, cmd.Stderr)
 }

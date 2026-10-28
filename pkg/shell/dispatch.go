@@ -228,6 +228,12 @@ func dispatchShebang(ctx context.Context, scriptPath string, probe []byte, args 
 		defer stopf()
 		_, err = child.Wait()
 		if err != nil {
+			// Cancellation killed the child; surface the context
+			// error instead of the kill exit code, matching the
+			// exec handlers.
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			var exitErr *exec.ExitError
 			if errors.As(err, &exitErr) {
 				code := exitErr.ExitCode()
