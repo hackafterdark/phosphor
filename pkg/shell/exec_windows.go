@@ -21,15 +21,14 @@ const defaultKillTimeout = 2 * time.Second
 // default handler already handles adequately.
 func isolateProcess(_ *exec.Cmd) {}
 
-// processGroupExecHandler on Windows confines the child through the
-// restricted token (set inside confineProcess) and assigns it to a
-// containment Job Object after spawn. Unlike the Unix handler there is
-// no process-group signal to target; cancellation kills the child
-// directly, and the job's kill-on-close covers any descendants.
-//
-// v1 has no kernel-enforced workspace FS boundary on Windows (see
-// pkg/sandbox/isolator_windows.go); sandbox.Confine reports that
-// honestly and workspace mode degrades with a visible warning.
+// processGroupExecHandler on Windows routes confined children through
+// the platform tier: the Windows 11 AppContainer tier launches the
+// child directly through confineSpawn (kernel-enforced workspace FS
+// boundary), while older hosts stay on the restricted token (set
+// inside confineProcess) with a containment Job Object after spawn.
+// Unlike the Unix handler there is no process-group signal to target;
+// cancellation kills the child directly, and the job's kill-on-close
+// covers any descendants.
 func processGroupExecHandler(killTimeout time.Duration, sbx *sandboxPolicy) interp.ExecHandlerFunc {
 	return func(ctx context.Context, args []string) error {
 		hc := interp.HandlerCtx(ctx)
@@ -49,8 +48,18 @@ func processGroupExecHandler(killTimeout time.Duration, sbx *sandboxPolicy) inte
 			Stderr: hc.Stderr,
 		}
 		isolateProcess(&cmd)
-		if refused := confineProcess(&cmd, sbx, hc.Stderr); refused != nil {
+		child, refused := confineSpawn(&cmd, sbx, hc.Stderr)
+		if refused != nil {
 			return refused
+		}
+		if child != nil {
+			// AppContainer tier: the kernel launched the child;
+			// cancellation kills it directly and the job's
+			// kill-on-close covers any descendants.
+			stopf := context.AfterFunc(ctx, func() { _ = child.Kill() })
+			defer stopf()
+			_, err = child.Wait()
+			return exitStatusFromError(ctx, hc.Stderr, err)
 		}
 
 		err = cmd.Start()

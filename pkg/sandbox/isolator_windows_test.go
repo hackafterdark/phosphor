@@ -32,9 +32,15 @@ func TestWindowsAvailableHonestAboutFSBoundary(t *testing.T) {
 	t.Parallel()
 
 	ok, detail := (windowsIsolator{}).Available()
-	// v1 cannot kernel-enforce the workspace FS boundary on Windows, so
-	// workspace mode must degrade with a visible warning and strict mode
-	// must refuse exec (invariant 1).
+	// The answer must match the tier the host actually enforces: v2
+	// (AppContainer) kernel-enforces the workspace FS boundary and
+	// reports available; v1 (restricted token) cannot and must degrade
+	// with a visible warning (invariant 1).
+	if selectedTier() == tierAppContainer {
+		require.True(t, ok, "AppContainer hosts must report the boundary available")
+		require.Contains(t, detail, "AppContainer")
+		return
+	}
 	require.False(t, ok)
 	require.Contains(t, detail, "FS boundary")
 }

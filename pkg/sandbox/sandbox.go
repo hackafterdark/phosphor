@@ -54,6 +54,30 @@ type Spec struct {
 	Limits ResourceLimits
 }
 
+// ConfinedChild is a kernel-launched confined child whose confinement
+// cannot travel through exec.Cmd (Windows AppContainer tier). Callers
+// Wait on it instead of cmd.Wait.
+type ConfinedChild interface {
+	Wait() (int, error)
+	Kill() error
+}
+
+// SpawnConfinedChild launches cmd through the kernel-confinement direct
+// launch path when the platform requires it. It returns (nil, nil) when
+// the exec.Cmd path carries the confinement (Unix isolators, the
+// Windows restricted-token tier), so callers fall through to Confine.
+// A non-nil error on a sandbox-capable host means the kernel refused
+// the launch; callers must treat it like a Confine error.
+func SpawnConfinedChild(cmd *exec.Cmd, mode string, spec Spec) (ConfinedChild, error) {
+	if !ModeEnabled(mode) {
+		return nil, nil
+	}
+	if err := spec.Limits.Validate(); err != nil {
+		return nil, err
+	}
+	return spawnConfinedChild(cmd, spec)
+}
+
 // Isolator applies a Spec to a child process so the child and all of its
 // descendants run confined by the kernel.
 type Isolator interface {

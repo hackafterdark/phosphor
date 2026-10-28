@@ -89,6 +89,37 @@ func confineProcess(cmd *exec.Cmd, sbx *sandboxPolicy, stderr io.Writer) error {
 	return nil
 }
 
+// confineSpawn routes the child through the kernel-confinement direct
+// launch path when the platform requires it (Windows 11 AppContainer).
+// Returns a non-nil ConfinedChild when the kernel launched the child —
+// callers Wait on it instead of cmd.Wait — or (nil, nil) when the
+// confinement is on cmd itself (Unix isolators, restricted-token tier).
+// On launch failure: strict mode refuses the exec (marker + 126);
+// workspace mode records the degradation and falls through to the
+// exec.Cmd path, which still carries whatever partial containment
+// Confine can attach.
+func confineSpawn(cmd *exec.Cmd, sbx *sandboxPolicy, stderr io.Writer) (sandbox.ConfinedChild, error) {
+	if sbx == nil {
+		return nil, nil
+	}
+	child, err := sandbox.SpawnConfinedChild(cmd, sbx.mode, sbx.spec)
+	if err == nil && child != nil {
+		return child, nil
+	}
+	if err != nil {
+		if strings.EqualFold(sbx.mode, "strict") {
+			fmt.Fprintf(stderr, "%s: %v\n", SandboxRefusalMarker, err)
+			return nil, interp.ExitStatus(126)
+		}
+		if !sbx.degraded {
+			sbx.degraded = true
+			slog.Warn("Kernel confined launch failed; falling back to partial containment",
+				"mode", sbx.mode, "workspace", sbx.spec.WorkspaceRoot, "err", err)
+		}
+	}
+	return nil, confineProcess(cmd, sbx, stderr)
+}
+
 // escapeHatchHandler returns middleware that denies host escape-hatch
 // binaries (wsl, cmd, powershell) and inline shell execution (sh -c etc.)
 // while the sandbox is active. `wsl` crosses the host kernel boundary,
