@@ -7,6 +7,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
+	"net"
+	"net/url"
 	"strings"
 	"time"
 
@@ -74,11 +77,22 @@ func Init(ctx context.Context, cfg config.Observability) (func(context.Context) 
 		if memoryBuffer != nil {
 			// No collector, but the ring is on: a local-only provider with
 			// just the memory processor keeps spans alive in the buffer.
-			tp := sdktrace.NewTracerProvider(
-				sdktrace.WithSpanProcessor(sdktrace.NewSimpleSpanProcessor(memoryBuffer)),
-			)
-			otel.SetTracerProvider(tp)
-			tracer = otel.Tracer(TracerName)
+			useLocalProvider()
+		}
+		return func(ctx context.Context) error { return nil }, nil
+	}
+
+	// Probe the endpoint once before wiring the exporter. The gRPC and
+	// HTTP exporters reconnect indefinitely against an unreachable or
+	// misconfigured collector; on Windows that retry loop churns sockets
+	// and page faults for the lifetime of the process (observed: 66k
+	// handles after 18h against a dead collector). Fail open instead:
+	// keep local-only tracing and tell the user why export is off.
+	if !endpointReachable(ctx, cfg.Endpoint) {
+		slog.Warn("OTLP endpoint unreachable; trace export disabled for this session",
+			"endpoint", cfg.Endpoint)
+		if memoryBuffer != nil {
+			useLocalProvider()
 		}
 		return func(ctx context.Context) error { return nil }, nil
 	}
@@ -124,11 +138,18 @@ func Init(ctx context.Context, cfg config.Observability) (func(context.Context) 
 		exporter, err = otlptracehttp.New(ctx,
 			otlptracehttp.WithEndpoint(cfg.Endpoint),
 			otlptracehttp.WithInsecure(),
+			// Bound the retry storm if the collector dies mid-session:
+			// retries stop after this window and the batch is dropped.
+			otlptracehttp.WithTimeout(5*time.Second),
 		)
 	default:
 		exporter, err = otlptracegrpc.New(ctx,
 			otlptracegrpc.WithEndpoint(cfg.Endpoint),
 			otlptracegrpc.WithInsecure(),
+			// Throttle connection re-establishment after the startup
+			// probe passes; gRPC retries forever by default.
+			otlptracegrpc.WithReconnectionPeriod(30*time.Second),
+			otlptracegrpc.WithTimeout(5*time.Second),
 		)
 	}
 	if err != nil {
@@ -166,6 +187,42 @@ func Init(ctx context.Context, cfg config.Observability) (func(context.Context) 
 	))
 
 	return tp.Shutdown, nil
+}
+
+// useLocalProvider installs a tracer provider that feeds only the
+// in-process ring, with no exporter and no network I/O.
+func useLocalProvider() {
+	tp := sdktrace.NewTracerProvider(
+		sdktrace.WithSpanProcessor(sdktrace.NewSimpleSpanProcessor(memoryBuffer)),
+	)
+	otel.SetTracerProvider(tp)
+	tracer = otel.Tracer(TracerName)
+}
+
+// endpointReachable probes the OTLP endpoint with a single TCP connection.
+// It says nothing about whether the collector is healthy — only whether
+// anything accepts connections at all. Exporters that retry forever
+// against an unreachable address burn sockets and CPU for the lifetime of
+// the process, so Init consults this probe once and falls back to
+// local-only tracing when the endpoint is dark.
+func endpointReachable(ctx context.Context, endpoint string) bool {
+	d := net.Dialer{Timeout: 2 * time.Second}
+	conn, err := d.DialContext(ctx, "tcp", dialTarget(endpoint))
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
+}
+
+// dialTarget reduces an endpoint that may carry a scheme and path (the
+// HTTP protocol accepts URLs like http://localhost:4318/v1/traces) to the
+// host:port the TCP probe needs.
+func dialTarget(endpoint string) string {
+	if u, err := url.Parse(endpoint); err == nil && u.Host != "" {
+		return u.Host
+	}
+	return endpoint
 }
 
 // Tracer returns the global Phosphor tracer.
