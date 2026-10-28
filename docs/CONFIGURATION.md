@@ -399,10 +399,15 @@ everything else):
 ```json
 {
   "permissions": {
-    "allowed_tools": ["view", "grep", "glob", "ls", "structural_search"]
+    "allowed_tools": ["view", "grep", "glob", "ls", "structural_search"],
+    "allow_commands": ["git", "gh", "go build", "go test", "go vet"]
   }
 }
 ```
+
+`allow_commands` auto-approves shell commands whose every program matches an
+entry (a bare name covers the program, a prefix like `go build` covers the
+subcommand); compound commands prompt unless every part matches.
 
 ### `tools`
 

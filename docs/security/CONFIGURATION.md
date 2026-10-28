@@ -46,6 +46,20 @@ By default, Phosphor will ask you for permission before running tool calls
 that modify the filesystem or execute shell commands. You can control this
 behavior via configuration or the `--yolo` CLI flag.
 
+### Defaults and Session Grants
+
+By default **every** tool that mutates state or runs shell commands prompts
+for approval — including `git`, `go build`, and file edits. There is no
+built-in allowlist of "safe" commands; if a command ran without a prompt,
+one of the opt-ins below is active.
+
+When a prompt appears you can choose **Allow for this session**. That grant
+is *command-agnostic by design*: it covers the tool and action (e.g. bash
+execute) for the rest of the session, regardless of arguments. So after one
+session grant on the bash tool, later `git` or `go test` invocations run
+without further prompts. Sandbox escalation prompts are deliberately
+excluded from session auto-approval — those always reach you.
+
 ### Allowing Tools
 
 If you'd like to allow certain tools to be executed without prompting you for
@@ -70,6 +84,32 @@ permissions, list them in `permissions.allowed_tools`:
 Tools listed here will execute without a permission prompt. All other tools
 will still require approval. Use this with care — only whitelist read-only
 or low-risk tools.
+
+### Allowing Commands
+
+To auto-approve individual shell commands without whitelisting the whole bash
+tool, list command prefixes in `permissions.allow_commands`:
+
+```json
+{
+  "$schema": "https://github.com/hackafterdark/phosphor/blob/main/schema.json",
+  "permissions": {
+    "allow_commands": ["git", "gh", "go build", "go test", "go vet"]
+  }
+}
+```
+
+Each entry is matched against the parsed command: a bare name (`git`) covers
+every invocation of that program; a prefix (`go build`) covers only that
+program and subcommand. Compound commands (`git add -A && git commit`) are
+auto-approved only when **every** program in them matches — `git status &&
+rm -rf /` still prompts. The check is deny-by-default: anything the parser
+cannot statically verify (command substitution, subshells, dynamic program
+names) falls through to the normal prompt.
+
+This shortcut silences the permission prompt only. It never bypasses the
+sandbox, pathguard, or dangerous-command checks, and sandbox escalation
+prompts always reach you.
 
 ### YOLO Mode
 
@@ -919,6 +959,7 @@ an environment proxy cannot bypass destination checks.
 |---------|-------------|------|---------|
 | Ignore files | `.phosphorignore` | File | Respects `.gitignore` |
 | Tool permission prompts | `permissions.allowed_tools` | Array | All tools prompt |
+| Shell command auto-approve | `permissions.allow_commands` | Array | None |
 | Skip all permissions | CLI flag `--yolo` / `ctrl+y` | Flag | Off |
 | Disable built-in tools | `options.disabled_tools` | Array | None |
 | Disable skills | `options.disabled_skills` | Array | None |

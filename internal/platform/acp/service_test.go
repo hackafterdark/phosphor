@@ -988,7 +988,7 @@ func TestHandlePermissionRequest_Allow(t *testing.T) {
 		ID:   "ws-1",
 		Path: t.TempDir(),
 		App: &app.App{
-			Permissions: permission.NewPermissionService("", false, nil),
+			Permissions: permission.NewPermissionService("", false, nil, nil),
 		},
 	}
 	backend.InsertWorkspaceForTest(b, ws)
@@ -1078,7 +1078,7 @@ func TestHandlePermissionRequest_Deny(t *testing.T) {
 		ID:   "ws-1",
 		Path: t.TempDir(),
 		App: &app.App{
-			Permissions: permission.NewPermissionService("", false, nil),
+			Permissions: permission.NewPermissionService("", false, nil, nil),
 		},
 	}
 	backend.InsertWorkspaceForTest(b, ws)
@@ -1168,7 +1168,7 @@ func TestHandlePermissionRequest_WithParams(t *testing.T) {
 		ID:   "ws-1",
 		Path: t.TempDir(),
 		App: &app.App{
-			Permissions: permission.NewPermissionService("", false, nil),
+			Permissions: permission.NewPermissionService("", false, nil, nil),
 		},
 	}
 	backend.InsertWorkspaceForTest(b, ws)
