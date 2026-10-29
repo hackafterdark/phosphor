@@ -23,11 +23,16 @@ import (
 
 // grant is the material needed to undo a grantAccess: the path, the
 // trustee SID in string form, and the access mask. The SID is stored
-// parsed so teardown never has to re-derive or trust ambient state.
+// as a string and reparsed during teardown.
 type grant struct {
 	path string
 	sid  string
 	mask windows.ACCESS_MASK
+}
+
+// key returns the memoization key for the grant.
+func (g grant) key() string {
+	return g.path + "\x00" + g.sid + "\x00" + fmt.Sprint(uint32(g.mask))
 }
 
 // grantAccess adds an ACE allowing sid accessMask on path. Existing
@@ -47,7 +52,8 @@ var (
 )
 
 func grantAccess(path string, sid *windows.SID, accessMask windows.ACCESS_MASK) error {
-	key := path + "\x00" + sid.String() + "\x00" + fmt.Sprint(uint32(accessMask))
+	g := grant{path: path, sid: sid.String(), mask: accessMask}
+	key := g.key()
 	aclMu.Lock()
 	defer aclMu.Unlock()
 	if _, ok := grantedAce[key]; ok {
@@ -86,7 +92,7 @@ func grantAccess(path string, sid *windows.SID, accessMask windows.ACCESS_MASK) 
 		windows.DACL_SECURITY_INFORMATION, nil, nil, newAcl, nil); err != nil {
 		return fmt.Errorf("set DACL %q: %w", path, err)
 	}
-	grantedAce[key] = grant{path: path, sid: sid.String(), mask: accessMask}
+	grantedAce[key] = g
 	return nil
 }
 
@@ -116,10 +122,16 @@ func CleanupContainerGrants() error {
 	var errs []error
 	for _, g := range snapshot {
 		// A path deleted mid-session (toolchain caches churn) took
-		// its ACE with it; drop the memo and move on.
+		// its ACE with it; drop the memo and move on. Other stat
+		// failures say nothing about the ACE, so keep the memo and
+		// report the error instead of guessing.
 		if _, err := os.Stat(g.path); err != nil {
+			if !os.IsNotExist(err) {
+				errs = append(errs, fmt.Errorf("stat %q: %w", g.path, err))
+				continue
+			}
 			aclMu.Lock()
-			delete(grantedAce, g.path+"\x00"+g.sid+"\x00"+fmt.Sprint(uint32(g.mask)))
+			delete(grantedAce, g.key())
 			aclMu.Unlock()
 			continue
 		}
@@ -131,7 +143,7 @@ func CleanupContainerGrants() error {
 			continue
 		}
 		aclMu.Lock()
-		delete(grantedAce, g.path+"\x00"+g.sid+"\x00"+fmt.Sprint(uint32(g.mask)))
+		delete(grantedAce, g.key())
 		aclMu.Unlock()
 	}
 	return errors.Join(errs...)
