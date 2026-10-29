@@ -40,6 +40,8 @@ Phosphor treats the workspace as a strict, high-integrity sandbox. Phosphor empl
 
 **Configuration-Driven Lockdown:** Security manifests (phosphor.json) allow for granular tool blacklisting, read-only modes, and strict network egress policies.
 
+**Consent vs. Enforcement:** Permission prompts are consent checkpoints, not the security boundary. Session grants, tool allow-lists, and command allow-lists (`permissions.allowed_tools`, `permissions.allow_commands`) can silence prompts, but no consent-layer grant can relax the kernel sandbox, workspace confinement, or escalation checks — those enforce independently on every command. See [Permission Prompts](security/CONFIGURATION.md#permission-prompts).
+
 ## 3. Observability
 
 Autonomous agents cannot be black boxes. Phosphor provides a "flight recorder" for your agent's decision-making.

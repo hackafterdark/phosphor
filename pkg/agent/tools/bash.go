@@ -43,6 +43,11 @@ type BashPermissionsParams struct {
 	Sandbox             string `json:"sandbox"`
 }
 
+// CommandText implements permission.CommandCarrier so the permission
+// service can consult permissions.allow_commands without importing this
+// package.
+func (p BashPermissionsParams) CommandText() string { return p.Command }
+
 type BashResponseMetadata struct {
 	StartTime        int64  `json:"start_time"`
 	EndTime          int64  `json:"end_time"`

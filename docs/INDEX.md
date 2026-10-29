@@ -75,11 +75,14 @@ searchable through the `phosphor_docs` tool or by viewing any
 
 | Doc | Covers |
 | --- | --- |
+| [security/HARDENING.md](security/HARDENING.md) | Security philosophy, the control stack, and a recommended hardening baseline. Start here. |
 | [security/CONFIGURATION.md](security/CONFIGURATION.md) | Every security control and how to configure it. |
 | [security/WORKSPACE_HARDENING.md](security/WORKSPACE_HARDENING.md) | Filesystem confinement and the workspace threat model. |
 | [security/ENVIRONMENT_HARDENING.md](security/ENVIRONMENT_HARDENING.md) | Environment variable filtering in shell commands. |
 | [security/NETWORK_EGRESS_HARDENING.md](security/NETWORK_EGRESS_HARDENING.md) | The network egress firewall for fetch/search. |
 | [security/SECRETS_PROTECTION.md](security/SECRETS_PROTECTION.md) | Defense-in-depth against secrets reaching the model. |
+| [security/SECURITY_VALIDATION_TEST_SUITE.md](security/SECURITY_VALIDATION_TEST_SUITE.md) | Maintainer-facing validation walkthrough for the guard stack. |
+| [adr/0016-os-level-sandboxing.md](adr/0016-os-level-sandboxing.md) | Kernel sandboxing of bash children (Landlock / Seatbelt / restricted token). |
 
 ## Platform and Integration
 

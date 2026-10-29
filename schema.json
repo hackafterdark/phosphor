@@ -1155,6 +1155,18 @@
           },
           "type": "array",
           "description": "List of tools that don't require permission prompts"
+        },
+        "allow_commands": {
+          "items": {
+            "type": "string",
+            "examples": [
+              "git",
+              "go build",
+              "gh pr"
+            ]
+          },
+          "type": "array",
+          "description": "Shell command prefixes that don't require permission prompts"
         }
       },
       "additionalProperties": false,

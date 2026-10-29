@@ -42,6 +42,7 @@ Search it with the `phosphor_docs` tool, or open a file below with the
 - [OpenAI-Compatible API](phosphor://docs/platform/openai-api.md)
 - [Phosphor Security Configuration](phosphor://docs/security/CONFIGURATION.md)
 - [Environment Variable Hardening](phosphor://docs/security/ENVIRONMENT_HARDENING.md)
+- [Security Hardening](phosphor://docs/security/HARDENING.md)
 - [Network Egress Hardening](phosphor://docs/security/NETWORK_EGRESS_HARDENING.md)
 - [Secret Protection & Anti-Exfiltration](phosphor://docs/security/SECRETS_PROTECTION.md)
 - [Workspace Filesystem Hardening](phosphor://docs/security/WORKSPACE_HARDENING.md)

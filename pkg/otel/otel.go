@@ -7,6 +7,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
+	"net"
+	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -74,11 +78,22 @@ func Init(ctx context.Context, cfg config.Observability) (func(context.Context) 
 		if memoryBuffer != nil {
 			// No collector, but the ring is on: a local-only provider with
 			// just the memory processor keeps spans alive in the buffer.
-			tp := sdktrace.NewTracerProvider(
-				sdktrace.WithSpanProcessor(sdktrace.NewSimpleSpanProcessor(memoryBuffer)),
-			)
-			otel.SetTracerProvider(tp)
-			tracer = otel.Tracer(TracerName)
+			useLocalProvider(cfg.SamplingRate)
+		}
+		return func(ctx context.Context) error { return nil }, nil
+	}
+
+	// Probe the endpoint once before wiring the exporter. The gRPC and
+	// HTTP exporters reconnect indefinitely against an unreachable or
+	// misconfigured collector; on Windows that retry loop churns sockets
+	// and page faults for the lifetime of the process (observed: 66k
+	// handles after 18h against a dead collector). Fail open instead:
+	// keep local-only tracing and tell the user why export is off.
+	if !endpointReachable(ctx, cfg.Endpoint, cfg.Protocol) {
+		slog.Warn("OTLP endpoint unreachable; trace export disabled for this session",
+			"endpoint", cfg.Endpoint)
+		if memoryBuffer != nil {
+			useLocalProvider(cfg.SamplingRate)
 		}
 		return func(ctx context.Context) error { return nil }, nil
 	}
@@ -124,11 +139,18 @@ func Init(ctx context.Context, cfg config.Observability) (func(context.Context) 
 		exporter, err = otlptracehttp.New(ctx,
 			otlptracehttp.WithEndpoint(cfg.Endpoint),
 			otlptracehttp.WithInsecure(),
+			// Bound the retry storm if the collector dies mid-session:
+			// retries stop after this window and the batch is dropped.
+			otlptracehttp.WithTimeout(5*time.Second),
 		)
 	default:
 		exporter, err = otlptracegrpc.New(ctx,
 			otlptracegrpc.WithEndpoint(cfg.Endpoint),
 			otlptracegrpc.WithInsecure(),
+			// Throttle connection re-establishment after the startup
+			// probe passes; gRPC retries forever by default.
+			otlptracegrpc.WithReconnectionPeriod(30*time.Second),
+			otlptracegrpc.WithTimeout(5*time.Second),
 		)
 	}
 	if err != nil {
@@ -166,6 +188,67 @@ func Init(ctx context.Context, cfg config.Observability) (func(context.Context) 
 	))
 
 	return tp.Shutdown, nil
+}
+
+// useLocalProvider installs a tracer provider that feeds only the
+// in-process ring, with no exporter and no network I/O. It keeps the
+// configured sampler so a rate of 0 (or any partial rate) applies to
+// the ring exactly as it does to remote export.
+func useLocalProvider(samplingRate float64) {
+	tp := sdktrace.NewTracerProvider(
+		sdktrace.WithSpanProcessor(sdktrace.NewSimpleSpanProcessor(memoryBuffer)),
+		sdktrace.WithSampler(sdktrace.ParentBased(
+			sdktrace.TraceIDRatioBased(samplingRate),
+		)),
+	)
+	otel.SetTracerProvider(tp)
+	tracer = otel.Tracer(TracerName)
+}
+
+// endpointReachable probes the OTLP endpoint with a single TCP
+// connection. It says nothing about whether the collector is healthy —
+// only whether anything accepts connections at all. Exporters that
+// retry forever against an unreachable address burn sockets and CPU for
+// the lifetime of the process, so Init consults this probe once and
+// falls back to local-only tracing when the endpoint is dark.
+//
+// For the HTTP protocol the probe follows the exporter's own route:
+// the HTTP exporter uses http.ProxyFromEnvironment by default, so a
+// collector reachable only through HTTP(S)_PROXY must be probed through
+// the proxy address, not the bare host:port.
+func endpointReachable(ctx context.Context, endpoint, protocol string) bool {
+	target := dialTarget(endpoint)
+	if protocol == "http/protobuf" {
+		if u, err := url.Parse(endpoint); err == nil && u.Host != "" {
+			if proxy, err := proxyForEndpoint(u); err == nil && proxy != nil {
+				target = dialTarget(proxy.String())
+			}
+		}
+	}
+	d := net.Dialer{Timeout: 2 * time.Second}
+	conn, err := d.DialContext(ctx, "tcp", target)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
+}
+
+// proxyForEndpoint resolves the proxy the HTTP exporter would use for
+// u. It is a variable so tests can pin the probe's routing without
+// racing net/http's once-cached proxy environment.
+var proxyForEndpoint = func(u *url.URL) (*url.URL, error) {
+	return http.ProxyFromEnvironment(&http.Request{URL: u})
+}
+
+// dialTarget reduces an endpoint that may carry a scheme and path (the
+// HTTP protocol accepts URLs like http://localhost:4318/v1/traces) to the
+// host:port the TCP probe needs.
+func dialTarget(endpoint string) string {
+	if u, err := url.Parse(endpoint); err == nil && u.Host != "" {
+		return u.Host
+	}
+	return endpoint
 }
 
 // Tracer returns the global Phosphor tracer.

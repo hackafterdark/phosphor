@@ -119,15 +119,19 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore, skillsMgr
 	cfg := store.Config()
 	skipPermissionsRequests := store.Overrides().SkipPermissionRequests
 	var allowedTools []string
+	var allowCommands []string
 	if cfg.Permissions != nil && cfg.Permissions.AllowedTools != nil {
 		allowedTools = cfg.Permissions.AllowedTools
+	}
+	if cfg.Permissions != nil && cfg.Permissions.AllowCommands != nil {
+		allowCommands = cfg.Permissions.AllowCommands
 	}
 
 	app := &App{
 		Sessions:    sessions,
 		Messages:    messages,
 		History:     files,
-		Permissions: permission.NewPermissionService(store.WorkingDir(), skipPermissionsRequests, allowedTools),
+		Permissions: permission.NewPermissionService(store.WorkingDir(), skipPermissionsRequests, allowedTools, allowCommands),
 		FileTracker: filetracker.NewService(q),
 		GoalService: goalService,
 		LSPManager:  lsp.NewManager(store),

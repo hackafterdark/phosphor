@@ -55,6 +55,10 @@ Standard OTel environment variables are supported via `resource.WithFromEnv()`:
 
 When `endpoint` is empty, Phosphor uses a no-op tracer and meter. No network calls are made, no SDK overhead occurs, and all instrumentation points are safe to call.
 
+### Unreachable Endpoint
+
+At startup Phosphor probes the configured endpoint with a single TCP connection. If nothing accepts the connection, trace export is disabled for the session and a warning is logged; local-only tracing (the `phosphor_trace` ring) keeps working if `memory_buffer` is on. This prevents a dead or misconfigured collector from burning sockets and CPU on endless reconnect attempts. If the collector comes back online later, restart Phosphor to resume export.
+
 ## Architecture
 
 ```

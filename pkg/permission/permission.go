@@ -109,6 +109,7 @@ type permissionService struct {
 	autoApproveSessionsMu sync.RWMutex
 	skip                  atomic.Bool
 	allowedTools          []string
+	allowCmdEntries       map[string][][]string
 
 	// used to make sure we only process one request at a time
 	requestMu       sync.Mutex
@@ -193,6 +194,22 @@ func (s *permissionService) Request(ctx context.Context, opts CreatePermissionRe
 	commandKey := opts.ToolName + ":" + opts.Action
 	if slices.Contains(s.allowedTools, commandKey) || slices.Contains(s.allowedTools, opts.ToolName) {
 		return true, nil
+	}
+
+	// permissions.allow_commands: a shell command whose every program is
+	// allowlisted runs without a prompt. The gate is argv-verified via the
+	// shell parser, and the sandbox, pathguard, and escalation paths keep
+	// their own checks — this shortcut only silences the permission prompt.
+	if len(s.allowCmdEntries) > 0 {
+		if carrier, ok := opts.Params.(CommandCarrier); ok {
+			if commandMatchesAllowlist(carrier.CommandText(), s.allowCmdEntries) {
+				s.notificationBroker.Publish(pubsub.CreatedEvent, PermissionNotification{
+					ToolCallID: opts.ToolCallID,
+					Granted:    true,
+				})
+				return true, nil
+			}
+		}
 	}
 
 	// A PreToolUse hook that returned decision=allow stamps the context
@@ -336,7 +353,7 @@ func (s *permissionService) SkipRequests() bool {
 	return s.skip.Load()
 }
 
-func NewPermissionService(workingDir string, skip bool, allowedTools []string) Service {
+func NewPermissionService(workingDir string, skip bool, allowedTools []string, allowCommands []string) Service {
 	svc := &permissionService{
 		Broker:              pubsub.NewBroker[PermissionRequest](),
 		notificationBroker:  pubsub.NewBroker[PermissionNotification](),
@@ -344,6 +361,7 @@ func NewPermissionService(workingDir string, skip bool, allowedTools []string) S
 		sessionPermissions:  csync.NewMap[PermissionKey, bool](),
 		autoApproveSessions: make(map[string]bool),
 		allowedTools:        allowedTools,
+		allowCmdEntries:     parseAllowEntries(allowCommands),
 		pendingRequests:     csync.NewMap[string, chan bool](),
 	}
 	svc.skip.Store(skip)

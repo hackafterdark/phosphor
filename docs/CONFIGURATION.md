@@ -399,10 +399,21 @@ everything else):
 ```json
 {
   "permissions": {
-    "allowed_tools": ["view", "grep", "glob", "ls", "structural_search"]
+    "allowed_tools": ["view", "grep", "glob", "ls", "structural_search"],
+    "allow_commands": ["git", "gh", "go build", "go test", "go vet"]
   }
 }
 ```
+
+`allow_commands` auto-approves shell commands whose every program matches an
+entry (a bare name covers the program, a prefix like `go build` covers the
+subcommand); compound commands prompt unless every part matches.
+
+These options control the *prompt* only. They never relax the sandbox,
+pathguard, or escalation checks. For how the consent and enforcement layers
+fit together — including the argument-agnostic "Allow for this session"
+grant — see
+[Permission Prompts](security/CONFIGURATION.md#permission-prompts).
 
 ### `tools`
 
