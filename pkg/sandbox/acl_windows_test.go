@@ -74,3 +74,35 @@ func TestGrantAccessPreservesExistingAces(t *testing.T) {
 	require.GreaterOrEqual(t, uint32(daclAfter.AceCount), before+1)
 	require.True(t, hasContainerAce(t, dir, sid))
 }
+
+func TestCleanupContainerGrantsRevokesAces(t *testing.T) {
+	dir := t.TempDir()
+	sid, err := deriveContainerSid("phosphor.sandbox.teardown")
+	require.NoError(t, err)
+	defer windows.FreeSid(sid)
+
+	require.NoError(t, grantAccess(dir, sid, accessFor(false)))
+	require.True(t, hasContainerAce(t, dir, sid),
+		"container ACE missing after grant")
+
+	require.NoError(t, CleanupContainerGrants())
+	require.False(t, hasContainerAce(t, dir, sid),
+		"container ACE must be revoked on teardown")
+}
+
+func TestCleanupContainerGrantsAllowsRegrant(t *testing.T) {
+	dir := t.TempDir()
+	sid, err := deriveContainerSid("phosphor.sandbox.regrant")
+	require.NoError(t, err)
+	defer windows.FreeSid(sid)
+
+	require.NoError(t, grantAccess(dir, sid, accessFor(false)))
+	require.NoError(t, CleanupContainerGrants())
+
+	// A second launch after teardown must re-grant: the memoized
+	// grant was cleared, so the ACE reappears.
+	require.NoError(t, grantAccess(dir, sid, accessFor(false)))
+	require.True(t, hasContainerAce(t, dir, sid),
+		"ACE must be re-grantable after teardown")
+	require.NoError(t, CleanupContainerGrants())
+}

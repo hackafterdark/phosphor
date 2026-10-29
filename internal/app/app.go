@@ -47,6 +47,7 @@ import (
 	"github.com/hackafterdark/phosphor/pkg/otel"
 	"github.com/hackafterdark/phosphor/pkg/permission"
 	"github.com/hackafterdark/phosphor/pkg/pubsub"
+	"github.com/hackafterdark/phosphor/pkg/sandbox"
 	"github.com/hackafterdark/phosphor/pkg/session"
 	"github.com/hackafterdark/phosphor/pkg/shell"
 	"github.com/hackafterdark/phosphor/pkg/skills"
@@ -321,7 +322,7 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore, skillsMgr
 			return
 		}
 		client.SetDiagnosticsCallback(updateLSPDiagnostics)
-		updateLSPState(name, client.GetServerState(), nil, client, 0)
+		updateLSPState(name, lsp.StateReady, nil, client, 0)
 	})
 	go app.LSPManager.TrackConfigured()
 
@@ -905,6 +906,13 @@ func (app *App) Shutdown() {
 		}
 	}
 	wg.Wait()
+
+	// Revoke sandbox container ACEs last: confined children (killed by
+	// KillAll above) must be gone before their host-directory grants
+	// are withdrawn, and cleanupFuncs run in parallel.
+	if err := sandbox.CleanupContainerGrants(); err != nil {
+		slog.Warn("Failed to revoke sandbox container ACEs on shutdown", "error", err)
+	}
 }
 
 // checkForUpdates checks for available updates.
