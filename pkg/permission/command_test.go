@@ -2,6 +2,7 @@ package permission
 
 import (
 	"context"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -29,7 +30,6 @@ func TestCommandMatchesAllowlist(t *testing.T) {
 		{"prefix entry mismatch", "go clean -cache", false},
 		{"unknown program", "rm -rf /", false},
 		{"path-prefixed program", "/usr/bin/git status", true},
-		{"quoted windows exe program", `"C:/Program Files/Git/bin/git.exe" status`, true},
 		{"case-insensitive program", "GIT status", true},
 		{"compound both allowed", "git add -A && git commit -m 'msg'", true},
 		{"compound one denied", "git status && rm -rf /", false},
@@ -64,6 +64,22 @@ func TestCommandMatchesAllowlistEmptyAllowlist(t *testing.T) {
 	t.Parallel()
 	require.False(t, commandMatchesAllowlist("git status", nil))
 	require.False(t, commandMatchesAllowlist("git status", map[string][][]string{}))
+}
+
+// TestCommandMatchesAllowlistWindowsExe pins the platform split in
+// normalizeCmdName: on Windows the .exe suffix is stripped so
+// git.exe matches the git entry; elsewhere foo.exe is a legitimate
+// distinct program name and must not alias onto the bare entry.
+func TestCommandMatchesAllowlistWindowsExe(t *testing.T) {
+	t.Parallel()
+
+	entries := parseAllowEntries([]string{"git"})
+	got := commandMatchesAllowlist(`"C:/Program Files/Git/bin/git.exe" status`, entries)
+	if runtime.GOOS == "windows" {
+		require.True(t, got, "git.exe must match the git entry on Windows")
+	} else {
+		require.False(t, got, "git.exe is a distinct program name on non-Windows hosts")
+	}
 }
 
 func TestAllowCommandsAutoApproves(t *testing.T) {
