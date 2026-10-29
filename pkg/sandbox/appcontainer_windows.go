@@ -122,8 +122,10 @@ func containerSidFor(workspace string) (*windows.SID, error) {
 // Defender tamper protection. Instead, grantLaunchBinary adds the
 // launched binary"s own directory per launch.
 //
-// Grants are additive and linger after the child exits (same posture
-// as the MXC backends); removal is a tracked Phase-2 follow-up.
+// Grants are additive and shared across launches (the memoized
+// grantAccess makes repeated launches free); CleanupContainerGrants
+// revokes them on app shutdown so host DACLs return to their
+// pre-launch state.
 func prepareConfinedRoots(sid *windows.SID, spec Spec) error {
 	if err := grantRoot(spec.WorkspaceRoot, sid, accessFor(false)); err != nil {
 		return err
