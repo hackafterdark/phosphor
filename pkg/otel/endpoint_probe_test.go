@@ -3,6 +3,7 @@ package otel
 import (
 	"context"
 	"net"
+	"net/url"
 	"testing"
 
 	"github.com/hackafterdark/phosphor/pkg/config"
@@ -14,7 +15,7 @@ func TestEndpointReachableRejectsDeadEndpoint(t *testing.T) {
 
 	// Port 1 on loopback is reserved and always refused; the probe must
 	// fail fast rather than retry.
-	require.False(t, endpointReachable(context.Background(), "127.0.0.1:1"))
+	require.False(t, endpointReachable(context.Background(), "127.0.0.1:1", "grpc"))
 }
 
 func TestEndpointReachableAcceptsLiveListener(t *testing.T) {
@@ -24,7 +25,34 @@ func TestEndpointReachableAcceptsLiveListener(t *testing.T) {
 	require.NoError(t, err)
 	defer ln.Close()
 
-	require.True(t, endpointReachable(context.Background(), ln.Addr().String()))
+	require.True(t, endpointReachable(context.Background(), ln.Addr().String(), "grpc"))
+}
+
+func TestEndpointReachableProbesHttpThroughProxy(t *testing.T) {
+	// The collector address is dead, but the HTTP exporter would route
+	// through the proxy; the probe must follow the same route and pass.
+	proxy, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer proxy.Close()
+
+	prev := proxyForEndpoint
+	proxyForEndpoint = func(u *url.URL) (*url.URL, error) {
+		return &url.URL{Scheme: "http", Host: proxy.Addr().String()}, nil
+	}
+	defer func() { proxyForEndpoint = prev }()
+
+	require.True(t, endpointReachable(
+		context.Background(),
+		"http://127.0.0.1:1/v1/traces",
+		"http/protobuf",
+	))
+	// The gRPC exporter does not use the HTTP proxy, so the same dead
+	// address must still fail for it.
+	require.False(t, endpointReachable(
+		context.Background(),
+		"127.0.0.1:1",
+		"grpc",
+	))
 }
 
 func TestDialTarget(t *testing.T) {

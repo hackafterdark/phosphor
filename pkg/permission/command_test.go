@@ -50,6 +50,19 @@ func TestCommandMatchesAllowlist(t *testing.T) {
 		{"empty command denied", "", false},
 		{"redirect on allowed program", "git log > /tmp/out.txt", true},
 		{"bare redirect denied", "> out.txt", false},
+		{"redirect with substitution denied", `git log > "$(id)"`, false},
+		{"if body allowed", "if git status; then git log; fi", true},
+		{"if body denied", "if git status; then rm -rf /; fi", false},
+		{"if condition denied", "if rm -rf /; then git log; fi", false},
+		{"elif else denied", "if git status; then git log; else rm -rf /; fi", false},
+		{"while body denied", "while git status; do rm -rf /; done", false},
+		{"for body allowed", "for f in a b; do git status; done", true},
+		{"for items substitution denied", "for f in $(ls); do git status; done", false},
+		{"case body denied", "case x in y) rm -rf / ;; esac", false},
+		{"case pattern substitution denied", "case $(id) in y) git status ;; esac", false},
+		{"declare literal allowed", "local FOO=bar && git status", true},
+		{"declare substitution denied", "local FOO=$(id) && git status", false},
+		{"c-style for denied", "for ((i=0; i<3; i++)); do git status; done", false},
 	}
 
 	for _, tt := range tests {
@@ -80,6 +93,18 @@ func TestCommandMatchesAllowlistWindowsExe(t *testing.T) {
 	} else {
 		require.False(t, got, "git.exe is a distinct program name on non-Windows hosts")
 	}
+}
+
+// TestCommandMatchesAllowlistArgumentTokensLiteral pins that prefix
+// entries compare argument tokens verbatim: basename-normalizing them
+// would alias distinct paths onto one entry.
+func TestCommandMatchesAllowlistArgumentTokensLiteral(t *testing.T) {
+	t.Parallel()
+
+	entries := parseAllowEntries([]string{"rm allowed/file.txt"})
+	require.True(t, commandMatchesAllowlist("rm allowed/file.txt", entries))
+	require.False(t, commandMatchesAllowlist("rm private/file.txt", entries),
+		"different path with the same basename must not match")
 }
 
 func TestAllowCommandsAutoApproves(t *testing.T) {

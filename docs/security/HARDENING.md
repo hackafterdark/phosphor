@@ -100,7 +100,8 @@ Notes:
 - `sandbox_mode: workspace` degrades visibly (with a warning) when kernel
   enforcement is unavailable; `strict` refuses to exec instead.
 - `allow_commands` is argv-verified and deny-by-default: compound
-  commands, substitutions, and subshells still prompt.
+  commands auto-approve only when every component matches; substitutions
+  and subshells always prompt.
 - Session grants stay argument-agnostic by design; prefer explicit
   `allow_commands` entries in shared or CI environments.
 

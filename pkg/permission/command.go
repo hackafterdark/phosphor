@@ -40,10 +40,12 @@ func parseAllowEntries(allow []string) map[string][][]string {
 		if len(tokens) == 0 {
 			continue
 		}
+		// Only the program token is normalized. Argument tokens are kept
+		// verbatim: basename-normalizing them would alias distinct paths
+		// ("rm allowed/file.txt" silently approving "rm private/file.txt").
 		normalized := make([]string, len(tokens))
-		for i, tok := range tokens {
-			normalized[i] = normalizeCmdName(tok)
-		}
+		normalized[0] = normalizeCmdName(tokens[0])
+		copy(normalized[1:], tokens[1:])
 		program := normalized[0]
 		entries[program] = append(entries[program], normalized)
 	}
@@ -197,6 +199,14 @@ func stmtApproved(stmt *syntax.Stmt, entries map[string][][]string) bool {
 	if nodeHasHiddenExecutables(stmt.Cmd) {
 		return false
 	}
+	// Redirections live outside stmt.Cmd, so the walk above never sees
+	// them; a substitution in a redirect word executes code the
+	// allowlist has not vetted.
+	for _, redir := range stmt.Redirs {
+		if nodeHasHiddenExecutables(redir) {
+			return false
+		}
+	}
 	switch cmd := stmt.Cmd.(type) {
 	case *syntax.CallExpr:
 		return callApproved(cmd, entries)
@@ -212,17 +222,74 @@ func stmtApproved(stmt *syntax.Stmt, entries map[string][][]string) bool {
 			}
 		}
 		return true
-	case *syntax.IfClause, *syntax.WhileClause, *syntax.ForClause,
-		*syntax.CaseClause, *syntax.DeclClause:
-		// Control flow and declarations run inside the interpreter and
-		// cannot execute a program the walk above would miss; any simple
-		// command nested in them is reachable only through Subshell or
-		// CmdSubst nodes, which nodeHasHiddenExecutables already rejects.
+	case *syntax.IfClause:
+		// if/elif/else bodies hold ordinary statements; each condition
+		// and body must match like any other statement.
+		for clause := cmd; clause != nil; clause = clause.Else {
+			if !stmtsApproved(clause.Cond, entries) ||
+				!stmtsApproved(clause.Then, entries) {
+				return false
+			}
+		}
+		return true
+	case *syntax.WhileClause:
+		return stmtsApproved(cmd.Cond, entries) &&
+			stmtsApproved(cmd.Do, entries)
+	case *syntax.ForClause:
+		switch loop := cmd.Loop.(type) {
+		case *syntax.WordIter:
+			for _, word := range loop.Items {
+				if wordHasSubstitution(word) {
+					return false
+				}
+			}
+		default:
+			// C-style for ((;;)) arithmetic loops can embed expansions
+			// the word checks above do not cover; deny by default.
+			return false
+		}
+		return stmtsApproved(cmd.Do, entries)
+	case *syntax.CaseClause:
+		if cmd.Word != nil && wordHasSubstitution(cmd.Word) {
+			return false
+		}
+		for _, item := range cmd.Items {
+			for _, pattern := range item.Patterns {
+				if wordHasSubstitution(pattern) {
+					return false
+				}
+			}
+			if !stmtsApproved(item.Stmts, entries) {
+				return false
+			}
+		}
+		return true
+	case *syntax.DeclClause:
+		// local/export assignments run no program, but a substituted
+		// value would.
+		for _, assign := range cmd.Args {
+			if assign == nil || assign.Value == nil {
+				continue
+			}
+			if wordHasSubstitution(assign.Value) {
+				return false
+			}
+		}
 		return true
 	default:
 		// Unknown syntax: stay deny-by-default.
 		return false
 	}
+}
+
+// stmtsApproved requires every statement in the list to match.
+func stmtsApproved(stmts []*syntax.Stmt, entries map[string][][]string) bool {
+	for _, stmt := range stmts {
+		if !stmtApproved(stmt, entries) {
+			return false
+		}
+	}
+	return true
 }
 
 // callApproved vets one simple command: literal program word, no
@@ -251,13 +318,17 @@ func callApproved(call *syntax.CallExpr, entries map[string][][]string) bool {
 	}
 	argv := make([]string, 0, len(call.Args))
 	provablyLiteral := true
-	for _, word := range call.Args {
+	for i, word := range call.Args {
 		if !wordIsLiteral(word) {
 			provablyLiteral = false
 			argv = append(argv, "")
 			continue
 		}
-		argv = append(argv, normalizeCmdName(wordLiteral(word)))
+		lit := wordLiteral(word)
+		if i == 0 {
+			lit = normalizeCmdName(lit)
+		}
+		argv = append(argv, lit)
 	}
 	if !argvAllowed(argv, entries) {
 		return false
