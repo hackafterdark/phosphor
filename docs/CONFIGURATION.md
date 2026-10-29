@@ -409,6 +409,12 @@ everything else):
 entry (a bare name covers the program, a prefix like `go build` covers the
 subcommand); compound commands prompt unless every part matches.
 
+These options control the *prompt* only. They never relax the sandbox,
+pathguard, or escalation checks. For how the consent and enforcement layers
+fit together — including the argument-agnostic "Allow for this session"
+grant — see
+[Permission Prompts](security/CONFIGURATION.md#permission-prompts).
+
 ### `tools`
 
 Per-tool security knobs. The bash tool confines the agent's shell: which env

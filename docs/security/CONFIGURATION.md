@@ -46,6 +46,23 @@ By default, Phosphor will ask you for permission before running tool calls
 that modify the filesystem or execute shell commands. You can control this
 behavior via configuration or the `--yolo` CLI flag.
 
+### The Project's Position: Consent vs. Enforcement
+
+Permission prompts are Phosphor's **consent layer, not its enforcement
+layer**. A prompt is a human decision point — it can be delegated, batched,
+or skipped for the session. Real containment lives one layer down: the
+kernel sandbox (`tools.bash.sandbox_mode`), the pathguard (workspace
+confinement), and argv-level policy checks. **No permission grant — session
+auto-approval, allow-lists, or YOLO mode — can relax those boundaries.**
+That is why this documentation separates "what asks you" from "what stops
+the agent", and why every opt-in below only silences the prompt.
+
+The enforcement layer is described in [OS-level sandboxing
+(ADR-0016)](../adr/0016-os-level-sandboxing.md) and the
+[Bash sandbox section](#kernel-sandboxing-for-bash-children) below; the
+consent layer is configured in
+[CONFIGURATION.md](../CONFIGURATION.md#permissions) and this page.
+
 ### Defaults and Session Grants
 
 By default **every** tool that mutates state or runs shell commands prompts
@@ -57,8 +74,36 @@ When a prompt appears you can choose **Allow for this session**. That grant
 is *command-agnostic by design*: it covers the tool and action (e.g. bash
 execute) for the rest of the session, regardless of arguments. So after one
 session grant on the bash tool, later `git` or `go test` invocations run
-without further prompts. Sandbox escalation prompts are deliberately
-excluded from session auto-approval — those always reach you.
+without further prompts. The grant:
+
+- resets when the session ends (and is scoped to that session);
+- never applies to sandbox escalation — a request to run outside the
+  sandbox always prompts, per-command, even for auto-approved sessions;
+- never relaxes the sandbox, pathguard, or banned-command checks, which
+  apply to every command the session grants run.
+
+This mirrors the industry-standard split between coarse session consent
+and fine-grained static authorization: if you want argument-level control
+rather than blanket trust, use `permissions.allow_commands` (next section)
+instead of a session grant.
+
+### How a Request Is Evaluated
+
+Every tool call goes through this shortlist, in order. The first match
+decides; everything else falls through to the interactive prompt:
+
+| # | Layer | Source | Granularity | Lifetime |
+|---|-------|--------|-------------|----------|
+| 1 | YOLO mode | `--yolo` / `ctrl+y` | every tool | session |
+| 2 | Tool allow-list | `permissions.allowed_tools` | tool (or tool+action) | persists |
+| 3 | Command allow-list | `permissions.allow_commands` | argv prefix, deny-by-default | persists |
+| 4 | Hook pre-approval | `PreToolUse` hook returning `allow` | per tool call | per call |
+| 5 | Session grant | "Allow for this session" | tool+action, argument-agnostic | session |
+| 6 | Interactive prompt | you | per call | per call |
+
+Regardless of where the decision lands, the enforcement layer (sandbox,
+pathguard, banned commands, escalation carve-out) evaluates the *same*
+command on its own terms — a granted prompt is never a granted boundary.
 
 ### Allowing Tools
 
@@ -961,6 +1006,7 @@ an environment proxy cannot bypass destination checks.
 | Tool permission prompts | `permissions.allowed_tools` | Array | All tools prompt |
 | Shell command auto-approve | `permissions.allow_commands` | Array | None |
 | Skip all permissions | CLI flag `--yolo` / `ctrl+y` | Flag | Off |
+| Kernel sandbox for bash children | `tools.bash.sandbox_mode` | String | `off` |
 | Disable built-in tools | `options.disabled_tools` | Array | None |
 | Disable skills | `options.disabled_skills` | Array | None |
 | Disable agents | `agents.<name>.disabled` | Bool | False |
