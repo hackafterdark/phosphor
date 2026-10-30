@@ -575,7 +575,7 @@ with kernel primitives instead of relying only on in-process guards:
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `sandbox_mode` | `string` | `off` | `off`, `workspace` (confine the filesystem kernel-side, degrade to in-process guards with a visible warning when unavailable), or `strict` (refuse to exec when enforcement cannot attach). |
+| `sandbox_mode` | `string` | `workspace` | `off`, `workspace` (confine the filesystem kernel-side, degrade to in-process guards with a visible warning when unavailable), or `strict` (refuse to exec when enforcement cannot attach). Unset or invalid values run `workspace`; opt out explicitly with `off`. |
 | `sandbox_limits.max_procs` | `uint64` | `0` | `RLIMIT_NPROC` cap. The kernel enforces it per-user (against all processes of the real UID), not per-subtree. `0` means no limit. |
 | `sandbox_limits.max_file_mb` | `uint64` | `0` | `RLIMIT_FSIZE` cap, in MB, for files sandboxed children may create. `0` means no limit. |
 | `trust_toolchain_caches` | `bool` | `false` | Trust the language-runtime cache roots and `GOMODCACHE` for bash path access. `false` because caches seed future builds, so widening them is an explicit opt-in. |
@@ -594,9 +594,14 @@ Per-platform enforcement:
 
 Limits are validated at exec time: `max_procs` outside `[64, 100000]` or
 `max_file_mb` above `1000000` refuses the exec (or the MCP connection) rather
-than silently weakening the sandbox. Invalid `sandbox_mode` values are treated
-as `off`; the `[sandbox]` report in `phosphor_info` surfaces what is actually
-active.
+than silently weakening the sandbox. Invalid or unset `sandbox_mode` values
+run `workspace` — the sandbox is on by default, and only an explicit
+`sandbox_mode: "off"` disables it. Because `sandbox_mode` is operator-only,
+that opt-out must live in the trusted global config: a workspace or project
+`phosphor.json` may raise the mode (`workspace` → `strict`) but a downgrade
+to `off` is reverted to the operator floor and reported as an ignored
+override. The `[sandbox]` report in `phosphor_info`
+surfaces what is actually active.
 
 **Escalation UX.** When a sandboxed command is denied, the tool result is
 marked `sandbox-denial:` and the agent may retry once with
@@ -1006,7 +1011,7 @@ an environment proxy cannot bypass destination checks.
 | Tool permission prompts | `permissions.allowed_tools` | Array | All tools prompt |
 | Shell command auto-approve | `permissions.allow_commands` | Array | None |
 | Skip all permissions | CLI flag `--yolo` / `ctrl+y` | Flag | Off |
-| Kernel sandbox for bash children | `tools.bash.sandbox_mode` | String | `off` |
+| Kernel sandbox for bash children | `tools.bash.sandbox_mode` | String | `workspace` |
 | Disable built-in tools | `options.disabled_tools` | Array | None |
 | Disable skills | `options.disabled_skills` | Array | None |
 | Disable agents | `agents.<name>.disabled` | Bool | False |

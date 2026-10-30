@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -180,6 +181,48 @@ func TestHarden_SandboxModeAndLimitsAreOperatorOnly(t *testing.T) {
 	require.Equal(t, uint64(512), workspace.Tools.Bash.SandboxLimits.MaxFileMB,
 		"workspace must not loosen a resource cap")
 	require.GreaterOrEqual(t, n, 3, "each weakened field must be reported")
+}
+
+// TestHarden_SandboxDefaultsToWorkspace pins the default-on posture: with no
+// operator setting the sandbox runs in workspace mode, a workspace file
+// cannot downgrade it to off, and an explicit operator "off" is honored.
+func TestHarden_SandboxDefaultsToWorkspace(t *testing.T) {
+	floor := &Config{}
+	floor.setDefaults(t.TempDir(), "")
+
+	// Unset operator config defaults to workspace.
+	require.Equal(t, SandboxModeWorkspace, floor.Tools.Bash.BashSandboxMode())
+
+	// A workspace file cannot downgrade the default-on sandbox to off.
+	workspace := mustConfig(t, `{"tools":{"bash":{"sandbox_mode":"off"}}}`)
+	n := hardenAgainstWorkspaceOverrides(workspace, floor)
+	require.Equal(t, SandboxModeWorkspace, workspace.Tools.Bash.BashSandboxMode(),
+		"workspace must not disable the default-on sandbox")
+	require.GreaterOrEqual(t, n, 1, "the downgrade attempt must be reported")
+
+	// An explicit operator opt-out is honored: the floor drops to off and
+	// the workspace rank check still allows escalation to stricter modes.
+	floor.Tools.Bash.SandboxMode = SandboxModeOff
+	require.Equal(t, SandboxModeOff, floor.Tools.Bash.BashSandboxMode())
+	workspace = mustConfig(t, `{"tools":{"bash":{"sandbox_mode":"workspace"}}}`)
+	n = hardenAgainstWorkspaceOverrides(workspace, floor)
+	require.Equal(t, SandboxModeWorkspace, workspace.Tools.Bash.BashSandboxMode(),
+		"workspace may escalate over an explicit operator opt-out")
+	require.Equal(t, 0, n)
+}
+
+// TestBashSandboxMode_InvalidFailsSafe pins that unset and invalid values
+// both resolve to workspace — a typo can never silently disable the sandbox.
+// Case variants of valid values are accepted.
+func TestBashSandboxMode_InvalidFailsSafe(t *testing.T) {
+	for _, v := range []string{"", "nope", "Workspace"} {
+		cfg := ToolBash{SandboxMode: v}
+		require.Equal(t, SandboxModeWorkspace, cfg.BashSandboxMode(), v)
+	}
+	for _, v := range []string{SandboxModeOff, SandboxModeWorkspace, SandboxModeStrict, "OFF", "STRICT"} {
+		cfg := ToolBash{SandboxMode: v}
+		require.Equal(t, strings.ToLower(v), cfg.BashSandboxMode(), v)
+	}
 }
 
 // TestHarden_FullMergePath verifies the clamp survives the real jsonmerge flow that

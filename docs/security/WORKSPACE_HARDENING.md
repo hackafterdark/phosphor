@@ -275,6 +275,54 @@ The following components intentionally operate outside the workspace sandbox. Th
 | LSP client (`pkg/lsp/`) | Uses file paths for diagnostics but does not write files. Path filtering already exists (`fsext.HasPrefix`). |
 | Config loading | Reads `phosphor.json` and context files (AGENTS.md, etc.) from the working directory. |
 
+### Workspace Config Files Are Read-Only for the Agent
+
+The workspace/project config files — `phosphor.json` at the workspace root and
+`.phosphor/phosphor.json` — define the security posture itself (floors, egress
+policy, sandbox mode, provider endpoints), so the agent may read them but never
+modify them. The only sanctioned paths to a config change are direct user action
+(editing the file by hand) and the in-app configuration UI.
+
+The guard is enforced at two layers:
+
+- **File tools** (`write`, `edit`, `multiedit`, `append`, `download`):
+  `filepathext.ValidateConfigWrite` refuses any target that resolves to a
+  protected config file, after symlink resolution (so a symlinked alias cannot
+  smuggle the path past the check).
+- **Shell execution**: `pathguard.Confinement.ProtectedPaths` carries the
+  protected set into the interpreter; output-redirect operands
+  (`echo x > phosphor.json`) and interpreter file opens with a write flag are
+  refused by `Confinement.ProtectedWriteBlocked`. Reads of the config file stay
+  unrestricted.
+
+Everything else under `.phosphor/` (the SQLite memory/session databases, cron
+jobs, secret rules) remains writable — only the two config JSON files are
+protected. The residual (argv-level writers such as `sed -i`, and redirect
+targets produced by `$(cmd)` expansions) is documented and scheduled for
+kernel-side closure alongside the sandbox roadmap.
+
+### Repository Metadata (.git) Is Read-Only for the Agent
+
+`.git` content is executable by construction: hooks fire on the next git
+invocation, and config keys such as `core.fsmonitor`, `credential.helper`, and
+`diff.<driver>.command` run whatever they name. An agent-authored hook or
+config line is therefore remote code execution deferred to the next human git
+command, so the agent may read `.git` but never write it; repository state
+changes go through git commands.
+
+The same two layers enforce it:
+
+- **File tools** (`write`, `edit`, `multiedit`, `append`, `download`):
+  `filepathext.ValidateGitMetadataWrite` refuses any target whose path
+  contains a `.git` component (root repo or nested checkout), after symlink
+  resolution and case-folding on case-insensitive filesystems. A `.git`
+  symlink pointing at the real metadata directory is followed in reverse, so
+  writing the target directly is refused too.
+- **Shell execution**: `Confinement.ProtectGitDirs` routes the same check
+  into `Confinement.ProtectedWriteBlocked`, refusing redirect operands such as
+  `echo x > .git/hooks/pre-commit` while leaving reads and git commands
+  themselves unrestricted.
+
 ### Skills and MCP Servers
 
 Skills are **user-installed extensions** that execute with the agent's privileges; the kernel sandbox does not wrap them, and they remain trusted by definition (the user chose to install them).
@@ -312,6 +360,7 @@ If future features need the agent to read configuration files or other resources
 All bounds-check logic is covered by unit tests:
 
 - `internal/filepathext/bounds_test.go` — `IsInside` correctness (7 cases + real-path integration test).
+- `internal/filepathext/gitguard_test.go` — `TestGitGuard_*` pins that `.git` content (root and nested checkouts) is refused, lookalikes (`.gitignore`, `.github`, `my.git.gitdir`) are left alone, symlinked `.git` directories are followed in both directions, and case-folded `.GIT` spellings cannot alias past the guard on case-insensitive filesystems.
 - `pkg/agent/tools/append_test.go` — existing append tests pass with the refactored bounds check.
 - `pkg/shell/background_test.go` — background shell manager tests pass with the updated `Start` signature.
 - `internal/pathguard/pathguard_test.go` — `TestCommandEscapesWorkspace_CDCommandValidated` pins that `cd` targets are bounds-checked (absolute, `~`, and compound `cd X && cmd` forms are refused; in-tree `cd` is allowed).

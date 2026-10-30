@@ -652,6 +652,48 @@ type Confinement struct {
 	// ExtraRoots are additional absolute directories the caller explicitly
 	// trusts (the tools.bash.trusted_extra_roots config knob).
 	ExtraRoots []string
+	// ProtectedPaths are absolute paths inside the workspace that confined
+	// children may read but never write — the workspace/project config files.
+	// Direct user action is the only sanctioned way to change them, so
+	// write-side checks (redirect operands, interpreter opens with a write
+	// flag) refuse them while reads stay unrestricted.
+	ProtectedPaths []string
+	// ProtectGitDirs extends the write fence to repository metadata: any
+	// path whose components include a .git directory (root repo or nested
+	// checkout) is read-only for confined children. Hooks and git config
+	// execute on the next git invocation, so they are reserved to git
+	// commands and direct user action.
+	ProtectGitDirs bool
+}
+
+// ProtectedWriteBlocked reports whether absPath names a protected path that
+// the confined child must not write. Returns nil when the policy is disabled
+// or the path is writable.
+func (c Confinement) ProtectedWriteBlocked(absPath string) error {
+	if c.WorkspaceRoot == "" || absPath == "" {
+		return nil
+	}
+	clean := filepath.Clean(absPath)
+	// The shared validator carries the symlink resolution and case-folding
+	// semantics; ProtectedPaths stays for explicitly configured entries.
+	blocked := filepathext.IsProtectedConfigFile(clean, c.WorkspaceRoot)
+	for _, p := range c.ProtectedPaths {
+		if filepath.Clean(p) == clean {
+			blocked = true
+			break
+		}
+	}
+	if blocked {
+		return fmt.Errorf(
+			"Security violation: %s is a configuration file the agent may not modify; "+
+				"config changes must come from direct user action", clean)
+	}
+	if c.ProtectGitDirs && filepathext.IsGitMetadataPath(clean, c.WorkspaceRoot) {
+		return fmt.Errorf(
+			"Security violation: %s is repository metadata (.git) the agent may not modify; "+
+				"hooks and git config execute on the next git invocation", clean)
+	}
+	return nil
 }
 
 // deviceFiles are well-known, world-writable device nodes that are safe to name

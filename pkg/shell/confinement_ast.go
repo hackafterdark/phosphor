@@ -3,6 +3,7 @@ package shell
 import (
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 
 	"mvdan.cc/sh/v3/expand"
@@ -72,7 +73,9 @@ func checkProgram(conf *pathguard.Confinement, cwd string, env []string, file *s
 	// policy. blockIfUnprovable selects the read-vs-write stance: a target that
 	// depends on an unexecuted substitution is blocked for reads (the
 	// substitution is itself the leak vector) but tolerated for writes.
-	checkOperand := func(word *syntax.Word, blockIfUnprovable bool) bool {
+	// isWrite marks operands the shell opens for writing (output redirects);
+	// only those clear the protected-path policy.
+	checkOperand := func(word *syntax.Word, blockIfUnprovable, isWrite bool) bool {
 		operand, unprovable, err := expandRedirectOperand(env, word)
 		if err != nil {
 			if blockIfUnprovable {
@@ -95,6 +98,18 @@ func checkProgram(conf *pathguard.Confinement, cwd string, env []string, file *s
 			violation = e
 			return false
 		}
+		// Output redirections additionally clear the protected-path policy:
+		// config files are readable but writable only by direct user action.
+		if isWrite {
+			abs := operand
+			if !filepath.IsAbs(abs) {
+				abs = filepath.Join(cwd, abs)
+			}
+			if e := conf.ProtectedWriteBlocked(abs); e != nil {
+				violation = e
+				return false
+			}
+		}
 		return true
 	}
 
@@ -111,9 +126,9 @@ func checkProgram(conf *pathguard.Confinement, cwd string, env []string, file *s
 			}
 			switch {
 			case inputRedirectOps[n.Op]:
-				return checkOperand(n.Word, true)
+				return checkOperand(n.Word, true, false)
 			case outputRedirectOps[n.Op]:
-				return checkOperand(n.Word, false)
+				return checkOperand(n.Word, false, true)
 			default:
 				// Here-doc bodies and fd-duplication operands (<& , >&) are not
 				// file paths; still descend to catch nested redirections.
@@ -140,7 +155,7 @@ func checkProgram(conf *pathguard.Confinement, cwd string, env []string, file *s
 					if strings.HasPrefix(strings.TrimSpace(word.Lit()), "-") {
 						continue // option word, not a path
 					}
-					if !checkOperand(word, false) {
+					if !checkOperand(word, false, false) {
 						return false
 					}
 				}
@@ -157,7 +172,7 @@ func checkProgram(conf *pathguard.Confinement, cwd string, env []string, file *s
 				if strings.HasPrefix(strings.TrimSpace(word.Lit()), "-") {
 					continue // option word, not a path
 				}
-				if !checkOperand(word, true) {
+				if !checkOperand(word, true, false) {
 					return false
 				}
 			}

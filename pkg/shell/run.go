@@ -282,6 +282,11 @@ func pathOpenHandler(conf *pathguard.Confinement) interp.OpenHandlerFunc {
 		if err := conf.Blocked([]string{"open", absPath}, cwd); err != nil {
 			return nil, err
 		}
+		if flag&(os.O_WRONLY|os.O_RDWR|os.O_APPEND|os.O_TRUNC) != 0 {
+			if err := conf.ProtectedWriteBlocked(absPath); err != nil {
+				return nil, err
+			}
+		}
 		return base(ctx, path, flag, perm)
 	}
 }
@@ -297,7 +302,23 @@ func newConfinement(workspace string, extraRoots []string, disableTempRoot bool)
 		WorkspaceRoot:  workspace,
 		TrustTempRoots: !disableTempRoot,
 		ExtraRoots:     extraRoots,
+		ProtectedPaths: protectedConfigPaths(workspace),
+		ProtectGitDirs: true,
 	}
+}
+
+// protectedConfigPaths returns the workspace/project config files that
+// confined children may read but never write. Config changes are reserved to
+// direct user action; see filepathext.IsProtectedConfigFile.
+func protectedConfigPaths(workspace string) []string {
+	var out []string
+	for _, rel := range []string{"phosphor.json", ".phosphor/phosphor.json"} {
+		p, err := filepath.Abs(filepath.Join(workspace, rel))
+		if err == nil {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // execHandlerOption returns an interp.RunnerOption that installs the

@@ -39,7 +39,8 @@ func TestPhosphorInfo_Sandbox(t *testing.T) {
 	})
 	output := buildPhosphorInfo(cfg, nil, nil, nil, nil)
 	require.Contains(t, output, "[sandbox]")
-	require.Contains(t, output, "mode = off")
+	// Unset sandbox_mode defaults to workspace — the sandbox is on.
+	require.Contains(t, output, "mode = workspace")
 
 	cfgStrict := config.NewTestStore(&config.Config{
 		Providers: csync.NewMap[string, config.ProviderConfig](),
@@ -49,6 +50,15 @@ func TestPhosphorInfo_Sandbox(t *testing.T) {
 	})
 	output = buildPhosphorInfo(cfgStrict, nil, nil, nil, nil)
 	require.Contains(t, output, "mode = strict")
+
+	cfgOff := config.NewTestStore(&config.Config{
+		Providers: csync.NewMap[string, config.ProviderConfig](),
+		Tools: config.Tools{
+			Bash: config.ToolBash{SandboxMode: config.SandboxModeOff},
+		},
+	})
+	output = buildPhosphorInfo(cfgOff, nil, nil, nil, nil)
+	require.Contains(t, output, "mode = off")
 }
 
 func TestPhosphorInfo_ConfigFiles(t *testing.T) {

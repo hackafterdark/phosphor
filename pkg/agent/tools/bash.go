@@ -660,6 +660,9 @@ func NewBashTool(permissions permission.Service, workingDir string, bashCfg conf
 
 				stdout = formatOutput(stdout, stderr, execErr, params.Command, policy)
 				stdout = appendSandboxGuidance(stdout, exitCode, sandboxActive, escalated)
+				if bgShell.Shell.SandboxDegraded() {
+					stdout = shell.SandboxDegradedWarning + "\n\n" + stdout
+				}
 
 				metadata := BashResponseMetadata{
 					StartTime:        startTime.UnixMilli(),

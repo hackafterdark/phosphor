@@ -123,7 +123,9 @@ func hardenAgainstWorkspaceOverrides(cfg, floor *Config) int {
 		revert("tools.bash.trust_toolchain_caches", "workspace attempted to trust toolchain caches")
 	}
 	// Kernel sandbox mode is operator-only: a repo may move it up (workspace
-	// -> strict) but never down to off.
+	// -> strict) but never down to off. With no operator setting the floor
+	// is the workspace default, so the sandbox is on unless the operator
+	// explicitly opts out.
 	sandboxRank := map[string]int{SandboxModeOff: 0, SandboxModeWorkspace: 1, SandboxModeStrict: 2}
 	if sandboxRank[cfg.Tools.Bash.BashSandboxMode()] < sandboxRank[floor.Tools.Bash.BashSandboxMode()] {
 		cfg.Tools.Bash.SandboxMode = floor.Tools.Bash.SandboxMode
