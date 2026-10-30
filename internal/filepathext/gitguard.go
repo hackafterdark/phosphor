@@ -30,7 +30,7 @@ func IsGitMetadataPath(absPath, absWorkspace string) bool {
 		return false
 	}
 	rel = filepath.ToSlash(rel)
-	if strings.HasPrefix(rel, "..") {
+	if rel == ".." || strings.HasPrefix(rel, "../") {
 		return false
 	}
 	fold := caseInsensitiveFS(absWorkspace)

@@ -42,7 +42,24 @@ func TestRunGitMetadataWriteProtection(t *testing.T) {
 	if err != nil {
 		require.NotContains(t, err.Error(), "repository metadata", err.Error())
 	}
+
+	// Reads of .git stay available: cd into it and cat-ing refs are not
+	// writes, and the guard must not refuse them.
+	for _, cmd := range []string{
+		"cd .git && ls",
+		"cat .git/HEAD",
+	} {
+		err := Run(t.Context(), RunOptions{
+			Command:   cmd,
+			Cwd:       workspace,
+			Workspace: workspace,
+		})
+		if err != nil {
+			require.NotContains(t, err.Error(), "repository metadata", cmd+": "+err.Error())
+		}
+	}
 }
+
 func TestRunConfigFileWriteProtection(t *testing.T) {
 	t.Parallel()
 

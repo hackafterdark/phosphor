@@ -674,12 +674,19 @@ func (c Confinement) ProtectedWriteBlocked(absPath string) error {
 		return nil
 	}
 	clean := filepath.Clean(absPath)
+	// The shared validator carries the symlink resolution and case-folding
+	// semantics; ProtectedPaths stays for explicitly configured entries.
+	blocked := filepathext.IsProtectedConfigFile(clean, c.WorkspaceRoot)
 	for _, p := range c.ProtectedPaths {
 		if filepath.Clean(p) == clean {
-			return fmt.Errorf(
-				"Security violation: %s is a configuration file the agent may not modify; "+
-					"config changes must come from direct user action", clean)
+			blocked = true
+			break
 		}
+	}
+	if blocked {
+		return fmt.Errorf(
+			"Security violation: %s is a configuration file the agent may not modify; "+
+				"config changes must come from direct user action", clean)
 	}
 	if c.ProtectGitDirs && filepathext.IsGitMetadataPath(clean, c.WorkspaceRoot) {
 		return fmt.Errorf(

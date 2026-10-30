@@ -27,13 +27,17 @@ func IsProtectedConfigFile(absPath, absWorkspace string) bool {
 		return false
 	}
 	rel = filepath.ToSlash(rel)
-	if strings.HasPrefix(rel, "..") {
+	if rel == ".." || strings.HasPrefix(rel, "../") {
 		return false
 	}
 
-	switch rel {
-	case "phosphor.json", ".phosphor/phosphor.json":
-		return true
+	// Case-fold for case-insensitive filesystems, where "Phosphor.json"
+	// names the same file as "phosphor.json"; exact match elsewhere.
+	fold := caseInsensitiveFS(absWorkspace)
+	for _, protected := range []string{"phosphor.json", ".phosphor/phosphor.json"} {
+		if rel == protected || (fold && strings.EqualFold(rel, protected)) {
+			return true
+		}
 	}
 	return false
 }

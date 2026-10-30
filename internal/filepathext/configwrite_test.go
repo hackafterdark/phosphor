@@ -73,3 +73,31 @@ func TestConfigWrite_EmptyInputs(t *testing.T) {
 	require.NoError(t, ValidateConfigWrite("C:\\ws\\phosphor.json", ""))
 	require.NoError(t, ValidateConfigWrite("", "C:\\ws"))
 }
+
+// TestConfigWrite_CaseFoldedVariant covers case-insensitive filesystems,
+// where "Phosphor.json" names the same file as "phosphor.json": the guard
+// must follow the filesystem's semantics, not the spelling in the path.
+func TestConfigWrite_CaseFoldedVariant(t *testing.T) {
+	t.Parallel()
+	ws := t.TempDir()
+	if !caseInsensitiveFS(ws) {
+		t.Skip("filesystem preserves case; spelling cannot alias the config file")
+	}
+	require.NoError(t, os.MkdirAll(filepath.Join(ws, ".phosphor"), 0o755))
+
+	require.Error(t, ValidateConfigWrite(filepath.Join(ws, "Phosphor.json"), ws))
+	require.Error(t, ValidateConfigWrite(filepath.Join(ws, ".PHOSPHOR", "phosphor.json"), ws))
+}
+
+// TestConfigWrite_DotDotDirNames checks that directory names merely starting
+// with ".." (legal on POSIX, e.g. kubernetes-style "..data") are workspace
+// content, not escapes: the escape check fires only on real parent escapes.
+func TestConfigWrite_DotDotDirNames(t *testing.T) {
+	t.Parallel()
+	ws := t.TempDir()
+
+	// Nested configs are not the protected files; ".."-prefixed dirs are
+	// ordinary workspace content, not outside the workspace.
+	require.NoError(t, ValidateConfigWrite(filepath.Join(ws, "..data", "phosphor.json"), ws))
+	require.NoError(t, ValidateConfigWrite(filepath.Join(ws, "..data", "notes.txt"), ws))
+}

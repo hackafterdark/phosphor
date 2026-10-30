@@ -596,7 +596,11 @@ Limits are validated at exec time: `max_procs` outside `[64, 100000]` or
 `max_file_mb` above `1000000` refuses the exec (or the MCP connection) rather
 than silently weakening the sandbox. Invalid or unset `sandbox_mode` values
 run `workspace` — the sandbox is on by default, and only an explicit
-`sandbox_mode: "off"` disables it; the `[sandbox]` report in `phosphor_info`
+`sandbox_mode: "off"` disables it. Because `sandbox_mode` is operator-only,
+that opt-out must live in the trusted global config: a workspace or project
+`phosphor.json` may raise the mode (`workspace` → `strict`) but a downgrade
+to `off` is reverted to the operator floor and reported as an ignored
+override. The `[sandbox]` report in `phosphor_info`
 surfaces what is actually active.
 
 **Escalation UX.** When a sandboxed command is denied, the tool result is

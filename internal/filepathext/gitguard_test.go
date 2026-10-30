@@ -65,7 +65,9 @@ func TestGitGuard_SymlinkedGitDir(t *testing.T) {
 	}
 	// A symlink swapped in for .git still resolves under the guard.
 	require.Error(t, ValidateGitMetadataWrite(filepath.Join(real, "hooks", "pre-commit"), ws))
-} // TestGitGuard_CaseFoldedGitComponent covers case-insensitive filesystems,
+}
+
+// TestGitGuard_CaseFoldedGitComponent covers case-insensitive filesystems,
 // where .GIT and .git name the same directory: the guard must follow the
 // filesystem's semantics, not the spelling in the path.
 func TestGitGuard_CaseFoldedGitComponent(t *testing.T) {
@@ -78,4 +80,16 @@ func TestGitGuard_CaseFoldedGitComponent(t *testing.T) {
 
 	require.Error(t, ValidateGitMetadataWrite(filepath.Join(ws, ".GIT", "hooks", "pre-commit"), ws))
 	require.Error(t, ValidateGitMetadataWrite(filepath.Join(ws, ".Git", "config"), ws))
+}
+
+// TestGitGuard_DotDotDirNames checks that directory names merely starting
+// with ".." (legal on POSIX, e.g. kubernetes-style "..data") are workspace
+// content, not escapes: a nested checkout below one is still .git content.
+func TestGitGuard_DotDotDirNames(t *testing.T) {
+	t.Parallel()
+	ws := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(ws, "..data", "repo", ".git", "hooks"), 0o755))
+
+	require.Error(t, ValidateGitMetadataWrite(filepath.Join(ws, "..data", "repo", ".git", "hooks", "pre-commit"), ws))
+	require.True(t, IsGitMetadataPath(filepath.Join(ws, "..data", "repo", ".git", "HEAD"), ws))
 }
