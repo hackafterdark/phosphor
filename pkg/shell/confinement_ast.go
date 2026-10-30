@@ -3,6 +3,7 @@ package shell
 import (
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 
 	"mvdan.cc/sh/v3/expand"
@@ -94,6 +95,18 @@ func checkProgram(conf *pathguard.Confinement, cwd string, env []string, file *s
 		if e := conf.Blocked([]string{"operand", operand}, cwd); e != nil {
 			violation = e
 			return false
+		}
+		// Output redirections additionally clear the protected-path policy:
+		// config files are readable but writable only by direct user action.
+		if !blockIfUnprovable {
+			abs := operand
+			if !filepath.IsAbs(abs) {
+				abs = filepath.Join(cwd, abs)
+			}
+			if e := conf.ProtectedWriteBlocked(abs); e != nil {
+				violation = e
+				return false
+			}
 		}
 		return true
 	}

@@ -275,6 +275,32 @@ The following components intentionally operate outside the workspace sandbox. Th
 | LSP client (`pkg/lsp/`) | Uses file paths for diagnostics but does not write files. Path filtering already exists (`fsext.HasPrefix`). |
 | Config loading | Reads `phosphor.json` and context files (AGENTS.md, etc.) from the working directory. |
 
+### Workspace Config Files Are Read-Only for the Agent
+
+The workspace/project config files — `phosphor.json` at the workspace root and
+`.phosphor/phosphor.json` — define the security posture itself (floors, egress
+policy, sandbox mode, provider endpoints), so the agent may read them but never
+modify them. The only sanctioned paths to a config change are direct user action
+(editing the file by hand) and the in-app configuration UI.
+
+The guard is enforced at two layers:
+
+- **File tools** (`write`, `edit`, `multiedit`, `append`, `download`):
+  `filepathext.ValidateConfigWrite` refuses any target that resolves to a
+  protected config file, after symlink resolution (so a symlinked alias cannot
+  smuggle the path past the check).
+- **Shell execution**: `pathguard.Confinement.ProtectedPaths` carries the
+  protected set into the interpreter; output-redirect operands
+  (`echo x > phosphor.json`) and interpreter file opens with a write flag are
+  refused by `Confinement.ProtectedWriteBlocked`. Reads of the config file stay
+  unrestricted.
+
+Everything else under `.phosphor/` (the SQLite memory/session databases, cron
+jobs, secret rules) remains writable — only the two config JSON files are
+protected. The residual (argv-level writers such as `sed -i`, and redirect
+targets produced by `$(cmd)` expansions) is documented and scheduled for
+kernel-side closure alongside the sandbox roadmap.
+
 ### Skills and MCP Servers
 
 Skills are **user-installed extensions** that execute with the agent's privileges; the kernel sandbox does not wrap them, and they remain trusted by definition (the user chose to install them).

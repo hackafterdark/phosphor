@@ -101,6 +101,9 @@ func NewMultiEditTool(
 			if !filepathext.IsInside(absFilePath, absWorkingDir) {
 				return fantasy.NewTextErrorResponse(fmt.Sprintf("Security violation: path %s is outside workspace", absFilePath)), nil
 			}
+			if resp, blocked := configWriteGuard(absFilePath, absWorkingDir); blocked {
+				return resp, nil
+			}
 			params.FilePath = absFilePath
 			if resp, blocked := vaultWriteGuard(workingDir, absFilePath); blocked {
 				return resp, nil
