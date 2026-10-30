@@ -880,11 +880,11 @@ type ToolBash struct {
 	Network *ToolBashNetwork `json:"network,omitempty" jsonschema:"description=Optional opt-in network egress policy for bash commands."`
 
 	// SandboxMode selects kernel-enforced sandboxing of bash child
-	// processes. "off" (default) uses in-process guards only; "workspace"
-	// confines the filesystem kernel-side and degrades to in-process
-	// guards with a visible warning when the primitives are unavailable;
-	// "strict" refuses to exec when enforcement cannot attach.
-	SandboxMode string `json:"sandbox_mode,omitempty" jsonschema:"enum=off,enum=workspace,enum=strict,description=Kernel-enforced sandbox for bash children: off, workspace (degrade with warning), or strict (refuse if unavailable). Default off."`
+	// processes. "workspace" (default) confines the filesystem kernel-side
+	// and degrades to in-process guards with a visible warning when the
+	// primitives are unavailable; "strict" refuses to exec when
+	// enforcement cannot attach; "off" uses in-process guards only.
+	SandboxMode string `json:"sandbox_mode,omitempty" jsonschema:"enum=off,enum=workspace,enum=strict,description=Kernel-enforced sandbox for bash children: off, workspace (degrade with warning), or strict (refuse if unavailable). Default workspace."`
 
 	// SandboxLimits carries optional kernel resource caps applied to
 	// sandboxed bash children. Zero values mean "no limit"; limits are
@@ -923,15 +923,17 @@ const (
 	SandboxModeStrict    = "strict"
 )
 
-// BashSandboxMode returns the validated sandbox mode, defaulting to off.
-// Invalid values are treated as off so a typo can never silently weaken
-// strict mode; the [sandbox] report surfaces what is actually active.
+// BashSandboxMode returns the validated sandbox mode, defaulting to
+// workspace. Invalid values are treated as workspace so a typo can never
+// silently disable the sandbox; the [sandbox] report surfaces what is
+// actually active. Operators may still opt out explicitly with
+// sandbox_mode: off.
 func (t ToolBash) BashSandboxMode() string {
-	switch t.SandboxMode {
-	case SandboxModeWorkspace, SandboxModeStrict:
-		return t.SandboxMode
+	switch strings.ToLower(t.SandboxMode) {
+	case SandboxModeOff, SandboxModeWorkspace, SandboxModeStrict:
+		return strings.ToLower(t.SandboxMode)
 	default:
-		return SandboxModeOff
+		return SandboxModeWorkspace
 	}
 }
 

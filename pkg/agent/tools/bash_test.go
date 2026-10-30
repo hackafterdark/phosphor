@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"runtime"
+	"strings"
 	"testing"
 
 	"charm.land/fantasy"
@@ -292,8 +293,14 @@ func TestBashTool_InterpreterCodeExecutionBlocked(t *testing.T) {
 		t.Run(cmd, func(t *testing.T) {
 			t.Parallel()
 			resp := runBashTool(t, tool, ctx, BashParams{Command: cmd})
-			require.Contains(t, resp.Content, "not allowed for security reasons",
-				"%q should be blocked (interpreter code execution)", cmd)
+			// The argv blocker rejects inline code execution; with the
+			// sandbox on by default the inline shell forms are refused
+			// earlier, by the escape-hatch gate. Either refusal is correct —
+			// what matters is that the command never runs.
+			require.True(t,
+				strings.Contains(resp.Content, "not allowed for security reasons") ||
+					strings.Contains(resp.Content, "sandbox-denial"),
+				"%q should be blocked (interpreter code execution), got: %s", cmd, resp.Content)
 		})
 	}
 
