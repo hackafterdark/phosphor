@@ -303,6 +303,7 @@ func newConfinement(workspace string, extraRoots []string, disableTempRoot bool)
 		TrustTempRoots: !disableTempRoot,
 		ExtraRoots:     extraRoots,
 		ProtectedPaths: protectedConfigPaths(workspace),
+		ProtectGitDirs: true,
 	}
 }
 

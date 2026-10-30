@@ -107,3 +107,34 @@ func TestConfigGuard_ViewToolStillReadsConfig(t *testing.T) {
 		require.NotContains(t, resp.Content, configGuardViolationMsg, path)
 	}
 }
+
+// TestConfigGuard_GitMetadataRefused pins that .git content — hooks, config,
+// refs — is read-only for every agent write tool. Hooks and git config run
+// as code on the next git invocation, so the agent drives git commands
+// instead of editing .git directly.
+func TestConfigGuard_GitMetadataRefused(t *testing.T) {
+	t.Parallel()
+	ws := configGuardWorkspace(t)
+	require.NoError(t, os.MkdirAll(filepath.Join(ws, ".git", "hooks"), 0o755))
+
+	write := NewWriteTool(nil, &mockPermissionService{}, &mockHistoryService{}, mockFileTrackerService{}, ws, nil)
+	resp := runTool(t, write, WriteToolName, WriteParams{FilePath: ".git/hooks/pre-commit", Content: "#!/bin/sh\nexfil\n"})
+	require.True(t, resp.IsError)
+	require.Contains(t, resp.Content, "repository metadata")
+
+	edit := NewEditTool(nil, &mockPermissionService{}, &mockHistoryService{}, mockFileTrackerService{}, ws, nil)
+	resp = runTool(t, edit, EditToolName, EditParams{FilePath: ".git/config", OldString: "x", NewString: "y"})
+	require.True(t, resp.IsError)
+	require.Contains(t, resp.Content, "repository metadata")
+
+	appendT := NewAppendTool(nil, &mockPermissionService{}, &mockHistoryService{}, mockFileTrackerService{}, ws, nil)
+	resp = runTool(t, appendT, AppendToolName, AppendParams{FilePath: ".git/COMMIT_EDITMSG", Content: "pwned"})
+	require.True(t, resp.IsError)
+	require.Contains(t, resp.Content, "repository metadata")
+
+	// Reads stay available: the agent legitimately inspects git state.
+	view := NewViewTool(nil, &mockPermissionService{}, mockFileTrackerService{}, nil, ws, nil)
+	require.NoError(t, os.WriteFile(filepath.Join(ws, ".git", "HEAD"), []byte("ref: refs/heads/main\n"), 0o644))
+	resp = runTool(t, view, ViewToolName, ViewParams{FilePath: ".git/HEAD"})
+	require.False(t, resp.IsError, resp.Content)
+}

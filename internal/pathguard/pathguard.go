@@ -658,6 +658,12 @@ type Confinement struct {
 	// write-side checks (redirect operands, interpreter opens with a write
 	// flag) refuse them while reads stay unrestricted.
 	ProtectedPaths []string
+	// ProtectGitDirs extends the write fence to repository metadata: any
+	// path whose components include a .git directory (root repo or nested
+	// checkout) is read-only for confined children. Hooks and git config
+	// execute on the next git invocation, so they are reserved to git
+	// commands and direct user action.
+	ProtectGitDirs bool
 }
 
 // ProtectedWriteBlocked reports whether absPath names a protected path that
@@ -674,6 +680,11 @@ func (c Confinement) ProtectedWriteBlocked(absPath string) error {
 				"Security violation: %s is a configuration file the agent may not modify; "+
 					"config changes must come from direct user action", clean)
 		}
+	}
+	if c.ProtectGitDirs && filepathext.IsGitMetadataPath(clean, c.WorkspaceRoot) {
+		return fmt.Errorf(
+			"Security violation: %s is repository metadata (.git) the agent may not modify; "+
+				"hooks and git config execute on the next git invocation", clean)
 	}
 	return nil
 }

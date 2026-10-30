@@ -8,10 +8,41 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestRunConfigFileWriteProtection pins that workspace/project config files
-// are read-only for confined children: shell redirects may not write them,
-// while reads and writes to every other in-workspace path keep working.
-// Config changes are reserved to direct user action.
+// TestRunGitMetadataWriteProtection pins that repository metadata (.git) is
+// read-only for confined children: shell redirects may not plant hooks or
+// rewrite git config, while reads and git commands themselves keep working.
+func TestRunGitMetadataWriteProtection(t *testing.T) {
+	t.Parallel()
+
+	workspace := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".git", "hooks"), 0o755))
+
+	for _, cmd := range []string{
+		"echo x > .git/hooks/pre-commit",
+		"echo x > .git/config",
+		"echo x >> .git/COMMIT_EDITMSG",
+		"echo x > \"$WS/.git/config\"",
+	} {
+		err := Run(t.Context(), RunOptions{
+			Command:   cmd,
+			Cwd:       workspace,
+			Workspace: workspace,
+			Env:       []string{"WS=" + filepath.ToSlash(workspace)},
+		})
+		require.Error(t, err, cmd)
+		require.Contains(t, err.Error(), "repository metadata", cmd)
+	}
+
+	// Ordinary in-workspace writes are unaffected.
+	err := Run(t.Context(), RunOptions{
+		Command:   "echo x > notes.txt",
+		Cwd:       workspace,
+		Workspace: workspace,
+	})
+	if err != nil {
+		require.NotContains(t, err.Error(), "repository metadata", err.Error())
+	}
+}
 func TestRunConfigFileWriteProtection(t *testing.T) {
 	t.Parallel()
 
