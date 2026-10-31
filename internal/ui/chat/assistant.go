@@ -585,10 +585,11 @@ func (a *AssistantMessageItem) renderThinking(thinking string, width int) string
 // Captures the syntax inside the block.
 var mermaidBlockRegex = regexp.MustCompile("(?s)```mermaid[ \t\n\r]*(.*?)[ \t\n\r]*```")
 
-// mermaidViewLink returns an OSC 8 hyperlink "View" for mermaid blocks found
-// in the content. Stores the syntax in the DB and uses the resulting ID in the URL.
+// mermaidViewLink returns an OSC 8 hyperlink "View Diagram" for mermaid
+// blocks found in the content. Stores the syntax in the DB and uses the
+// resulting ID in the URL.
 // Returns empty string if no mermaid block is found or the service is not enabled.
-func mermaidViewLink(content string) string {
+func mermaidViewLink(content string, sty *styles.Styles) string {
 	matches := mermaidBlockRegex.FindAllStringSubmatch(content, -1)
 	if len(matches) == 0 {
 		return ""
@@ -600,7 +601,8 @@ func mermaidViewLink(content string) string {
 	if url == "" {
 		return ""
 	}
-	return "\x1b]8;;" + url + "\x07View\x1b]8;;\x07"
+	label := sty.Messages.MermaidViewLink.Render("View Diagram")
+	return "\x1b]8;;" + url + "\x07" + label + "\x1b]8;;\x07"
 }
 
 // renderMarkdown renders content as markdown. F8 routes the call
@@ -624,7 +626,7 @@ func (a *AssistantMessageItem) renderMarkdown(content string, width int) string 
 		a.streamingContent.Reset()
 	}
 	out := a.streamingContent.Render(content, width, renderer)
-	if link := mermaidViewLink(content); link != "" {
+	if link := mermaidViewLink(content, a.sty); link != "" {
 		out += "\n\n" + link
 	}
 	return out

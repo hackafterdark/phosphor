@@ -112,15 +112,16 @@ func grantAccess(path string, sid *windows.SID, accessMask windows.ACCESS_MASK) 
 // workspace are rare by design (the trust gate, terminal usage), and
 // the next launch re-grants, so teardown stays unconditional.
 func CleanupContainerGrants() error {
+	// Hold aclMu for the whole teardown. grantAccess serializes on the
+	// same lock, so a new grant for a path can never be skipped on the
+	// memo while its revocation is still pending: the grant blocks
+	// until cleanup returns, by which point the memo is empty and the
+	// ACE is applied for real.
 	aclMu.Lock()
-	snapshot := make([]grant, 0, len(grantedAce))
-	for _, g := range grantedAce {
-		snapshot = append(snapshot, g)
-	}
-	aclMu.Unlock()
+	defer aclMu.Unlock()
 
 	var errs []error
-	for _, g := range snapshot {
+	for _, g := range grantedAce {
 		// A path deleted mid-session (toolchain caches churn) took
 		// its ACE with it; drop the memo and move on. Other stat
 		// failures say nothing about the ACE, so keep the memo and
@@ -130,9 +131,7 @@ func CleanupContainerGrants() error {
 				errs = append(errs, fmt.Errorf("stat %q: %w", g.path, err))
 				continue
 			}
-			aclMu.Lock()
 			delete(grantedAce, g.key())
-			aclMu.Unlock()
 			continue
 		}
 		if err := revokeAccess(g); err != nil {
@@ -142,9 +141,7 @@ func CleanupContainerGrants() error {
 			errs = append(errs, err)
 			continue
 		}
-		aclMu.Lock()
 		delete(grantedAce, g.key())
-		aclMu.Unlock()
 	}
 	return errors.Join(errs...)
 }

@@ -145,6 +145,12 @@ type Workspace struct {
 	// embedded [app.App.Shutdown]; tests may override it to avoid
 	// driving a full [app.App] through shutdown.
 	shutdownFn func()
+
+	// adopted marks a workspace whose app instance belongs to the
+	// embedding process. Adopted workspaces keep client-claim bookkeeping
+	// but are never removed by teardown; they stay registered until
+	// [Backend.ShutdownAll].
+	adopted bool
 }
 
 // invokeShutdown calls the workspace shutdown hook if set, falling
@@ -170,13 +176,40 @@ func (w *Workspace) invokeShutdown() {
 //     observes cancellation.
 //  3. Cancel active coordinator work for runs that already
 //     registered their per-session cancel function.
-//  4. Wait for dispatched agent goroutines to return.
+//  4. Wait for dispatched agent goroutines to return, bounded by
+//     [runDrainTimeout] so a run that ignores cancellation cannot
+//     park shutdown.
 //  5. Run the embedded [app.App.Shutdown] cleanup (DB, LSP, etc).
 //
 // CancelAll is idempotent, so the second call inside app.App.Shutdown
 // is harmless; the important guarantee is that cancel -> CancelAll ->
 // runWG.Wait completes before the embedded cleanup touches the DB.
+// The drain wait is bounded: a run that still has not returned when
+// the deadline passes is abandoned with an error log, and the
+// stragglers are reclaimed when the process exits.
 func (w *Workspace) Shutdown() {
+	w.quiesce()
+	if w.App != nil {
+		w.App.Shutdown()
+	}
+}
+
+// runDrainTimeout bounds the wait for dispatched agent runs to
+// unwind after cancellation. Tests may shorten it.
+var runDrainTimeout = 5 * time.Second
+
+// quiesce marks the workspace closing, cancels workspace and
+// coordinator work, and waits for dispatched agent goroutines to
+// return with a bounded wait. It performs the cancellation and drain
+// steps of [Workspace.Shutdown] without touching the embedded app,
+// whose cleanup stays with the host (or with [Workspace.Shutdown]).
+//
+// The wait is bounded by [runDrainTimeout]: cancellation is
+// cooperative, and a run that ignores it must not hold the terminal
+// hostage on exit. Stragglers are abandoned with an error log and
+// reclaimed when the process exits — the same policy the app shutdown
+// cleanup uses.
+func (w *Workspace) quiesce() {
 	w.runMu.Lock()
 	w.closing = true
 	w.runMu.Unlock()
@@ -187,9 +220,17 @@ func (w *Workspace) Shutdown() {
 	if w.App != nil && w.AgentCoordinator != nil {
 		w.AgentCoordinator.CancelAll()
 	}
-	w.runWG.Wait()
-	if w.App != nil {
-		w.App.Shutdown()
+
+	drained := make(chan struct{})
+	go func() {
+		w.runWG.Wait()
+		close(drained)
+	}()
+	select {
+	case <-drained:
+	case <-time.After(runDrainTimeout):
+		slog.Error("Agent runs did not drain before the shutdown deadline; abandoning them",
+			"workspace", w.ID, "timeout", runDrainTimeout)
 	}
 }
 
@@ -364,7 +405,70 @@ func (b *Backend) CreateWorkspace(args proto.Workspace) (*Workspace, proto.Works
 	return ws, workspaceToProto(ws), nil
 }
 
-// skillsDiscoveryConfig adapts a *config.ConfigStore to the
+// AdoptWorkspace registers an externally-owned [app.App] instance as
+// the workspace for path without creating a new one. It exists for
+// local mode, where the TUI already owns the workspace's agent
+// runtime: the OpenAI API and management API can attach to that same
+// workspace instead of spawning a duplicate [app.App] for the same
+// path (duplicate index builds, LSP managers, and goal watchdogs).
+//
+// The backend does not own the adopted app's lifecycle: its shutdown
+// hook quiesces agent runs (cancel and drain) but never calls the
+// embedded [app.App.Shutdown], and teardown leaves adopted workspaces
+// registered regardless of client claims — they are dropped only by
+// [Backend.ShutdownAll]. The embedding process owns shutdown.
+//
+// A call for a path that already has a workspace returns the existing
+// workspace, mirroring [Backend.CreateWorkspace]'s deduplication.
+func (b *Backend) AdoptWorkspace(appWorkspace *app.App, cfg *config.ConfigStore, path string) (*Workspace, proto.Workspace, error) {
+	if appWorkspace == nil {
+		return nil, proto.Workspace{}, fmt.Errorf("cannot adopt a nil app instance")
+	}
+	if cfg == nil {
+		return nil, proto.Workspace{}, fmt.Errorf("cannot adopt workspace %q without a config store", path)
+	}
+
+	key, err := resolveWorkspaceKey(path)
+	if err != nil {
+		return nil, proto.Workspace{}, fmt.Errorf("failed to resolve workspace path: %w", err)
+	}
+
+	wsCtx, wsCancel := context.WithCancel(b.ctx)
+	ws := &Workspace{
+		App:          appWorkspace,
+		ID:           uuid.New().String(),
+		Path:         path,
+		Cfg:          cfg,
+		Skills:       appWorkspace.Skills,
+		resolvedPath: key,
+		ctx:          wsCtx,
+		cancel:       wsCancel,
+		clients:      make(map[string]*clientState),
+		adopted:      true,
+	}
+	// The app belongs to whoever embedded us; the backend must never
+	// shut it down. The hook still quiesces agent runs so dispatched
+	// goroutines are cancelled and drained before the workspace is
+	// dropped from the registry, but the embedded cleanup stays with
+	// the host.
+	ws.shutdownFn = ws.quiesce
+
+	b.mu.Lock()
+	if existingID, ok := b.pathIndex[key]; ok {
+		if existing, found := b.workspaces.Get(existingID); found {
+			b.mu.Unlock()
+			ws.invokeShutdown()
+			return existing, workspaceToProto(existing), nil
+		}
+		delete(b.pathIndex, key)
+	}
+	b.workspaces.Set(ws.ID, ws)
+	b.pathIndex[key] = ws.ID
+	b.mu.Unlock()
+
+	return ws, workspaceToProto(ws), nil
+}
+
 // skills.DiscoveryConfig that DiscoverFromConfig consumes.
 func skillsDiscoveryConfig(cfg *config.ConfigStore) skills.DiscoveryConfig {
 	opts := cfg.Config().Options
@@ -575,6 +679,15 @@ func (b *Backend) teardown(ws *Workspace) {
 		return
 	}
 	ws.clientsMu.Unlock()
+	if ws.adopted {
+		// The adopted workspace belongs to the embedding process,
+		// not to any API client. Claims may come and go, but the
+		// workspace stays registered until [Backend.ShutdownAll],
+		// and dropping the last claim must never trigger the
+		// server shutdown hook while the host app is still running.
+		b.mu.Unlock()
+		return
+	}
 	if existing, ok := b.pathIndex[ws.resolvedPath]; ok && existing == ws.ID {
 		delete(b.pathIndex, ws.resolvedPath)
 	}
@@ -708,7 +821,11 @@ func (b *Backend) ShutdownAll() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	for _, ws := range b.workspaces.Seq2() {
-		ws.Shutdown()
+		// Go through invokeShutdown so adopted workspaces run
+		// their quiesce hook (cancel and drain, no embedded app
+		// cleanup) while regular workspaces (nil hook) still run
+		// the full [Workspace.Shutdown] sequence.
+		ws.invokeShutdown()
 	}
 	b.workspaces = csync.NewMap[string, *Workspace]()
 	b.pathIndex = make(map[string]string)

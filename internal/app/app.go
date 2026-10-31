@@ -205,12 +205,31 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore, skillsMgr
 			if lockErr != nil {
 				slog.Warn("Another process is building the workspace index; skipping the background build", "error", lockErr)
 			} else {
+				// Build on a cancellable context so exiting never waits
+				// on the indexer: the shutdown cleanup cancels the
+				// build, the indexer unwinds cooperatively, and the
+				// join below bounds the wait that replaced the base
+				// cleanup's unconditional indexBuildWG.Wait() — which
+				// used to park shutdown for as long as the background
+				// build ran.
+				indexCtx, cancelIndex := context.WithCancel(ctx)
+				app.cleanupFuncs = append(app.cleanupFuncs, func(context.Context) error {
+					cancelIndex()
+					// Join the unwinding build: its handles (index
+					// store, lock file) must be released before
+					// shutdown returns, or the process exits with
+					// them open and Windows cleanup races them.
+					// Cancellation makes this wait bounded.
+					app.indexBuildWG.Wait()
+					return nil
+				})
 				app.indexBuildWG.Go(func() {
 					defer release()
+					defer cancelIndex()
 					indexer := workspaceindex.NewIndexer(indexStore, wi.MaxFileSize)
 					indexer.SetLimits(wi.MaxConcurrent, wi.YieldEvery)
 					indexer.SetIndexDocuments(wi.IndexDocumentsEnabled())
-					if err := indexer.IndexWorkspace(ctx, store.WorkingDir(), wi.ExcludePatterns); err != nil {
+					if err := indexer.IndexWorkspace(indexCtx, store.WorkingDir(), wi.ExcludePatterns); err != nil {
 						slog.Warn("Failed to build workspace index", "error", err)
 					} else {
 						files, _ := indexStore.CountFiles(ctx)
@@ -241,7 +260,6 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore, skillsMgr
 			slog.Warn("Failed to open the memory index; reads will rescan when used", "error", err)
 		} else {
 			app.MemoryIndex = memStore
-			app.cleanupFuncs = append(app.cleanupFuncs, func(context.Context) error { return app.CloseMemory() })
 			// Seed the project vocabulary once per process, off the startup path. It
 			// used to ride memory.Open, but the memory tools open a store per call and
 			// seeding takes a write transaction on the file the watcher indexes, which
@@ -249,11 +267,20 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore, skillsMgr
 			// timeout so a busy index can never hold the app up, and cancelled on
 			// shutdown so it cannot outlive the vault handles it writes to.
 			seedCtx, cancelSeed := context.WithCancel(context.Background())
+			var seedWG sync.WaitGroup
+			seedWG.Add(1)
 			app.cleanupFuncs = append(app.cleanupFuncs, func(context.Context) error {
 				cancelSeed()
-				return nil
+				// Drain the seeding goroutine before releasing the
+				// vault handles: sql.DB keeps an in-flight
+				// connection (and its file handle) open until the
+				// query returns, so closing the index concurrently
+				// would strand the seed's handle past shutdown.
+				seedWG.Wait()
+				return app.CloseMemory()
 			})
 			go func() {
+				defer seedWG.Done()
 				defer cancelSeed()
 				seedCtx, timeout := context.WithTimeout(seedCtx, 15*time.Second)
 				defer timeout()
@@ -916,13 +943,43 @@ func (app *App) Shutdown() {
 			})
 		}
 	}
-	wg.Wait()
+	// Bound the cleanup wait: a cleanup function that hangs (or ignores
+	// its context) must not hold the terminal hostage for minutes.
+	// Anything still running when the deadline passes is abandoned;
+	// process exit reclaims it.
+	waitDone := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(waitDone)
+	}()
+	select {
+	case <-waitDone:
+	case <-shutdownCtx.Done():
+		slog.Warn("Cleanup did not finish before the shutdown deadline; continuing shutdown", "error", shutdownCtx.Err())
+	}
 
 	// Revoke sandbox container ACEs last: confined children (killed by
 	// KillAll above) must be gone before their host-directory grants
 	// are withdrawn, and cleanupFuncs run in parallel.
-	if err := sandbox.CleanupContainerGrants(); err != nil {
-		slog.Warn("Failed to revoke sandbox container ACEs on shutdown", "error", err)
+	//
+	// The revoke goes through SetNamedSecurityInfo, which propagates
+	// the ACE change through the whole tree; on a large workspace
+	// that crawl can run for minutes and park the terminal on exit.
+	// Bound the wait with its own deadline — the same policy the
+	// cleanup block above uses: anything still running when the
+	// deadline passes is abandoned, and lingering ACEs are re-granted
+	// (and re-revoked) at the next launch.
+	aclDone := make(chan error, 1)
+	go func() { aclDone <- sandbox.CleanupContainerGrants() }()
+	aclCtx, aclCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer aclCancel()
+	select {
+	case err := <-aclDone:
+		if err != nil {
+			slog.Warn("Failed to revoke sandbox container ACEs on shutdown", "error", err)
+		}
+	case <-aclCtx.Done():
+		slog.Warn("Container ACE cleanup did not finish before the shutdown deadline; continuing shutdown", "error", aclCtx.Err())
 	}
 }
 
