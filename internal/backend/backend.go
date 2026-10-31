@@ -145,6 +145,12 @@ type Workspace struct {
 	// embedded [app.App.Shutdown]; tests may override it to avoid
 	// driving a full [app.App] through shutdown.
 	shutdownFn func()
+
+	// adopted marks a workspace whose app instance belongs to the
+	// embedding process. Adopted workspaces keep client-claim bookkeeping
+	// but are never removed by teardown; they stay registered until
+	// [Backend.ShutdownAll].
+	adopted bool
 }
 
 // invokeShutdown calls the workspace shutdown hook if set, falling
@@ -177,6 +183,18 @@ func (w *Workspace) invokeShutdown() {
 // is harmless; the important guarantee is that cancel -> CancelAll ->
 // runWG.Wait completes before the embedded cleanup touches the DB.
 func (w *Workspace) Shutdown() {
+	w.quiesce()
+	if w.App != nil {
+		w.App.Shutdown()
+	}
+}
+
+// quiesce marks the workspace closing, cancels workspace and
+// coordinator work, and waits for dispatched agent goroutines to
+// return. It performs the cancellation and drain steps of
+// [Workspace.Shutdown] without touching the embedded app, whose
+// cleanup stays with the host (or with [Workspace.Shutdown]).
+func (w *Workspace) quiesce() {
 	w.runMu.Lock()
 	w.closing = true
 	w.runMu.Unlock()
@@ -188,9 +206,6 @@ func (w *Workspace) Shutdown() {
 		w.AgentCoordinator.CancelAll()
 	}
 	w.runWG.Wait()
-	if w.App != nil {
-		w.App.Shutdown()
-	}
 }
 
 // New creates a new [Backend].
@@ -371,10 +386,11 @@ func (b *Backend) CreateWorkspace(args proto.Workspace) (*Workspace, proto.Works
 // workspace instead of spawning a duplicate [app.App] for the same
 // path (duplicate index builds, LSP managers, and goal watchdogs).
 //
-// The backend does not own the adopted app's lifecycle: the workspace
-// carries a no-op shutdown hook so teardown and [Backend.ShutdownAll]
-// release client claims but never shut the app down. The embedding
-// process owns shutdown.
+// The backend does not own the adopted app's lifecycle: its shutdown
+// hook quiesces agent runs (cancel and drain) but never calls the
+// embedded [app.App.Shutdown], and teardown leaves adopted workspaces
+// registered regardless of client claims — they are dropped only by
+// [Backend.ShutdownAll]. The embedding process owns shutdown.
 //
 // A call for a path that already has a workspace returns the existing
 // workspace, mirroring [Backend.CreateWorkspace]'s deduplication.
@@ -402,10 +418,14 @@ func (b *Backend) AdoptWorkspace(appWorkspace *app.App, cfg *config.ConfigStore,
 		ctx:          wsCtx,
 		cancel:       wsCancel,
 		clients:      make(map[string]*clientState),
-		// The app belongs to whoever embedded us; the backend
-		// must never shut it down.
-		shutdownFn: func() {},
+		adopted:      true,
 	}
+	// The app belongs to whoever embedded us; the backend must never
+	// shut it down. The hook still quiesces agent runs so dispatched
+	// goroutines are cancelled and drained before the workspace is
+	// dropped from the registry, but the embedded cleanup stays with
+	// the host.
+	ws.shutdownFn = ws.quiesce
 
 	b.mu.Lock()
 	if existingID, ok := b.pathIndex[key]; ok {
@@ -633,6 +653,15 @@ func (b *Backend) teardown(ws *Workspace) {
 		return
 	}
 	ws.clientsMu.Unlock()
+	if ws.adopted {
+		// The adopted workspace belongs to the embedding process,
+		// not to any API client. Claims may come and go, but the
+		// workspace stays registered until [Backend.ShutdownAll],
+		// and dropping the last claim must never trigger the
+		// server shutdown hook while the host app is still running.
+		b.mu.Unlock()
+		return
+	}
 	if existing, ok := b.pathIndex[ws.resolvedPath]; ok && existing == ws.ID {
 		delete(b.pathIndex, ws.resolvedPath)
 	}
@@ -766,11 +795,10 @@ func (b *Backend) ShutdownAll() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	for _, ws := range b.workspaces.Seq2() {
-		// Go through invokeShutdown so adopted workspaces
-		// (which carry a no-op shutdown hook and are owned by
-		// the embedding process) are skipped while regular
-		// workspaces (nil hook) still run the full
-		// [Workspace.Shutdown] sequence.
+		// Go through invokeShutdown so adopted workspaces run
+		// their quiesce hook (cancel and drain, no embedded app
+		// cleanup) while regular workspaces (nil hook) still run
+		// the full [Workspace.Shutdown] sequence.
 		ws.invokeShutdown()
 	}
 	b.workspaces = csync.NewMap[string, *Workspace]()

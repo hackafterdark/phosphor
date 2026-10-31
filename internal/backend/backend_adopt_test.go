@@ -62,3 +62,30 @@ func TestBackend_AdoptWorkspaceGuards(t *testing.T) {
 	_, _, err = b.AdoptWorkspace(&app.App{}, nil, wd)
 	require.Error(t, err)
 }
+
+// TestBackend_AdoptedWorkspaceSurvivesClaimChurn pins the local-mode
+// invariant: client claims on an adopted workspace may come and go,
+// but teardown must never remove the host's workspace or fire the
+// server shutdown hook while the host app is still running.
+func TestBackend_AdoptedWorkspaceSurvivesClaimChurn(t *testing.T) {
+	isolateConfigEnv(t)
+
+	wd := t.TempDir()
+	srvCfg, err := config.Init(wd, "", false)
+	require.NoError(t, err)
+
+	shutdownCalled := false
+	b := backend.New(t.Context(), srvCfg, func() { shutdownCalled = true })
+
+	ws, _, err := b.AdoptWorkspace(&app.App{}, srvCfg, wd)
+	require.NoError(t, err)
+
+	// client_id must be a UUID: the OpenAI API derives it per session.
+	const clientID = "00000000-0000-0000-0000-000000000001"
+	require.NoError(t, b.AttachClient(ws.ID, clientID))
+	b.DetachClient(ws.ID, clientID)
+
+	require.Len(t, b.ListWorkspaces(), 1)
+	require.False(t, shutdownCalled,
+		"dropping the last client claim must not shut down the server")
+}
