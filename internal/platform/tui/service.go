@@ -90,6 +90,17 @@ func (s *Service) Stop(ctx context.Context) error {
 		}
 	})
 
+	// If the program has already exited (e.g. the user quit the
+	// TUI and shutdown is stopping services afterwards), return
+	// immediately. Otherwise the select below could pick an
+	// expired shutdown context over the closed done channel and
+	// log a spurious deadline error.
+	select {
+	case <-s.doneCh:
+		return nil
+	default:
+	}
+
 	select {
 	case <-s.doneCh:
 		return nil
