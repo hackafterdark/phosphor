@@ -2,6 +2,7 @@ package permission
 
 import (
 	"context"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -12,6 +13,18 @@ import (
 	"github.com/hackafterdark/phosphor/pkg/csync"
 	"github.com/hackafterdark/phosphor/pkg/pubsub"
 )
+
+// Option customizes a permission service at construction.
+type Option func(*permissionService)
+
+// WithYoloDisabled pins YOLO mode off: any skip state present at
+// construction is dropped and SetSkipRequests(true) is refused (and
+// logged) for the life of the service. It backs the operator-only
+// security.disable_yolo floor, so neither --yolo, ctrl+y, nor a headless
+// client can re-enable blanket permission skipping.
+func WithYoloDisabled() Option {
+	return func(s *permissionService) { s.yoloDisabled = true }
+}
 
 // hookApprovalKey is the unexported context key used to mark a tool call as
 // pre-approved by a PreToolUse hook. The value is the tool call ID so an
@@ -110,6 +123,7 @@ type permissionService struct {
 	skip                  atomic.Bool
 	allowedTools          []string
 	allowCmdEntries       map[string][][]string
+	yoloDisabled          bool
 
 	// used to make sure we only process one request at a time
 	requestMu       sync.Mutex
@@ -346,6 +360,10 @@ func (s *permissionService) SubscribeNotifications(ctx context.Context) <-chan p
 }
 
 func (s *permissionService) SetSkipRequests(skip bool) {
+	if skip && s.yoloDisabled {
+		slog.Warn("Ignoring yolo mode request: pinned off by security.disable_yolo")
+		return
+	}
 	s.skip.Store(skip)
 }
 
@@ -353,7 +371,7 @@ func (s *permissionService) SkipRequests() bool {
 	return s.skip.Load()
 }
 
-func NewPermissionService(workingDir string, skip bool, allowedTools []string, allowCommands []string) Service {
+func NewPermissionService(workingDir string, skip bool, allowedTools []string, allowCommands []string, opts ...Option) Service {
 	svc := &permissionService{
 		Broker:              pubsub.NewBroker[PermissionRequest](),
 		notificationBroker:  pubsub.NewBroker[PermissionNotification](),
@@ -363,6 +381,13 @@ func NewPermissionService(workingDir string, skip bool, allowedTools []string, a
 		allowedTools:        allowedTools,
 		allowCmdEntries:     parseAllowEntries(allowCommands),
 		pendingRequests:     csync.NewMap[string, chan bool](),
+	}
+	for _, opt := range opts {
+		opt(svc)
+	}
+	if svc.yoloDisabled && skip {
+		slog.Warn("Dropping yolo mode requested at startup: pinned off by security.disable_yolo")
+		skip = false
 	}
 	svc.skip.Store(skip)
 	return svc

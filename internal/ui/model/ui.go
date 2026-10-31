@@ -2701,8 +2701,11 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 			yolo := !m.com.Workspace.PermissionSkipRequests()
 			m.com.Workspace.PermissionSetSkipRequests(yolo)
 			m.setEditorPrompt()
+			// Report the enforced state, not the request: with
+			// security.disable_yolo pinned, the service refuses the
+			// enable and the toggle is a no-op.
 			status := "disabled"
-			if yolo {
+			if m.com.Workspace.PermissionSkipRequests() {
 				status = "enabled"
 			}
 			cmds = append(cmds, util.ReportInfo("Yolo mode "+status))

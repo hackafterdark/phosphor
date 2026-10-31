@@ -1,0 +1,15 @@
+{
+  "$schema": "https://raw.githubusercontent.com/hackafterdark/phosphor/main/schema.json",
+
+  "tools": {
+    "bash": {
+      "sandbox_mode": "workspace",
+      "auto_escalate_commands": ["git", "gh", "go"],
+      "trust_toolchain_caches": true,
+      "sandbox_limits": {
+        "max_procs": 512,
+        "max_file_mb": 1024
+      }
+    }
+  }
+}

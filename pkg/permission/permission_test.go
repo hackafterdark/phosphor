@@ -114,6 +114,23 @@ func TestPermissionService_SkipMode(t *testing.T) {
 	}
 }
 
+// TestPermissionService_YoloPinnedOff verifies WithYoloDisabled refuses the
+// skip flag at construction and on every later toggle, while disabling
+// remains possible.
+func TestPermissionService_YoloPinnedOff(t *testing.T) {
+	t.Parallel()
+
+	service := NewPermissionService("/tmp", true, []string{}, nil, WithYoloDisabled())
+
+	require.False(t, service.SkipRequests(), "skip state at construction must be dropped")
+
+	service.SetSkipRequests(true)
+	require.False(t, service.SkipRequests(), "enabling yolo must be refused while pinned")
+
+	service.SetSkipRequests(false)
+	require.False(t, service.SkipRequests(), "disabling yolo must always succeed")
+}
+
 func TestPermissionService_HookApproval(t *testing.T) {
 	t.Parallel()
 

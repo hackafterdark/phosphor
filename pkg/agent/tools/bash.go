@@ -511,6 +511,16 @@ func NewBashTool(permissions permission.Service, workingDir string, bashCfg conf
 			sandboxMode := bashCfg.BashSandboxMode()
 			span.SetAttributes(attribute.String("phosphor.security.sandbox_mode", sandboxMode))
 			escalated := sandboxMode != config.SandboxModeOff && sandboxDenialRequested(params)
+			if escalated && permission.MatchesAllowlist(bashCfg.AutoEscalateCommands, params.Command) {
+				// The operator trusted this command to run unsandboxed
+				// (tools.bash.auto_escalate_commands): the argv-verified
+				// allowlist matches, so the escalation grants itself
+				// without a prompt.
+				escalated = false
+				span.SetAttributes(attribute.Bool("phosphor.security.sandbox_escalated", true))
+				slog.Warn("Auto-approved sandbox escalation for allowlisted command", "command", params.Command)
+				sandboxMode = config.SandboxModeOff
+			}
 			if escalated {
 				// BypassShortcuts: YOLO mode, tool allowlists, hook
 				// pre-approvals, and session permission caches must never

@@ -91,6 +91,16 @@ func hardenAgainstWorkspaceOverrides(cfg, floor *Config) int {
 			revert("security.read_only", "workspace attempted to disable read-only mode")
 		}
 	}
+	// YOLO pinning is operator-only: once the trusted floor pins yolo off,
+	// no workspace file may re-enable it. (Unlike the tri-state masks, the
+	// unset default here is permissive — nil means yolo is allowed.)
+	if floor.Security.DisableYolo != nil && *floor.Security.DisableYolo {
+		if cfg.Security.DisableYolo == nil || !*cfg.Security.DisableYolo {
+			pinned := true
+			cfg.Security.DisableYolo = &pinned
+			revert("security.disable_yolo", "workspace attempted to re-enable yolo mode")
+		}
+	}
 
 	// Opt-in egress isolation is operator-only. Any workspace change to the whole
 	// block (enabling it, editing the brokered host allowlist, or flipping its
@@ -115,6 +125,12 @@ func hardenAgainstWorkspaceOverrides(cfg, floor *Config) int {
 	cfg.Tools.Bash.TrustedExtraRoots = noBroadenAllowList(
 		cfg.Tools.Bash.TrustedExtraRoots, floor.Tools.Bash.TrustedExtraRoots,
 		"tools.bash.trusted_extra_roots", nil, revert,
+	)
+	// Auto-escalation is a trust grant: a workspace may narrow the operator's
+	// list but never add commands that can escalate without a prompt.
+	cfg.Tools.Bash.AutoEscalateCommands = noBroadenAllowList(
+		cfg.Tools.Bash.AutoEscalateCommands, floor.Tools.Bash.AutoEscalateCommands,
+		"tools.bash.auto_escalate_commands", nil, revert,
 	)
 	// Trusting toolchain caches widens the writable path set; a workspace
 	// may not open caches the operator left closed.

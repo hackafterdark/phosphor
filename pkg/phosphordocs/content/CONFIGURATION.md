@@ -194,9 +194,9 @@ Notes that smooth the local-model path:
   vLLM/llama.cpp setups and chat templates), set `"tool_call_format": "xml"` on
   the provider.
 - **Thinking toggles.** For models whose chat template has an
-  "enable_thinking" kwarg, set ""enable_thinking": "off"" (or ""on"") on the
-  "models.large" / "models.small" selection to pin it; omitting it leaves the
-  server default.
+  "enable_thinking" kwarg, set ""enable_thinking": "on"" or
+  ""enable_thinking": "off"" on the "models.large" / "models.small"
+  selection to pin it; omitting it leaves the server default.
 - **Server-specific fields.** Anything non-standard can ride along verbatim in
   request bodies via `extra_body` (openai-compat providers only):
 
@@ -413,7 +413,9 @@ These options control the *prompt* only. They never relax the sandbox,
 pathguard, or escalation checks. For how the consent and enforcement layers
 fit together — including the argument-agnostic "Allow for this session"
 grant — see
-[Permission Prompts](security/CONFIGURATION.md#permission-prompts).
+[Permission Prompts](security/CONFIGURATION.md#permission-prompts). For a
+copy-paste high-trust setup with prompt-free toolchain and git/gh loops,
+see [VIBE_CODING.md](VIBE_CODING.md).
 
 ### `tools`
 
@@ -564,6 +566,7 @@ at read time, forced read-only mode, and a tool blacklist:
 {
   "security": {
     "read_only": false,
+    "disable_yolo": false,
     "tool_blacklist": ["bash"],
     "allowed_egress": { "http": true },
     "redact_outgoing_secrets": true,
@@ -578,6 +581,11 @@ at read time, forced read-only mode, and a tool blacklist:
 Defaults are already the secure positions (redaction on, tokenization off, PII
 masking off because it false-positives on code). Don't loosen anything here
 without reading [security/CONFIGURATION.md](security/CONFIGURATION.md) first.
+
+`disable_yolo` is operator-only: set it to `true` in the global config to pin
+YOLO mode off for every workspace. `--yolo`, ctrl+y, and headless clients
+cannot enable permission-request skipping while it is pinned, workspace files
+cannot unset it, and unattended cron jobs refuse to run while it is active.
 
 ### `workspace_search`
 
