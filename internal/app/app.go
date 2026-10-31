@@ -205,12 +205,23 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore, skillsMgr
 			if lockErr != nil {
 				slog.Warn("Another process is building the workspace index; skipping the background build", "error", lockErr)
 			} else {
+				// Build on a cancellable context so exiting never waits
+				// on the indexer: the shutdown cleanup cancels the build
+				// and the indexer unwinds cooperatively. Without this,
+				// the index-store cleanup's indexBuildWG.Wait() parks
+				// shutdown for as long as the background build runs.
+				indexCtx, cancelIndex := context.WithCancel(ctx)
+				app.cleanupFuncs = append(app.cleanupFuncs, func(context.Context) error {
+					cancelIndex()
+					return nil
+				})
 				app.indexBuildWG.Go(func() {
 					defer release()
+					defer cancelIndex()
 					indexer := workspaceindex.NewIndexer(indexStore, wi.MaxFileSize)
 					indexer.SetLimits(wi.MaxConcurrent, wi.YieldEvery)
 					indexer.SetIndexDocuments(wi.IndexDocumentsEnabled())
-					if err := indexer.IndexWorkspace(ctx, store.WorkingDir(), wi.ExcludePatterns); err != nil {
+					if err := indexer.IndexWorkspace(indexCtx, store.WorkingDir(), wi.ExcludePatterns); err != nil {
 						slog.Warn("Failed to build workspace index", "error", err)
 					} else {
 						files, _ := indexStore.CountFiles(ctx)
@@ -916,7 +927,20 @@ func (app *App) Shutdown() {
 			})
 		}
 	}
-	wg.Wait()
+	// Bound the cleanup wait: a cleanup function that hangs (or ignores
+	// its context) must not hold the terminal hostage for minutes.
+	// Anything still running when the deadline passes is abandoned;
+	// process exit reclaims it.
+	waitDone := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(waitDone)
+	}()
+	select {
+	case <-waitDone:
+	case <-shutdownCtx.Done():
+		slog.Warn("Cleanup did not finish before the shutdown deadline; continuing shutdown", "error", shutdownCtx.Err())
+	}
 
 	// Revoke sandbox container ACEs last: confined children (killed by
 	// KillAll above) must be gone before their host-directory grants
