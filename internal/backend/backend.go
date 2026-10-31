@@ -364,7 +364,65 @@ func (b *Backend) CreateWorkspace(args proto.Workspace) (*Workspace, proto.Works
 	return ws, workspaceToProto(ws), nil
 }
 
-// skillsDiscoveryConfig adapts a *config.ConfigStore to the
+// AdoptWorkspace registers an externally-owned [app.App] instance as
+// the workspace for path without creating a new one. It exists for
+// local mode, where the TUI already owns the workspace's agent
+// runtime: the OpenAI API and management API can attach to that same
+// workspace instead of spawning a duplicate [app.App] for the same
+// path (duplicate index builds, LSP managers, and goal watchdogs).
+//
+// The backend does not own the adopted app's lifecycle: the workspace
+// carries a no-op shutdown hook so teardown and [Backend.ShutdownAll]
+// release client claims but never shut the app down. The embedding
+// process owns shutdown.
+//
+// A call for a path that already has a workspace returns the existing
+// workspace, mirroring [Backend.CreateWorkspace]'s deduplication.
+func (b *Backend) AdoptWorkspace(appWorkspace *app.App, cfg *config.ConfigStore, path string) (*Workspace, proto.Workspace, error) {
+	if appWorkspace == nil {
+		return nil, proto.Workspace{}, fmt.Errorf("cannot adopt a nil app instance")
+	}
+	if cfg == nil {
+		return nil, proto.Workspace{}, fmt.Errorf("cannot adopt workspace %q without a config store", path)
+	}
+
+	key, err := resolveWorkspaceKey(path)
+	if err != nil {
+		return nil, proto.Workspace{}, fmt.Errorf("failed to resolve workspace path: %w", err)
+	}
+
+	wsCtx, wsCancel := context.WithCancel(b.ctx)
+	ws := &Workspace{
+		App:          appWorkspace,
+		ID:           uuid.New().String(),
+		Path:         path,
+		Cfg:          cfg,
+		Skills:       appWorkspace.Skills,
+		resolvedPath: key,
+		ctx:          wsCtx,
+		cancel:       wsCancel,
+		clients:      make(map[string]*clientState),
+		// The app belongs to whoever embedded us; the backend
+		// must never shut it down.
+		shutdownFn: func() {},
+	}
+
+	b.mu.Lock()
+	if existingID, ok := b.pathIndex[key]; ok {
+		if existing, found := b.workspaces.Get(existingID); found {
+			b.mu.Unlock()
+			ws.invokeShutdown()
+			return existing, workspaceToProto(existing), nil
+		}
+		delete(b.pathIndex, key)
+	}
+	b.workspaces.Set(ws.ID, ws)
+	b.pathIndex[key] = ws.ID
+	b.mu.Unlock()
+
+	return ws, workspaceToProto(ws), nil
+}
+
 // skills.DiscoveryConfig that DiscoverFromConfig consumes.
 func skillsDiscoveryConfig(cfg *config.ConfigStore) skills.DiscoveryConfig {
 	opts := cfg.Config().Options
@@ -708,7 +766,12 @@ func (b *Backend) ShutdownAll() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	for _, ws := range b.workspaces.Seq2() {
-		ws.Shutdown()
+		// Go through invokeShutdown so adopted workspaces
+		// (which carry a no-op shutdown hook and are owned by
+		// the embedding process) are skipped while regular
+		// workspaces (nil hook) still run the full
+		// [Workspace.Shutdown] sequence.
+		ws.invokeShutdown()
 	}
 	b.workspaces = csync.NewMap[string, *Workspace]()
 	b.pathIndex = make(map[string]string)
