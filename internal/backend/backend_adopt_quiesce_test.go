@@ -34,3 +34,32 @@ func TestWorkspaceQuiesceCancelsAndDrains(t *testing.T) {
 	require.True(t, ws.closing)
 	require.ErrorIs(t, wsCtx.Err(), context.Canceled)
 }
+
+// TestWorkspaceQuiesceBoundsTheDrain pins the bounded-drain policy:
+// a run that ignores cancellation must not park shutdown. quiesce
+// returns on the drain deadline and abandons the straggler.
+func TestWorkspaceQuiesceBoundsTheDrain(t *testing.T) {
+	old := runDrainTimeout
+	runDrainTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { runDrainTimeout = old })
+
+	wsCtx, wsCancel := context.WithCancel(context.Background())
+	ws := &Workspace{ctx: wsCtx, cancel: wsCancel}
+
+	// A run that never returns, even after cancellation.
+	hang := make(chan struct{})
+	t.Cleanup(func() { close(hang) })
+	ws.runWG.Add(1)
+	go func() {
+		defer ws.runWG.Done()
+		<-hang
+	}()
+
+	start := time.Now()
+	ws.quiesce()
+
+	require.Less(t, time.Since(start), time.Second,
+		"quiesce must return on the drain deadline, not wait for the hang")
+	require.True(t, ws.closing)
+	require.ErrorIs(t, wsCtx.Err(), context.Canceled)
+}

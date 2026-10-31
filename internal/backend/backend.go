@@ -176,12 +176,17 @@ func (w *Workspace) invokeShutdown() {
 //     observes cancellation.
 //  3. Cancel active coordinator work for runs that already
 //     registered their per-session cancel function.
-//  4. Wait for dispatched agent goroutines to return.
+//  4. Wait for dispatched agent goroutines to return, bounded by
+//     [runDrainTimeout] so a run that ignores cancellation cannot
+//     park shutdown.
 //  5. Run the embedded [app.App.Shutdown] cleanup (DB, LSP, etc).
 //
 // CancelAll is idempotent, so the second call inside app.App.Shutdown
 // is harmless; the important guarantee is that cancel -> CancelAll ->
 // runWG.Wait completes before the embedded cleanup touches the DB.
+// The drain wait is bounded: a run that still has not returned when
+// the deadline passes is abandoned with an error log, and the
+// stragglers are reclaimed when the process exits.
 func (w *Workspace) Shutdown() {
 	w.quiesce()
 	if w.App != nil {
@@ -189,11 +194,21 @@ func (w *Workspace) Shutdown() {
 	}
 }
 
+// runDrainTimeout bounds the wait for dispatched agent runs to
+// unwind after cancellation. Tests may shorten it.
+var runDrainTimeout = 5 * time.Second
+
 // quiesce marks the workspace closing, cancels workspace and
 // coordinator work, and waits for dispatched agent goroutines to
-// return. It performs the cancellation and drain steps of
-// [Workspace.Shutdown] without touching the embedded app, whose
-// cleanup stays with the host (or with [Workspace.Shutdown]).
+// return with a bounded wait. It performs the cancellation and drain
+// steps of [Workspace.Shutdown] without touching the embedded app,
+// whose cleanup stays with the host (or with [Workspace.Shutdown]).
+//
+// The wait is bounded by [runDrainTimeout]: cancellation is
+// cooperative, and a run that ignores it must not hold the terminal
+// hostage on exit. Stragglers are abandoned with an error log and
+// reclaimed when the process exits — the same policy the app shutdown
+// cleanup uses.
 func (w *Workspace) quiesce() {
 	w.runMu.Lock()
 	w.closing = true
@@ -205,7 +220,18 @@ func (w *Workspace) quiesce() {
 	if w.App != nil && w.AgentCoordinator != nil {
 		w.AgentCoordinator.CancelAll()
 	}
-	w.runWG.Wait()
+
+	drained := make(chan struct{})
+	go func() {
+		w.runWG.Wait()
+		close(drained)
+	}()
+	select {
+	case <-drained:
+	case <-time.After(runDrainTimeout):
+		slog.Error("Agent runs did not drain before the shutdown deadline; abandoning them",
+			"workspace", w.ID, "timeout", runDrainTimeout)
+	}
 }
 
 // New creates a new [Backend].
