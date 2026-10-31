@@ -279,7 +279,7 @@ type Styles struct {
 		AssistantInfoProvider  lipgloss.Style
 		AssistantInfoDuration  lipgloss.Style
 		AssistantCanceled      lipgloss.Style // Italic "Canceled" footer
-		MermaidViewLink        lipgloss.Style // Styled "View" link for mermaid diagrams
+		MermaidViewLink        lipgloss.Style // Styled "View Diagram" link for mermaid diagrams
 	}
 
 	// Tool - styles for tool call rendering
