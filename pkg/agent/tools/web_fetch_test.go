@@ -129,8 +129,11 @@ func TestWebFetchHardeningUserPromptVerified(t *testing.T) {
 	client := &http.Client{Timeout: time.Second}
 	client.Transport = tr
 
-	// Request to api.internal.dev (no config, not localhost) should prompt.
-	req, err := http.NewRequestWithContext(t.Context(), "GET", "https://api.internal.dev/api", nil)
+	// Unique host per test: the package-level allow list is shared state and
+	// these tests run in parallel, so reusing a host across tests lets one
+	// test's approval leak into another's trust check. .test is reserved and
+	// never resolves.
+	req, err := http.NewRequestWithContext(t.Context(), "GET", "https://api.allow-prompt.test/api", nil)
 	if err != nil {
 		t.Fatalf("failed to create request: %v", err)
 	}
@@ -162,8 +165,11 @@ func TestWebFetchHardeningUserPromptDenyVerified(t *testing.T) {
 	client := &http.Client{Timeout: time.Second}
 	client.Transport = tr
 
-	// Request to api.internal.dev (no config, not localhost) should prompt.
-	req, err := http.NewRequestWithContext(t.Context(), "GET", "https://api.internal.dev/api", nil)
+	// Unique host per test: the package-level allow list is shared state and
+	// these tests run in parallel, so reusing a host across tests lets one
+	// test's approval leak into another's trust check. .test is reserved and
+	// never resolves.
+	req, err := http.NewRequestWithContext(t.Context(), "GET", "https://api.deny-prompt.test/api", nil)
 	if err != nil {
 		t.Fatalf("failed to create request: %v", err)
 	}
