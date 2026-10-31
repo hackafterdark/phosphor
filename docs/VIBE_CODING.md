@@ -185,6 +185,49 @@ No matter what `permissions`, `--yolo`, or session grants say:
 | Credential paths (`~/.ssh`, `~/.aws`, `.env`) | deny-read + sensitive-file redaction |
 | Sandbox-escalation decisions | explicit prompt or `auto_escalate_commands` |
 
+## When prompts still appear
+
+Auto-approval of escalations is argv-verified and deny-by-default. Even with
+the setup above, a prompt is *correct* behavior in these cases:
+
+| Command | Why it prompts |
+|---|---|
+| `rm .git/index.lock && git add .` | Compound command — `rm` isn't allowlisted, and **every** program in a compound must match |
+| `git commit -m "$(cat <<'EOF' ...)"` | Contains a command substitution — `$(...)` can't be statically verified, so the whole command falls through to the prompt |
+| `rm somefile` | `rm` isn't on `auto_escalate_commands` |
+
+The same strictness applies to `permissions.allow_commands` — both lists
+reuse the argv parser, so neither can be tricked by dynamic program names,
+subshells, or substitutions. If your workflow routinely uses heredoc-style
+commit messages, either accept the occasional prompt or keep commit
+message handling in the agent's hands (`git commit -m "plain text"`).
+
+### Network egress
+
+The workspace sandbox confines the **filesystem**, not the network — `gh
+pr create` and `git push` reach GitHub from inside the sandbox without any
+extra config. If your loop uses raw network utilities (`curl`, `wget`,
+`nc`, `ssh`), those are blocked by default and gated by a separate opt-in
+policy:
+
+```json
+{
+  "tools": {
+    "bash": {
+      "network": {
+        "enabled": true,
+        "allowed_commands": ["curl", "wget"],
+        "host_allowlist": ["github.com", "api.github.com"]
+      }
+    }
+  }
+}
+```
+
+Put this in the global config like the other `tools.bash.*` trust grants.
+`host_allowlist` supports exact hosts, `.suffix` wildcards, and CIDR
+ranges; link-local/metadata ranges stay hard-denied regardless.
+
 ## Verifying the setup
 
 - `phosphor_info` shows the `[sandbox]` report — what is actually active,
