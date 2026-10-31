@@ -518,7 +518,7 @@ func NewBashTool(permissions permission.Service, workingDir string, bashCfg conf
 				// without a prompt.
 				escalated = false
 				span.SetAttributes(attribute.Bool("phosphor.security.sandbox_escalated", true))
-				slog.Info("Auto-approved sandbox escalation for allowlisted command", "command", params.Command)
+				slog.Warn("Auto-approved sandbox escalation for allowlisted command", "command", params.Command)
 				sandboxMode = config.SandboxModeOff
 			}
 			if escalated {

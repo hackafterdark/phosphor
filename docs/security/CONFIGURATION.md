@@ -576,13 +576,13 @@ with kernel primitives instead of relying only on in-process guards:
 }
 ```
 
-|| Field | Type | Default | Description |
+| Field | Type | Default | Description |
 |---|---|---|---|
-|| `sandbox_mode` | `string` | `workspace` | `off`, `workspace` (confine the filesystem kernel-side, degrade to in-process guards with a visible warning when unavailable), or `strict` (refuse to exec when enforcement cannot attach). Unset or invalid values run `workspace`; opt out explicitly with `off`. |
-|| `sandbox_limits.max_procs` | `uint64` | `0` | `RLIMIT_NPROC` cap. The kernel enforces it per-user (against all processes of the real UID), not per-subtree. `0` means no limit. |
-|| `sandbox_limits.max_file_mb` | `uint64` | `0` | `RLIMIT_FSIZE` cap, in MB, for files sandboxed children may create. `0` means no limit. |
-|| `trust_toolchain_caches` | `bool` | `false` | Trust the language-runtime cache roots and `GOMODCACHE` for bash path access. `false` because caches seed future builds, so widening them is an explicit opt-in. |
-|| `auto_escalate_commands` | `[]string` | none | Commands whose sandbox-escalation requests are granted without prompting. Entries follow the `permissions.allow_commands` syntax (`git`, `go build`); a compound command matches only when every program is covered. Operator-only: a workspace may narrow the list but never widen it. |
+| `sandbox_mode` | `string` | `workspace` | `off`, `workspace` (confine the filesystem kernel-side, degrade to in-process guards with a visible warning when unavailable), or `strict` (refuse to exec when enforcement cannot attach). Unset or invalid values run `workspace`; opt out explicitly with `off`. |
+| `sandbox_limits.max_procs` | `uint64` | `0` | `RLIMIT_NPROC` cap. The kernel enforces it per-user (against all processes of the real UID), not per-subtree. `0` means no limit. |
+| `sandbox_limits.max_file_mb` | `uint64` | `0` | `RLIMIT_FSIZE` cap, in MB, for files sandboxed children may create. `0` means no limit. |
+| `trust_toolchain_caches` | `bool` | `false` | Trust the language-runtime cache roots and `GOMODCACHE` for bash path access. `false` because caches seed future builds, so widening them is an explicit opt-in. |
+| `auto_escalate_commands` | `[]string` | none | Commands whose sandbox-escalation requests are granted without prompting. Entries follow the `permissions.allow_commands` syntax (`git`, `go build`); a compound command matches only when every program is covered. Operator-only: a workspace may narrow the list but never widen it. |
 
 Per-platform enforcement:
 
@@ -1017,10 +1017,10 @@ an environment proxy cannot bypass destination checks.
 | Ignore files | `.phosphorignore` | File | Respects `.gitignore` |
 | Tool permission prompts | `permissions.allowed_tools` | Array | All tools prompt |
 | Shell command auto-approve | `permissions.allow_commands` | Array | None |
-|| Skip all permissions | CLI flag `--yolo` / `ctrl+y` | Flag | Off |
-|| Pin YOLO off (operator-only) | `security.disable_yolo` | Tri-state Bool | Off |
-|| Auto-approve sandbox escalations | `tools.bash.auto_escalate_commands` | Array | None |
-|| Kernel sandbox for bash children | `tools.bash.sandbox_mode` | String | `workspace` |
+| Skip all permissions | CLI flag `--yolo` / `ctrl+y` | Flag | Off |
+| Pin YOLO off (operator-only) | `security.disable_yolo` | Tri-state Bool | Off |
+| Auto-approve sandbox escalations | `tools.bash.auto_escalate_commands` | Array | None |
+| Kernel sandbox for bash children | `tools.bash.sandbox_mode` | String | `workspace` |
 | Disable built-in tools | `options.disabled_tools` | Array | None |
 | Disable skills | `options.disabled_skills` | Array | None |
 | Disable agents | `agents.<name>.disabled` | Bool | False |
@@ -1035,7 +1035,7 @@ an environment proxy cannot bypass destination checks.
 | Disable provider updates | `options.disable_provider_auto_update` | Bool | False |
 | LS depth limit | `tools.ls.max_depth` | Int | Unlimited |
 | LS item limit | `tools.ls.max_items` | Int | 1000 |
-|| Grep timeout | `tools.grep.timeout` | Int (nanoseconds) | 5000000000 (5s) |
+| Grep timeout | `tools.grep.timeout` | Int (nanoseconds) | 5000000000 (5s) |
 | Network egress hardening | `tools.web_fetch.ip_allow_list` + `allow_raw_ips` | Array, Bool | False (FQDN required) |
 | Bash network egress policy | `tools.bash.network` | Object | Disabled |
 | Hook security gates | `hooks.<event>` | Array | None |

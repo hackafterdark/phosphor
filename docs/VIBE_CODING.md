@@ -134,7 +134,7 @@ trust line for this setup:
   *prompt* only — the sandbox still runs the command.
 
 With both files in place, launch with `phosphor --yolo` (or press `ctrl+y`)
-if you want *zero* prompts even for the off-list tools — or skip `--yolo`
+if you want no permission prompts even for the off-list tools — or skip `--yolo`
 and let the allow-lists carry the loop while anything unusual still asks.
 Note that `--yolo` and session grants still never grant sandbox
 escalation; only `auto_escalate_commands` does that, deliberately.
