@@ -1,6 +1,8 @@
 package common
 
 import (
+	"context"
+	"log/slog"
 	"slices"
 	"strings"
 
@@ -9,8 +11,10 @@ import (
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 	xstrings "github.com/charmbracelet/x/exp/strings"
+	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/hackafterdark/phosphor/internal/ui/notification"
+	"github.com/hackafterdark/phosphor/pkg/otel"
 )
 
 // Capabilities define different terminal capabilities supported.
@@ -84,15 +88,32 @@ func QueryCmd(env uv.Environ) tea.Cmd {
 	sb.WriteString(notification.OSC99QuerySequence())
 
 	// Queries that should only be sent to "smart" normal terminals.
-	shouldQueryFor := shouldQueryCapabilities(env)
-	if shouldQueryFor {
+	if shouldQueryCapabilities(env) {
 		sb.WriteString(ansi.RequestNameVersion)
 		sb.WriteString(ansi.WindowOp(14)) // Window size in pixels
+	}
+
+	// The Kitty graphics probe is queried separately because terminals
+	// listed in kittyTerminals (e.g. Alacritty) answer XTVERSION but do
+	// not implement the graphics protocol. Sending the probe to such a
+	// terminal leaks its query text onto the screen as literal garble.
+	if supports, reason := supportsKittyGraphicsQuery(env); supports {
 		kittyReq := ansi.KittyGraphics([]byte("AAAA"), "i=31", "s=1", "v=1", "a=q", "t=d", "f=24")
 		if _, isTmux := env.LookupEnv("TMUX"); isTmux {
 			kittyReq = ansi.TmuxPassthrough(kittyReq)
 		}
 		sb.WriteString(kittyReq)
+	} else {
+		termType := env.Getenv("TERM")
+		slog.Debug("Skipped Kitty graphics capability probe",
+			"term", termType, "reason", reason)
+		_, span := otel.StartSpan(context.Background(), "terminal.capability_probe")
+		span.SetAttributes(
+			attribute.String("terminal.term", termType),
+			attribute.Bool("terminal.kitty_graphics_probed", false),
+			attribute.String("terminal.skip_reason", reason),
+		)
+		span.End()
 	}
 
 	return tea.Raw(sb.String())
@@ -127,6 +148,28 @@ func modeSupported(v ansi.ModeSetting) bool {
 
 // kittyTerminals defines terminals supporting querying capabilities.
 var kittyTerminals = []string{"alacritty", "ghostty", "kitty", "rio", "wezterm"}
+
+// kittyGraphicsTerminals defines terminals known to implement the Kitty
+// graphics protocol. Alacritty is deliberately absent: it answers XTVERSION
+// but ignores the graphics protocol, and its parser leaks the base64 payload
+// of unsupported DCS sequences onto the screen.
+var kittyGraphicsTerminals = []string{"kitty", "ghostty", "rio", "wezterm"}
+
+// supportsKittyGraphicsQuery reports whether the Kitty graphics probe can be
+// sent safely. When it returns false, the second return value explains why.
+func supportsKittyGraphicsQuery(env uv.Environ) (bool, string) {
+	if _, isTmux := env.LookupEnv("TMUX"); isTmux {
+		// tmux does not forward Kitty graphics queries reliably; the
+		// passthrough wrapper reaches the outer terminal, which may not
+		// support the protocol at all.
+		return false, "tmux"
+	}
+	termType := env.Getenv("TERM")
+	if !xstrings.ContainsAnyOf(termType, kittyGraphicsTerminals...) {
+		return false, "unsupported terminal"
+	}
+	return true, ""
+}
 
 func shouldQueryCapabilities(env uv.Environ) bool {
 	const osVendorTypeApple = "Apple"

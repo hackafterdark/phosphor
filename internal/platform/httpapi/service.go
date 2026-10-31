@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/hackafterdark/phosphor/internal/app"
 	"github.com/hackafterdark/phosphor/internal/backend"
 	"github.com/hackafterdark/phosphor/internal/platform/openai"
 	"github.com/hackafterdark/phosphor/internal/proto"
@@ -30,6 +31,12 @@ type Service struct {
 	echoServer *http.Server
 	logger     *slog.Logger
 	stopOnce   sync.Once
+
+	// localApp is an externally-owned agent runtime (the TUI's
+	// workspace in local mode) that the backend adopts on Start.
+	// When set, the OpenAI API attaches to that workspace instead
+	// of creating a duplicate app.App for the same path.
+	localApp *app.App
 }
 
 // NewService creates a new HTTP API service.
@@ -77,6 +84,15 @@ func (s *Service) Name() string {
 	return "http-api"
 }
 
+// SetLocalWorkspace registers an existing agent runtime for the
+// backend to adopt when the service starts. In local mode the TUI
+// already owns the workspace, so the OpenAI API attaches to it rather
+// than creating a duplicate runtime for the same path. Must be called
+// before [Service.Start].
+func (s *Service) SetLocalWorkspace(appApp *app.App) {
+	s.localApp = appApp
+}
+
 // Backend returns the underlying backend instance.
 func (s *Service) Backend() *backend.Backend {
 	if s.srv == nil {
@@ -96,6 +112,15 @@ func (s *Service) Start(ctx context.Context) error {
 		s.srv.SetLogger(s.logger)
 	} else {
 		s.srv.SetLogger(slog.Default())
+	}
+
+	// Adopt the host process's agent runtime, if any, so the API
+	// services attach to the existing workspace instead of
+	// spawning a duplicate app.App for the same path.
+	if s.localApp != nil {
+		if _, _, err := s.srv.Backend().AdoptWorkspace(s.localApp, s.cfgStore, s.workspace); err != nil && s.logger != nil {
+			s.logger.Warn("Failed to adopt local workspace; API clients will use their own workspace", "error", err)
+		}
 	}
 
 	// Extend the create-grace window for OpenAI API usage

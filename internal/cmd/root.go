@@ -165,6 +165,11 @@ phosphor --continue
 					}
 
 					httpSrv := httpapi.NewService(store, hostURL.Scheme, hostURL.Host, ws.WorkingDir(), slog.Default())
+					// Adopt the TUI's workspace so the OpenAI API
+					// attaches to the existing agent runtime
+					// instead of creating a duplicate app.App for
+					// the same path.
+					httpSrv.SetLocalWorkspace(appWs.App())
 					if err := gov.Check(httpSrv); err != nil {
 						return fmt.Errorf("governance check failed for http-api: %w", err)
 					}
