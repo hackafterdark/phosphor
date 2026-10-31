@@ -8,7 +8,8 @@ searchable through the `phosphor_docs` tool or by viewing any
 
 | Doc | Covers |
 | --- | --- |
-| [CONFIGURATION.md](CONFIGURATION.md) | Where config files live per OS, merge order, and a snippet for every config section. Start here. |
+|| [CONFIGURATION.md](CONFIGURATION.md) | Where config files live per OS, merge order, and a snippet for every config section. Start here. |
+|| [VIBE_CODING.md](VIBE_CODING.md) | High-trust single-workspace setup: prompt-free toolchain/git/gh loop with the sandbox containing the blast radius. |
 | [CLI.md](CLI.md) | Global flags, subcommands, and per-command options for the `phosphor` CLI. |
 | [CORE_PHILOSOPHY.md](CORE_PHILOSOPHY.md) | Identity and core pillars of the project. |
 | [KEYBINDINGS.md](KEYBINDINGS.md) | Default TUI key bindings and how to configure custom ones. |

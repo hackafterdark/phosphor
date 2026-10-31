@@ -22,6 +22,7 @@ Search it with the `phosphor_docs` tool, or open a file below with the
 - [System Prompt Engine](phosphor://docs/SYSTEM_PROMPT.md)
 - [TUI Theme System](phosphor://docs/THEMES.md)
 - [UI Layout Configuration](phosphor://docs/UI_LAYOUT_CONFIG.md)
+- [Vibe Coding: A High-Trust Single-Workspace Setup](phosphor://docs/VIBE_CODING.md)
 - [The `/goal` Slash Command & Session Goals](phosphor://docs/commands/GOAL.md)
 - [The `/languages` Slash Command](phosphor://docs/commands/LANGUAGES.md)
 - [The `/learn` Slash Command](phosphor://docs/commands/LEARN.md)

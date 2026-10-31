@@ -1,0 +1,32 @@
+{
+  "$schema": "https://raw.githubusercontent.com/hackafterdark/phosphor/main/schema.json",
+
+  "permissions": {
+    "allowed_tools": [
+      "view",
+      "ls",
+      "glob",
+      "grep",
+      "workspace_search",
+      "structural_search",
+      "lsp_diagnostics",
+      "lsp_references",
+      "todos",
+      "scan_secrets",
+      "edit",
+      "multiedit",
+      "append",
+      "write"
+    ],
+    "allow_commands": [
+      "git",
+      "gh",
+      "go build",
+      "go test",
+      "go vet",
+      "go mod",
+      "gofumpt",
+      "golangci-lint"
+    ]
+  }
+}
