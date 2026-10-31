@@ -52,6 +52,20 @@ func parseAllowEntries(allow []string) map[string][][]string {
 	return entries
 }
 
+// MatchesAllowlist reports whether every program executed by the shell
+// program is covered by the allowlist, using the same argv-verified,
+// deny-by-default semantics as permissions.allow_commands: any parse
+// failure, substitution, subshell, or non-allowlisted program returns
+// false. It is the exported form of the allowlist gate, reused by callers
+// that own their own auto-approval policy (e.g. tools.bash
+// .auto_escalate_commands).
+func MatchesAllowlist(allowlist []string, command string) bool {
+	if len(allowlist) == 0 {
+		return false
+	}
+	return commandMatchesAllowlist(command, parseAllowEntries(allowlist))
+}
+
 // argvAllowed reports whether argv (already normalized, argv[0] is the
 // program) starts with any allowlist entry for its program.
 func argvAllowed(argv []string, entries map[string][][]string) bool {

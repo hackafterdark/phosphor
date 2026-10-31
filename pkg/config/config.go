@@ -886,6 +886,16 @@ type ToolBash struct {
 	// enforcement cannot attach; "off" uses in-process guards only.
 	SandboxMode string `json:"sandbox_mode,omitempty" jsonschema:"enum=off,enum=workspace,enum=strict,description=Kernel-enforced sandbox for bash children: off, workspace (degrade with warning), or strict (refuse if unavailable). Default workspace."`
 
+	// AutoEscalateCommands is an argv-verified allowlist of commands whose
+	// sandbox-escalation requests are granted without prompting. It lets
+	// trusted toolchains (git, gh, go, ...) keep working outside the
+	// sandbox after a legitimate denial, while every other command still
+	// gets the explicit per-escalation prompt. Entries follow the
+	// permissions.allow_commands syntax ("git", "go build"); compound
+	// commands match only when every program is covered. The list is
+	// operator-only: a workspace may narrow it but never widen it.
+	AutoEscalateCommands []string `json:"auto_escalate_commands,omitempty" jsonschema:"description=Commands whose sandbox escalations auto-approve without prompting (argv-verified; workspace may narrow, not widen)"`
+
 	// SandboxLimits carries optional kernel resource caps applied to
 	// sandboxed bash children. Zero values mean "no limit"; limits are
 	// opt-in so an unset config can never break legitimate toolchains.
@@ -1137,6 +1147,14 @@ type SecurityConfig struct {
 	AllowedEgress AllowedEgressConfig `json:"allowed_egress,omitempty" jsonschema:"description=Permitted outbound platforms"`
 	ToolBlacklist []string            `json:"tool_blacklist,omitempty" jsonschema:"description=List of tools to block"`
 	ReadOnly      bool                `json:"read_only,omitempty" jsonschema:"description=Force read-only mode"`
+	// DisableYolo pins YOLO mode off for every workspace: the --yolo flag,
+	// the ctrl+y toggle, and headless/backend requests cannot enable
+	// permission-request skipping while it is pinned. It is operator-only —
+	// built from the trusted (global) config floor, and a workspace file can
+	// never unset it. Unattended cron jobs refuse to run while it is pinned,
+	// since a job that cannot skip prompts would park on one nobody answers.
+	// Tri-state: nil means yolo is allowed (the default).
+	DisableYolo *bool `json:"disable_yolo,omitempty" jsonschema:"description=Pin YOLO mode off for all workspaces (operator-only),defaults=false"`
 	// RedactOutgoingSecrets is the last-resort secret mask applied to the exact
 	// message payload sent to the provider. Tri-state: nil means enabled (the
 	// secure default); set it to false only to opt out.

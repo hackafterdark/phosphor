@@ -333,7 +333,14 @@ func (s *Service) runJob(ctx context.Context, jobName string, job *Job) {
 	}
 
 	// Scheduled jobs run unattended — enable yolo mode so they don't get
-	// stuck on permission prompts.
+	// stuck on permission prompts. When security.disable_yolo is pinned,
+	// unattended jobs cannot answer prompts, so refuse them instead of
+	// parking on one nobody will see.
+	if cfg := s.cfg.Config(); cfg != nil && cfg.Security != nil && cfg.Security.DisableYolo != nil && *cfg.Security.DisableYolo {
+		s.logger.Error("job cannot run unattended: yolo mode pinned off by security.disable_yolo", "job", jobName)
+		s.incrementFailureCount(jobName)
+		return
+	}
 	wasYolo := s.cfg.Overrides().SkipPermissionRequests
 	s.cfg.Overrides().SkipPermissionRequests = true
 	defer func() {

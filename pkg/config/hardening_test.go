@@ -148,6 +148,64 @@ func TestHarden_ReadOnlyCannotBeDisabledByWorkspace(t *testing.T) {
 	require.True(t, workspace.Security.ReadOnly, "workspace may not leave read-only mode")
 }
 
+// TestHarden_YoloCannotBeReEnabledByWorkspace verifies that once the
+// operator pins yolo off, no workspace file can turn it back on.
+func TestHarden_YoloCannotBeReEnabledByWorkspace(t *testing.T) {
+	floor := &Config{}
+	floor.setDefaults(t.TempDir(), "")
+	pinned := true
+	floor.Security.DisableYolo = &pinned
+
+	workspace := mustConfig(t, `{"security":{"disable_yolo":false}}`)
+	n := hardenAgainstWorkspaceOverrides(workspace, floor)
+
+	require.Greater(t, n, 0, "the downgrade attempt must be reported")
+	require.NotNil(t, workspace.Security.DisableYolo)
+	require.True(t, *workspace.Security.DisableYolo, "workspace may not re-enable yolo mode")
+}
+
+// TestHarden_AutoEscalateCommandsCannotBeBroadenedByWorkspace verifies the
+// auto-escalation allowlist is a trust grant: a workspace may narrow it but
+// never add commands the operator did not allow.
+func TestHarden_AutoEscalateCommandsCannotBeBroadenedByWorkspace(t *testing.T) {
+	floor := &Config{}
+	floor.setDefaults(t.TempDir(), "")
+	floor.Tools.Bash.AutoEscalateCommands = []string{"git", "go"}
+
+	workspace := mustConfig(t, `{"tools":{"bash":{"auto_escalate_commands":["git","go","python"]}}}`)
+	n := hardenAgainstWorkspaceOverrides(workspace, floor)
+
+	require.Greater(t, n, 0, "the broadening attempt must be reported")
+	require.Equal(t, []string{"git", "go"}, workspace.Tools.Bash.AutoEscalateCommands,
+		"workspace may not add auto-escalating commands")
+}
+
+// TestHarden_AutoEscalateCommandsWorkspaceMayNarrow verifies a workspace may
+// tighten the list without triggering a revert.
+func TestHarden_AutoEscalateCommandsWorkspaceMayNarrow(t *testing.T) {
+	floor := &Config{}
+	floor.setDefaults(t.TempDir(), "")
+	floor.Tools.Bash.AutoEscalateCommands = []string{"git", "go"}
+
+	workspace := mustConfig(t, `{"tools":{"bash":{"auto_escalate_commands":["git"]}}}`)
+	n := hardenAgainstWorkspaceOverrides(workspace, floor)
+
+	require.Equal(t, 0, n, "a stricter workspace should trigger no reverts")
+	require.Equal(t, []string{"git"}, workspace.Tools.Bash.AutoEscalateCommands)
+}
+
+// TestHarden_YoloAllowedWhenFloorUnset pins the permissive default: with no
+// operator pin, yolo stays allowed and unset.
+func TestHarden_YoloAllowedWhenFloorUnset(t *testing.T) {
+	floor := &Config{}
+	floor.setDefaults(t.TempDir(), "")
+
+	workspace := mustConfig(t, `{}`)
+	hardenAgainstWorkspaceOverrides(workspace, floor)
+
+	require.Nil(t, workspace.Security.DisableYolo, "unset floor means yolo is allowed")
+}
+
 // TestHarden_AllowsLegitimatelyStricterWorkspaceChanges verifies the floor does not
 // clobber a workspace that only makes things stricter or adds new patterns.
 func TestHarden_AllowsLegitimatelyStricterWorkspaceChanges(t *testing.T) {

@@ -145,6 +145,17 @@ func TestAllowCommandsDoesNotAutoApproveMismatch(t *testing.T) {
 	require.False(t, granted)
 }
 
+func TestMatchesAllowlistExported(t *testing.T) {
+	t.Parallel()
+
+	// The exported wrapper backs tools.bash.auto_escalate_commands: same
+	// argv-verified, deny-by-default semantics as permissions.allow_commands.
+	require.True(t, MatchesAllowlist([]string{"git", "go build"}, "git status && go build ./..."))
+	require.False(t, MatchesAllowlist([]string{"git"}, "git status && rm -rf /"))
+	require.False(t, MatchesAllowlist([]string{"go"}, "python script.py"))
+	require.False(t, MatchesAllowlist(nil, "git status"), "empty allowlist denies by default")
+}
+
 func TestAllowCommandsBypassShortcutsStillPrompts(t *testing.T) {
 	t.Parallel()
 

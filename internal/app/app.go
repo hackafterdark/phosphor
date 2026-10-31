@@ -119,6 +119,17 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore, skillsMgr
 	goalService := goal.NewService(q, conn)
 	cfg := store.Config()
 	skipPermissionsRequests := store.Overrides().SkipPermissionRequests
+	var permOpts []permission.Option
+	if cfg.Security != nil && cfg.Security.DisableYolo != nil && *cfg.Security.DisableYolo {
+		permOpts = append(permOpts, permission.WithYoloDisabled())
+		if skipPermissionsRequests {
+			slog.Warn("Yolo mode pinned off by security.disable_yolo; permission prompts will be shown")
+		}
+		// Keep the override honest so status displays (phosphor_info) and
+		// workspace introspection report the enforced state, not the request.
+		store.Overrides().SkipPermissionRequests = false
+		skipPermissionsRequests = false
+	}
 	var allowedTools []string
 	var allowCommands []string
 	if cfg.Permissions != nil && cfg.Permissions.AllowedTools != nil {
@@ -132,7 +143,7 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore, skillsMgr
 		Sessions:    sessions,
 		Messages:    messages,
 		History:     files,
-		Permissions: permission.NewPermissionService(store.WorkingDir(), skipPermissionsRequests, allowedTools, allowCommands),
+		Permissions: permission.NewPermissionService(store.WorkingDir(), skipPermissionsRequests, allowedTools, allowCommands, permOpts...),
 		FileTracker: filetracker.NewService(q),
 		GoalService: goalService,
 		LSPManager:  lsp.NewManager(store),
