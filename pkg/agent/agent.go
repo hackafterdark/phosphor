@@ -1010,19 +1010,22 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 	// A persisted message does not mean the run carries no new state:
 	// recursive continuations queue a recovery note right before
 	// re-entering Run, and independently queued turns are persisted
-	// before dispatch. Those paths still deliver dynamic state on the
-	// outbound prompt — for continuations that is the whole reason the
-	// run exists — so a pending note is always consumed here, never left
-	// to leak into a later user turn.
+	// bare before dispatch. Both are first-run-of-a-turn paths, so the
+	// snapshot is delivered on the outbound prompt either way — for
+	// continuations the note is the whole reason the run exists, and a
+	// queued turn is a fresh run that owes itself the todo and active-goal
+	// state. The note is always consumed here, never left to leak into a
+	// later user turn; createUserMessage strips the block from both sides
+	// of its idempotency comparison, so the appended block cannot fork a
+	// duplicate message.
 	if a.userMessageExistsFor(ctx, call.SessionID, cmp.Or(call.UserPrompt, call.Prompt)) {
-		if note := a.takeNote(call.SessionID); note != "" {
-			block := "<" + runContextTag + ">\n<system_reminder>\n" + note + "\n</system_reminder>\n</" + runContextTag + ">"
-			call.Prompt += "\n\n" + block
+		if snap := a.runStartSnapshot(ctx, call.SessionID, a.takeNote(call.SessionID)); snap != "" {
+			call.Prompt += "\n\n" + snap
 			if call.UserPrompt != "" {
-				call.UserPrompt += "\n\n" + block
+				call.UserPrompt += "\n\n" + snap
 			}
 		}
-	} else if snap := a.runStartSnapshot(ctx, call.SessionID); snap != "" {
+	} else if snap := a.runStartSnapshot(ctx, call.SessionID, a.takeNote(call.SessionID)); snap != "" {
 		call.Prompt += "\n\n" + snap
 		if call.UserPrompt != "" {
 			call.UserPrompt += "\n\n" + snap
@@ -3636,12 +3639,16 @@ const runContextTag = "run_context"
 
 // runStartSnapshot composes the dynamic state that used to ride the system
 // prompt on every step: the queued post-turn reminder, the open todo list,
-// and the active goal. It is appended once to the run's user message so the
+// and the active goal. It is appended once to the run"s user message so the
 // system block stays byte-stable and provider prefix caches hit on every
 // step. See _PLANS/PROMPT_CACHE_OPTIMIZATION.md.
-func (a *sessionAgent) runStartSnapshot(ctx context.Context, sessionID string) string {
+//
+// The pending note is passed in rather than consumed here so both Run()
+// branches take it exactly once — taking it earlier would leave the
+// continuation"s reason for existing out of the snapshot.
+func (a *sessionAgent) runStartSnapshot(ctx context.Context, sessionID, note string) string {
 	var blocks []string
-	if note := a.takeNote(sessionID); note != "" {
+	if note != "" {
 		blocks = append(blocks, "<system_reminder>\n"+note+"\n</system_reminder>")
 	}
 	if todos := a.buildDynamicSystemPrompt(sessionID); todos != "" {

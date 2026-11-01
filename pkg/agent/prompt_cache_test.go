@@ -35,7 +35,7 @@ func TestRunStartSnapshotAndIdempotency(t *testing.T) {
 
 	// The snapshot composes the open todo list for the run's user message.
 	require.False(t, sa.userMessageExistsFor(t.Context(), sess.ID, base))
-	snap := sa.runStartSnapshot(t.Context(), sess.ID)
+	snap := sa.runStartSnapshot(t.Context(), sess.ID, "")
 	require.Contains(t, snap, "<run_context>")
 	require.Contains(t, snap, "<todo_list>")
 	require.Contains(t, snap, "Fixing the cache")
@@ -289,6 +289,65 @@ func TestContinuationNoteDeliveredForPersistedMessage(t *testing.T) {
 	require.True(t, delivered, "the continuation note must ride the outbound prompt")
 
 	// No duplicate user message was created by the continuation.
+	msgs, err := env.messages.List(t.Context(), sess.ID)
+	require.NoError(t, err)
+	var userMsgs int
+	for _, m := range msgs {
+		if m.Role == message.User {
+			userMsgs++
+		}
+	}
+	require.Equal(t, 1, userMsgs)
+}
+
+// TestQueuedTurnDeliversSnapshotForPersistedMessage pins the queued-turn
+// half of the finding: independently queued turns are persisted bare
+// before the recursive Run dispatch, so the persisted-message path must
+// still deliver the todo and active-goal snapshot on the outbound
+// prompt — without forking a duplicate user message.
+func TestQueuedTurnDeliversSnapshotForPersistedMessage(t *testing.T) {
+	t.Parallel()
+	env := testEnv(t)
+	model := &cacheProbeModel{}
+
+	sess, err := env.sessions.Create(t.Context(), "queued-snapshot")
+	require.NoError(t, err)
+	sess.Todos = []session.Todo{
+		{Content: "Fix the cache", Status: session.TodoStatusInProgress, ActiveForm: "Fixing the cache"},
+	}
+	_, err = env.sessions.Save(t.Context(), sess)
+	require.NoError(t, err)
+
+	sa := testSessionAgent(env, model, model, "system", tools.NewTodosTool(env.sessions)).(*sessionAgent)
+
+	// The queue-dispatch path: the message is persisted before Run.
+	queued := SessionAgentCall{SessionID: sess.ID, Prompt: "queued turn"}
+	_, err = sa.createUserMessage(t.Context(), queued)
+	require.NoError(t, err)
+
+	_, err = sa.Run(t.Context(), queued)
+	require.NoError(t, err)
+
+	// The fresh run delivered its todo snapshot on the outbound prompt.
+	model.mu.Lock()
+	var delivered bool
+	for _, call := range model.prompts {
+		var userText string
+		for _, msg := range call {
+			for _, part := range msg.Content {
+				if tp, ok := part.(fantasy.TextPart); ok && msg.Role == fantasy.MessageRoleUser {
+					userText += tp.Text
+				}
+			}
+		}
+		if strings.Contains(userText, "<run_context>") && strings.Contains(userText, "Fixing the cache") {
+			delivered = true
+		}
+	}
+	model.mu.Unlock()
+	require.True(t, delivered, "the queued turn must carry its todo snapshot on the outbound prompt")
+
+	// No duplicate user message was created by the appended block.
 	msgs, err := env.messages.List(t.Context(), sess.ID)
 	require.NoError(t, err)
 	var userMsgs int
