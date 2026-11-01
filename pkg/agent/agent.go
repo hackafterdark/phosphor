@@ -1006,12 +1006,26 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 	// message was already persisted (queued or recursive dispatch paths),
 	// which keeps createUserMessage's idempotency intact and the wire
 	// identical to the stored text.
-	if !a.userMessageExistsFor(ctx, call.SessionID, cmp.Or(call.UserPrompt, call.Prompt)) {
-		if snap := a.runStartSnapshot(ctx, call.SessionID); snap != "" {
-			call.Prompt += "\n\n" + snap
+	//
+	// A persisted message does not mean the run carries no new state:
+	// recursive continuations queue a recovery note right before
+	// re-entering Run, and independently queued turns are persisted
+	// before dispatch. Those paths still deliver dynamic state on the
+	// outbound prompt — for continuations that is the whole reason the
+	// run exists — so a pending note is always consumed here, never left
+	// to leak into a later user turn.
+	if a.userMessageExistsFor(ctx, call.SessionID, cmp.Or(call.UserPrompt, call.Prompt)) {
+		if note := a.takeNote(call.SessionID); note != "" {
+			block := "<" + runContextTag + ">\n<system_reminder>\n" + note + "\n</system_reminder>\n</" + runContextTag + ">"
+			call.Prompt += "\n\n" + block
 			if call.UserPrompt != "" {
-				call.UserPrompt += "\n\n" + snap
+				call.UserPrompt += "\n\n" + block
 			}
+		}
+	} else if snap := a.runStartSnapshot(ctx, call.SessionID); snap != "" {
+		call.Prompt += "\n\n" + snap
+		if call.UserPrompt != "" {
+			call.UserPrompt += "\n\n" + snap
 		}
 	}
 
@@ -2387,14 +2401,18 @@ func (a *sessionAgent) createUserMessage(ctx context.Context, call SessionAgentC
 	// exists in the session, return it instead of creating a duplicate.
 	// This can happen when queued messages are persisted before a recursive
 	// Run() call, and that recursive call also tries to create the message.
-	// The comparison ignores any run-context block appended at creation so
-	// the recursive path matches a message stored with its snapshot.
+	// The comparison ignores any run-context block on either side: the
+	// stored message may carry its snapshot, and a continuation's outbound
+	// prompt may carry a note block that is never persisted.
 	msgs, err := a.messages.List(ctx, call.SessionID)
 	if err == nil {
 		for _, m := range msgs {
 			if m.Role == message.User {
 				for _, p := range m.Parts {
-					if tc, ok := p.(message.TextContent); ok && (tc.Text == prompt || stripRunContext(tc.Text) == prompt) {
+					if tc, ok := p.(message.TextContent); ok &&
+						(tc.Text == prompt ||
+							stripRunContext(tc.Text) == prompt ||
+							stripRunContext(tc.Text) == stripRunContext(prompt)) {
 						return m, nil
 					}
 				}

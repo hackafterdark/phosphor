@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -125,8 +126,8 @@ func (m *cacheProbeModel) Stream(ctx context.Context, call fantasy.Call) (fantas
 		return func(yield func(fantasy.StreamPart) bool) {
 			if !yield(fantasy.StreamPart{
 				Type:          fantasy.StreamPartTypeToolCall,
-			ID:            tc.ToolCallID,
-			ToolCallName:  tc.ToolName,
+				ID:            tc.ToolCallID,
+				ToolCallName:  tc.ToolName,
 				ToolCallInput: tc.Input,
 			}) {
 				return
@@ -228,4 +229,73 @@ func contentOnly(msgs []fantasy.Message) []fantasy.Message {
 		out[i] = msg
 	}
 	return out
+}
+
+// TestContinuationNoteDeliveredForPersistedMessage pins the CodeRabbit
+// fix: a recursive continuation queues a recovery note and re-enters Run
+// with the same (already persisted) prompt. The note must ride the
+// outbound prompt — the run exists precisely to deliver it — and must be
+// consumed, never left to leak into a later user turn.
+func TestContinuationNoteDeliveredForPersistedMessage(t *testing.T) {
+	t.Parallel()
+	env := testEnv(t)
+	model := &cacheProbeModel{}
+
+	sess, err := env.sessions.Create(t.Context(), "continuation-note")
+	require.NoError(t, err)
+
+	sa := testSessionAgent(env, model, model, "system", tools.NewTodosTool(env.sessions)).(*sessionAgent)
+	accept := sa.BeginAccepted(sess.ID)
+	_, err = sa.Run(t.Context(), SessionAgentCall{
+		SessionID: sess.ID,
+		Prompt:    "get to work",
+		Accepted:  accept,
+	})
+	require.NoError(t, err)
+
+	// The continuation path: queueNote then Run with the same call.
+	// The user message is already persisted, so idempotency skips the
+	// snapshot — but the note must still reach the model.
+	sa.queueNote(sess.ID, "Continue exactly where you left off.")
+	_, err = sa.Run(t.Context(), SessionAgentCall{
+		SessionID: sess.ID,
+		Prompt:    "get to work",
+	})
+	require.NoError(t, err)
+
+	// The note was consumed: nothing is left to ride a later turn.
+	_, ok := sa.pendingNotes.Get(sess.ID)
+	require.False(t, ok, "continuation note must be consumed by the continuing run")
+
+	// The note rode the outbound prompt of the continuing run (title
+	// generation also probes the model with the same prompt, so match
+	// any continuing-run call).
+	model.mu.Lock()
+	defer model.mu.Unlock()
+	var delivered bool
+	for _, call := range model.prompts[2:] {
+		var userText string
+		for _, msg := range call {
+			for _, part := range msg.Content {
+				if tp, ok := part.(fantasy.TextPart); ok && msg.Role == fantasy.MessageRoleUser {
+					userText += tp.Text
+				}
+			}
+		}
+		if strings.Contains(userText, "Continue exactly where you left off.") {
+			delivered = true
+		}
+	}
+	require.True(t, delivered, "the continuation note must ride the outbound prompt")
+
+	// No duplicate user message was created by the continuation.
+	msgs, err := env.messages.List(t.Context(), sess.ID)
+	require.NoError(t, err)
+	var userMsgs int
+	for _, m := range msgs {
+		if m.Role == message.User {
+			userMsgs++
+		}
+	}
+	require.Equal(t, 1, userMsgs)
 }
