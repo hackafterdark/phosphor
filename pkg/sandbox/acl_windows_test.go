@@ -3,6 +3,7 @@
 package sandbox
 
 import (
+	"context"
 	"testing"
 	"unsafe"
 
@@ -85,7 +86,7 @@ func TestCleanupContainerGrantsRevokesAces(t *testing.T) {
 	require.True(t, hasContainerAce(t, dir, sid),
 		"container ACE missing after grant")
 
-	require.NoError(t, CleanupContainerGrants())
+	require.NoError(t, CleanupContainerGrants(context.Background()))
 	require.False(t, hasContainerAce(t, dir, sid),
 		"container ACE must be revoked on teardown")
 }
@@ -97,12 +98,39 @@ func TestCleanupContainerGrantsAllowsRegrant(t *testing.T) {
 	defer windows.FreeSid(sid)
 
 	require.NoError(t, grantAccess(dir, sid, accessFor(false)))
-	require.NoError(t, CleanupContainerGrants())
+	require.NoError(t, CleanupContainerGrants(context.Background()))
 
 	// A second launch after teardown must re-grant: the memoized
 	// grant was cleared, so the ACE reappears.
 	require.NoError(t, grantAccess(dir, sid, accessFor(false)))
 	require.True(t, hasContainerAce(t, dir, sid),
 		"ACE must be re-grantable after teardown")
-	require.NoError(t, CleanupContainerGrants())
+	require.NoError(t, CleanupContainerGrants(context.Background()))
+}
+
+// TestCleanupContainerGrantsHonorsDeadline verifies the teardown is
+// bounded: with an already-expired context the revoke tree crawl is
+// never started, the caller returns promptly with the deadline error,
+// and the grant memo keeps its entry so the ACE is revoked at the
+// next launch's teardown instead of lingering untracked.
+func TestCleanupContainerGrantsHonorsDeadline(t *testing.T) {
+	dir := t.TempDir()
+	sid, err := deriveContainerSid("phosphor.sandbox.deadline")
+	require.NoError(t, err)
+	defer windows.FreeSid(sid)
+
+	require.NoError(t, grantAccess(dir, sid, accessFor(false)))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err = CleanupContainerGrants(ctx)
+	require.ErrorIs(t, err, context.Canceled,
+		"cleanup must surface the caller's deadline error")
+	require.True(t, hasContainerAce(t, dir, sid),
+		"ACE must survive an abandoned teardown (tracked for the next launch)")
+
+	// The next teardown revokes the retained grant.
+	require.NoError(t, CleanupContainerGrants(context.Background()))
+	require.False(t, hasContainerAce(t, dir, sid),
+		"retained grant must be revoked on the next teardown")
 }

@@ -173,7 +173,9 @@ func TestConnect_SkipLockEnvBypassesAcquisition(t *testing.T) {
 // TestConnect_DefaultIgnoresContendedLock confirms that without
 // WithDataDirLock(true) the lock file is irrelevant: a contender can
 // hold lock.TryFile and Connect still succeeds. This pins the
-// local-mode default to its pre-lock behavior.
+// opt-out behavior used by short-lived read-only commands (stats,
+// session listing), which deliberately skip the lock; the local-mode
+// workspace setup opts in with WithDataDirLock(true).
 func TestConnect_DefaultIgnoresContendedLock(t *testing.T) {
 	t.Cleanup(ResetPool)
 

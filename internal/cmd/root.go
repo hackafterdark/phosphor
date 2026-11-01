@@ -329,6 +329,14 @@ func setupLocalWorkspace(cmd *cobra.Command) (workspace.Workspace, func(), *sql.
 		return nil, nil, nil, fmt.Errorf("failed to create data directory: %q %w", cfg.Options.DataDirectory, err)
 	}
 
+	// Set up the file logger before anything can fail: db.Connect and
+	// the migrations it runs happen next, and a locked or corrupt
+	// database must leave a trace in phosphor.log rather than dying
+	// silently against the DiscardHandler installed in Execute.
+	logFile := filepath.Join(cfg.Options.DataDirectory, "logs", "phosphor.log")
+	logCfg := cfg.Options.Logging.ToLogConfig()
+	phosphorlog.SetupWithConfig(logFile, logCfg, debug)
+
 	gitIgnorePath := filepath.Join(cfg.Options.DataDirectory, ".gitignore")
 	if _, err := os.Stat(gitIgnorePath); os.IsNotExist(err) {
 		if err := os.WriteFile(gitIgnorePath, []byte("*\n"), 0o644); err != nil {
@@ -340,14 +348,11 @@ func setupLocalWorkspace(cmd *cobra.Command) (workspace.Workspace, func(), *sql.
 		slog.Warn("Failed to register project", "error", err)
 	}
 
-	conn, err := db.Connect(ctx, cfg.Options.DataDirectory)
+	conn, err := db.Connect(ctx, cfg.Options.DataDirectory, db.WithDataDirLock(true))
 	if err != nil {
+		slog.Error("Failed to open database", "dir", cfg.Options.DataDirectory, "error", err)
 		return nil, nil, nil, err
 	}
-
-	logFile := filepath.Join(cfg.Options.DataDirectory, "logs", "phosphor.log")
-	logCfg := cfg.Logging.ToLogConfig()
-	phosphorlog.SetupWithConfig(logFile, logCfg, debug)
 
 	// Discover skills once before app.New. Local mode hosts a single
 	// workspace per process, so WithGlobalMirror keeps the package
