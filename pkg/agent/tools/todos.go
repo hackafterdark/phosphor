@@ -4,6 +4,8 @@ import (
 	"context"
 	_ "embed"
 	"fmt"
+	"strings"
+	"unicode"
 
 	"charm.land/fantasy"
 	"github.com/hackafterdark/phosphor/pkg/otel"
@@ -112,6 +114,12 @@ func NewTodosTool(sessions session.Service) fantasy.AgentTool {
 
 			response := "Todo list updated successfully.\n\n"
 
+			// The full open list rides the tool result so the freshest plan
+			// is always part of the transcript instead of the system prompt.
+			// The system block must stay byte-stable for provider prefix
+			// caches; see _PLANS/PROMPT_CACHE_OPTIMIZATION.md.
+			response += renderOpenTodoList(todos)
+
 			pendingCount := 0
 			inProgressCount := 0
 
@@ -141,4 +149,38 @@ func NewTodosTool(sessions session.Service) fantasy.AgentTool {
 			return fantasy.WithResponseMetadata(fantasy.NewTextResponse(response), metadata), nil
 		},
 	)
+}
+
+// renderOpenTodoList renders the not-yet-completed todos as a tagged block
+// for the model. It mirrors the format the state used to carry in the
+// system prompt. Returns "" when nothing is open.
+func renderOpenTodoList(todos []session.Todo) string {
+	var sb strings.Builder
+	for i, todo := range todos {
+		if todo.Status == session.TodoStatusCompleted {
+			continue
+		}
+		fmt.Fprintf(&sb, "%d. %s (%s)\n", i+1, sanitizeTodoText(todo.Content), todo.ActiveForm)
+	}
+	result := strings.TrimSpace(sb.String())
+	if result == "" {
+		return ""
+	}
+	const maxLen = 2000
+	if len(result) > maxLen {
+		result = strings.ToValidUTF8(result[:maxLen], "") + "\n[truncated, some items omitted]"
+	}
+	return "<todo_list>\n" + result + "\n</todo_list>\n\n"
+}
+
+// sanitizeTodoText strips non-printable characters, preserving newlines and
+// tabs, so malformed todo content cannot corrupt the tool result.
+func sanitizeTodoText(s string) string {
+	var out []rune
+	for _, r := range s {
+		if unicode.IsPrint(r) || r == '\n' || r == '\t' {
+			out = append(out, r)
+		}
+	}
+	return string(out)
 }

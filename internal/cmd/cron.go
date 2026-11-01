@@ -73,9 +73,12 @@ until interrupted by a signal (Ctrl+C).`,
 				slog.Warn("Failed to register project", "error", err)
 			}
 
-			// Connect database
+			// Connect database. The cron service runs unattended for
+			// long stretches, so it takes the data-dir lock too: a
+			// second phosphor against the same SQLite file fails fast
+			// instead of stalling on busy timeouts.
 			ctx := cmd.Context()
-			conn, err := db.Connect(ctx, cfg.Options.DataDirectory)
+			conn, err := db.Connect(ctx, cfg.Options.DataDirectory, db.WithDataDirLock(true))
 			if err != nil {
 				return fmt.Errorf("failed to connect database: %w", err)
 			}

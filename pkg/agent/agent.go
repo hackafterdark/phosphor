@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -882,14 +883,24 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 	promptPrefix := a.systemPromptPrefix.Get()
 	var instructions strings.Builder
 
+	// Ordered by server name: map iteration order is randomized in Go, and
+	// a reordered instructions block busts the provider prefix cache on
+	// every request. See _PLANS/PROMPT_CACHE_OPTIMIZATION.md (P2).
+	var connected []mcp.ClientInfo
 	for _, server := range mcp.GetStates() {
 		if server.State != mcp.StateConnected {
 			continue
 		}
 		if s := server.Client.InitializeResult().Instructions; s != "" {
-			instructions.WriteString(s)
-			instructions.WriteString("\n\n")
+			connected = append(connected, server)
 		}
+	}
+	slices.SortFunc(connected, func(a, b mcp.ClientInfo) int {
+		return cmp.Compare(a.Name, b.Name)
+	})
+	for _, server := range connected {
+		instructions.WriteString(server.Client.InitializeResult().Instructions)
+		instructions.WriteString("\n\n")
 	}
 
 	if s := instructions.String(); s != "" {
@@ -988,6 +999,38 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 		Window:   int64(largeModel.CatwalkCfg.ContextWindow),
 		FloorPct: a.memoryRateFloorPct,
 	})
+
+	// Run-start snapshot (prompt cache P1): the run's dynamic state rides
+	// once on this run's user message, making it byte-stable for every step
+	// of this run and of every later run. The injection is skipped when the
+	// message was already persisted (queued or recursive dispatch paths),
+	// which keeps createUserMessage's idempotency intact and the wire
+	// identical to the stored text.
+	//
+	// A persisted message does not mean the run carries no new state:
+	// recursive continuations queue a recovery note right before
+	// re-entering Run, and independently queued turns are persisted
+	// bare before dispatch. Both are first-run-of-a-turn paths, so the
+	// snapshot is delivered on the outbound prompt either way — for
+	// continuations the note is the whole reason the run exists, and a
+	// queued turn is a fresh run that owes itself the todo and active-goal
+	// state. The note is always consumed here, never left to leak into a
+	// later user turn; createUserMessage strips the block from both sides
+	// of its idempotency comparison, so the appended block cannot fork a
+	// duplicate message.
+	if a.userMessageExistsFor(ctx, call.SessionID, cmp.Or(call.UserPrompt, call.Prompt)) {
+		if snap := a.runStartSnapshot(ctx, call.SessionID, a.takeNote(call.SessionID)); snap != "" {
+			call.Prompt += "\n\n" + snap
+			if call.UserPrompt != "" {
+				call.UserPrompt += "\n\n" + snap
+			}
+		}
+	} else if snap := a.runStartSnapshot(ctx, call.SessionID, a.takeNote(call.SessionID)); snap != "" {
+		call.Prompt += "\n\n" + snap
+		if call.UserPrompt != "" {
+			call.UserPrompt += "\n\n" + snap
+		}
+	}
 
 	// Add the user message to the session.
 	_, err = a.createUserMessage(ctx, call)
@@ -1152,13 +1195,6 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 
 	var stepMessages []fantasy.Message
 	var shouldSummarize bool
-	// The post-turn note is taken from the pending queue once per run and then
-	// rides every step of that run inside the system block. It must never be
-	// appended to the message list as a trailing system message, because a
-	// system message that is not the first message is rejected outright by
-	// strict providers.
-	var runNote string
-	noteTaken := false
 	// llmSpan is the current LLM call span, set in PrepareStep and ended in
 	// OnStepFinish. It is a child of the agent turn span.
 	var llmSpan trace.Span
@@ -1302,34 +1338,17 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 				}
 			}
 
-			// Surface any reminder queued at the end of the previous turn (a Stop hook's
-			// additional context or the memory nudge). It is consumed once so a stale
-			// hint can't linger, and it joins the system block below rather than
-			// being appended to the message list as a trailing system message, which
-			// strict providers reject.
-			if !noteTaken {
-				runNote = a.takeNote(call.SessionID)
-				noteTaken = true
-			}
-
 			if promptPrefix != "" {
 				prepared.Messages = append([]fantasy.Message{fantasy.NewSystemMessage(promptPrefix)}, prepared.Messages...)
 			}
 
-			// Set the dynamic system prompt by combining the static system
-			// prompt with any dynamic state (todo list, etc.).
-			dynamic := a.buildDynamicSystemPrompt(call.SessionID)
+			// The system block is static for the session's lifetime; dynamic
+			// state (todo list, active goal, post-turn reminders) rides the
+			// run's user message instead, so the provider prefix cache is
+			// never invalidated mid-session; see
+			// _PLANS/PROMPT_CACHE_OPTIMIZATION.md.
 			combined := systemPrompt
 			combined += "\n\n<tool-observation-instructions>\nIf you receive a 'Tool Observation' in a tool result message, you are required to analyze the error and adjust your strategy before retrying. Do not repeat the same failed tool call with the same input. Review the tool definition, correct the input parameters, and ensure valid JSON syntax.\n</tool-observation-instructions>"
-			if dynamic != "" {
-				combined += "\n\n<todo_list>\n" + dynamic + "\n</todo_list>"
-			}
-			if activeGoal != nil {
-				combined += "\n\n" + a.renderActiveGoalBlock(activeGoal)
-			}
-			if runNote != "" {
-				combined += "\n\n<system_reminder>\n" + runNote + "\n</system_reminder>"
-			}
 			prepared.System = &combined
 
 			// Last-resort secret/PII mask over the exact payload about to go over
@@ -1858,7 +1877,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 					titleCtx, titleCancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 					go func() {
 						defer titleCancel()
-						a.GenerateTitle(titleCtx, call.SessionID, cmp.Or(call.UserPrompt, call.Prompt))
+						a.GenerateTitle(titleCtx, call.SessionID, stripRunContext(cmp.Or(call.UserPrompt, call.Prompt)))
 					}()
 				}
 			}
@@ -2385,12 +2404,18 @@ func (a *sessionAgent) createUserMessage(ctx context.Context, call SessionAgentC
 	// exists in the session, return it instead of creating a duplicate.
 	// This can happen when queued messages are persisted before a recursive
 	// Run() call, and that recursive call also tries to create the message.
+	// The comparison ignores any run-context block on either side: the
+	// stored message may carry its snapshot, and a continuation's outbound
+	// prompt may carry a note block that is never persisted.
 	msgs, err := a.messages.List(ctx, call.SessionID)
 	if err == nil {
 		for _, m := range msgs {
 			if m.Role == message.User {
 				for _, p := range m.Parts {
-					if tc, ok := p.(message.TextContent); ok && tc.Text == prompt {
+					if tc, ok := p.(message.TextContent); ok &&
+						(tc.Text == prompt ||
+							stripRunContext(tc.Text) == prompt ||
+							stripRunContext(tc.Text) == stripRunContext(prompt)) {
 						return m, nil
 					}
 				}
@@ -3607,9 +3632,85 @@ func estimateMediaTokensForMessage(mediaType, text string, dataBytes int) int64 
 	return approxTokenCount(fmt.Sprintf("%s %s %d bytes", mediaType, text, dataBytes))
 }
 
-// buildDynamicSystemPrompt returns dynamic system-level content that should
-// be injected into the system prompt on every turn (e.g. todo list state).
-// It is safe to call on every Run() and never panics.
+// runContextTag wraps the run-start snapshot appended to the run's user
+// message. The block is written once, at message creation, and never
+// touched again; the transcript stays append-only.
+const runContextTag = "run_context"
+
+// runStartSnapshot composes the dynamic state that used to ride the system
+// prompt on every step: the queued post-turn reminder, the open todo list,
+// and the active goal. It is appended once to the run"s user message so the
+// system block stays byte-stable and provider prefix caches hit on every
+// step. See _PLANS/PROMPT_CACHE_OPTIMIZATION.md.
+//
+// The pending note is passed in rather than consumed here so both Run()
+// branches take it exactly once — taking it earlier would leave the
+// continuation"s reason for existing out of the snapshot.
+func (a *sessionAgent) runStartSnapshot(ctx context.Context, sessionID, note string) string {
+	var blocks []string
+	if note != "" {
+		blocks = append(blocks, "<system_reminder>\n"+note+"\n</system_reminder>")
+	}
+	if todos := a.buildDynamicSystemPrompt(sessionID); todos != "" {
+		blocks = append(blocks, "<todo_list>\n"+todos+"\n</todo_list>")
+	}
+	if g := a.activeGoal(sessionID); g != nil {
+		blocks = append(blocks, a.renderActiveGoalBlock(g))
+	}
+	if len(blocks) == 0 {
+		return ""
+	}
+	return "<" + runContextTag + ">\n" + strings.Join(blocks, "\n\n") + "\n</" + runContextTag + ">"
+}
+
+// stripRunContext removes the run-context block from a stored user message
+// text, yielding the base prompt for idempotency comparison. The block is
+// always appended at the end, so anything after it is preserved verbatim.
+func stripRunContext(text string) string {
+	start := strings.Index(text, "<"+runContextTag+">")
+	if start < 0 {
+		return text
+	}
+	end := strings.Index(text[start:], "</"+runContextTag+">")
+	if end < 0 {
+		return text
+	}
+	return strings.TrimRight(text[:start], "\n") + text[start+end+len("</"+runContextTag+">"):]
+}
+
+// userMessageExistsFor reports whether a user message with the given text
+// is already persisted for the session, ignoring any run-context block.
+// It mirrors createUserMessage's idempotency lookup so the run-start
+// snapshot injection can skip calls whose message was persisted earlier.
+func (a *sessionAgent) userMessageExistsFor(ctx context.Context, sessionID, text string) bool {
+	if text == "" {
+		return false
+	}
+	// createUserMessage defangs the prompt before storing it, so compare
+	// against the defanged form too: the raw text can never appear in
+	// storage once it carries a control token.
+	text = defangUserPrompt(text)
+	msgs, err := a.messages.List(ctx, sessionID)
+	if err != nil {
+		return false
+	}
+	for _, m := range msgs {
+		if m.Role != message.User {
+			continue
+		}
+		for _, p := range m.Parts {
+			if tc, ok := p.(message.TextContent); ok {
+				if tc.Text == text || stripRunContext(tc.Text) == text {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// buildDynamicSystemPrompt returns the open todo list rendered for the
+// run-start snapshot. It is safe to call on every Run() and never panics.
 func (a *sessionAgent) buildDynamicSystemPrompt(sessionID string) string {
 	defer func() {
 		if r := recover(); r != nil {

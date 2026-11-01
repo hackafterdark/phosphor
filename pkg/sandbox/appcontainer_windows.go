@@ -529,10 +529,18 @@ func SpawnConfined(argv []string, env []string, dir string, spec Spec, stdin io.
 	// STARTUPINFOEX (attribute list). CREATE_UNICODE_ENVIRONMENT:
 	// lpEnvironment is a UTF-16 block. CREATE_SUSPENDED: the primary
 	// thread waits until the containment job is attached below.
+	// CREATE_NO_WINDOW: the child gets a console with no window, so
+	// direct console writes never reach the TUI"s screen buffer.
+	// Confined grandchildren inherit that hidden console, which is
+	// what keeps cygwin"s early fatal-error path (ssh.exe failing
+	// inside the AppContainer, for instance) from painting ghost
+	// text over the live UI — the stdio bridge carries everything
+	// through pipes regardless.
 	if err := windows.CreateProcess(
 		nil, cmdLine, nil, nil,
 		true, // inherit stdio handles
-		windows.EXTENDED_STARTUPINFO_PRESENT|windows.CREATE_UNICODE_ENVIRONMENT|createSuspended,
+		windows.EXTENDED_STARTUPINFO_PRESENT|windows.CREATE_UNICODE_ENVIRONMENT|
+			createSuspended|windows.CREATE_NO_WINDOW,
 		envBlock(env), dirPtr, &si.StartupInfo, &pi,
 	); err != nil {
 		return nil, fmt.Errorf("create process in appcontainer: %w", err)

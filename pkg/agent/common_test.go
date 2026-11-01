@@ -62,7 +62,11 @@ func hyperBuilder(model string) builderFunc {
 }
 
 func testEnv(t *testing.T) fakeEnv {
-	workingDir := filepath.Join("/tmp/phosphor-test/", t.Name())
+	// os.TempDir() (not a hardcoded /tmp) so the working dir is creatable
+	// on every host, including sandboxed ones that deny drive-root writes.
+	// On Linux this resolves to the same /tmp/phosphor-test path the VCR
+	// cassettes were recorded against.
+	workingDir := filepath.Join(os.TempDir(), "phosphor-test", t.Name())
 	os.RemoveAll(workingDir)
 
 	err := os.MkdirAll(workingDir, 0o755)

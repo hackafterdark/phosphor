@@ -22,6 +22,14 @@ func TestRunGitMetadataWriteProtection(t *testing.T) {
 		"echo x > .git/config",
 		"echo x >> .git/COMMIT_EDITMSG",
 		"echo x > \"$WS/.git/config\"",
+		// File-mutating programs reach .git through side effects, not
+		// redirects; the argv gate must catch them too.
+		"rm .git/index.lock",
+		"rm -f .git/HEAD",
+		"mv .git/config .git/config.bak",
+		"cp .git/config .git/config.bak",
+		"touch .git/FETCH_HEAD",
+		"mkdir .git/hooks.tmp",
 	} {
 		err := Run(t.Context(), RunOptions{
 			Command:   cmd,

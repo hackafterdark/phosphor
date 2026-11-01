@@ -1247,10 +1247,14 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, isSubA
 	filteredTools = wrapToolsWithHooks(filteredTools, hookRunner, isSubAgent, c.cfg.ActiveProfile())
 
 	// Repair schema type mismatches (e.g. "true" for a boolean
-	// parameter) before hook interception runs: applying this wrapper last
-	// makes it the outermost layer, so coercion repairs the input first
-	// and hooks then inspect and may rewrite the repaired input.
+	// parameter) before hook interception runs: applying this wrapper
+	// directly over the hooks makes its Run repair the raw model input
+	// first and hooks then inspect and may rewrite the repaired input.
 	filteredTools = wrapToolsWithCoercion(filteredTools)
+
+	// Outermost wrapper: re-anchors a drifting model on its open todo when
+	// the tool result is produced, so the transcript stays append-only.
+	filteredTools = wrapToolsWithTodoNudge(filteredTools, c.sessions)
 
 	return filteredTools, nil
 }

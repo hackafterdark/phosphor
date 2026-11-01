@@ -7,19 +7,32 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"syscall"
 	"time"
 
 	"github.com/hackafterdark/phosphor/pkg/sandbox"
+	"golang.org/x/sys/windows"
 	"mvdan.cc/sh/v3/interp"
 )
 
 // defaultKillTimeout matches mvdan's DefaultExecHandler default.
 const defaultKillTimeout = 2 * time.Second
 
-// isolateProcess is a no-op on Windows. Session isolation via Setsid is a
-// Unix-only concept; Windows uses CREATE_NEW_PROCESS_GROUP which mvdan's
-// default handler already handles adequately.
-func isolateProcess(_ *exec.Cmd) {}
+// isolateProcess detaches the child from the TUI's console. Windows'
+// equivalent of the Unix Setsid session isolation: CREATE_NO_WINDOW
+// gives the child a console with no window, so direct console writes
+// (cygwin's early fatal-error path, for instance) land in a hidden
+// buffer instead of bleeding onto the terminal screen. Without this,
+// a child like cygwin ssh.exe painting "fatal error" text over the
+// live TUI leaves ghost text that only a resize repaint erases. The
+// exec handler always pipes stdio anyway, so the child never needs
+// the visible console.
+func isolateProcess(cmd *exec.Cmd) {
+	if cmd.SysProcAttr == nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{}
+	}
+	cmd.SysProcAttr.CreationFlags |= windows.CREATE_NO_WINDOW
+}
 
 // processGroupExecHandler on Windows routes confined children through
 // the platform tier: the Windows 11 AppContainer tier launches the

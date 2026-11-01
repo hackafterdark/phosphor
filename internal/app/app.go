@@ -964,22 +964,15 @@ func (app *App) Shutdown() {
 	//
 	// The revoke goes through SetNamedSecurityInfo, which propagates
 	// the ACE change through the whole tree; on a large workspace
-	// that crawl can run for minutes and park the terminal on exit.
-	// Bound the wait with its own deadline — the same policy the
-	// cleanup block above uses: anything still running when the
-	// deadline passes is abandoned, and lingering ACEs are re-granted
-	// (and re-revoked) at the next launch.
-	aclDone := make(chan error, 1)
-	go func() { aclDone <- sandbox.CleanupContainerGrants() }()
+	// that crawl can run for minutes. CleanupContainerGrants bounds
+	// each revoke internally and takes a deadline-aware context, so
+	// shutdown is never parked on the ACL mutex: anything left undone
+	// when the deadline passes keeps its memo entry, and the ACEs are
+	// re-granted (and re-revoked) at the next launch.
 	aclCtx, aclCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer aclCancel()
-	select {
-	case err := <-aclDone:
-		if err != nil {
-			slog.Warn("Failed to revoke sandbox container ACEs on shutdown", "error", err)
-		}
-	case <-aclCtx.Done():
-		slog.Warn("Container ACE cleanup did not finish before the shutdown deadline; continuing shutdown", "error", aclCtx.Err())
+	if err := sandbox.CleanupContainerGrants(aclCtx); err != nil {
+		slog.Warn("Failed to revoke sandbox container ACEs on shutdown", "error", err)
 	}
 }
 
