@@ -251,3 +251,90 @@ func TestConfinedProcessKillReleasesJob(t *testing.T) {
 		t.Fatal("confined child outlived the job handle; kill-on-close did not fire")
 	}
 }
+
+// findGit resolves git.exe for the confined-git workflow test and
+// skips the test on hosts without git.
+func findGit(t *testing.T) string {
+	t.Helper()
+	path, err := exec.LookPath("git.exe")
+	if err != nil {
+		path, err = exec.LookPath("git")
+		if err != nil {
+			t.Skip("git unavailable on this host")
+		}
+	}
+	return path
+}
+
+// TestAppContainerConfinedGitWorkflow pins that a confined child can
+// run real git plumbing: git init/add/commit need to create, rename,
+// and unlink files under .git (config.lock, index.lock, tmp_obj_*).
+// The .git write fence is a guard-layer policy for shell redirects —
+// git commands themselves must keep working inside the container.
+func TestAppContainerConfinedGitWorkflow(t *testing.T) {
+	requireAppContainer(t)
+	// The workspace must sit outside the container's own profile:
+	// granting ACEs inside AC/Temp is unreliable, and the profile
+	// itself is not a representative host directory.
+	repo, rerr := os.MkdirTemp(".", "acgit-")
+	require.NoError(t, rerr)
+	t.Cleanup(func() { os.RemoveAll(repo) })
+	ws, werr := filepath.Abs(repo)
+	require.NoError(t, werr)
+	// Confine under the *session* container identity, mirroring
+	// production: one container per Phosphor session, with the
+	// scratch repo granted through the same path grantAccess uses.
+	sessionWS, serr := filepath.Abs(".")
+	require.NoError(t, serr)
+	sid, serr := containerSidFor(sessionWS)
+	if serr != nil {
+		t.Skipf("host cannot register the sandbox container profile: %v", serr)
+	}
+	if gerr := grantAccess(ws, sid, accessFor(false)); gerr != nil {
+		t.Skipf("host cannot grant ACEs on scratch workspaces: %v", gerr)
+	}
+	spec := Spec{WorkspaceRoot: ws}
+	git := findGit(t)
+
+	env := append(os.Environ(),
+		"GIT_AUTHOR_NAME=sbx", "GIT_AUTHOR_EMAIL=sbx@local",
+		"GIT_COMMITTER_NAME=sbx", "GIT_COMMITTER_EMAIL=sbx@local",
+		"GIT_CONFIG_NOSYSTEM=1", "HOME="+ws,
+	)
+
+	run := func(args ...string) (int, string, string) {
+		var out, errOut bytes.Buffer
+		proc, err := SpawnConfined(
+			append([]string{git}, args...), env, ws, spec,
+			nil, &out, &errOut,
+		)
+		if err != nil {
+			// Hosts whose own sandbox cannot attach a nested
+			// boundary cannot host this test; report honestly.
+			return 126, "", err.Error()
+		}
+		code, err := proc.Wait()
+		if err != nil && code == 0 {
+			code = 1
+		}
+		return code, out.String(), errOut.String()
+	}
+
+	code, _, errOut := run("init", "-q", ".")
+	if code == 126 {
+		t.Skipf("host cannot spawn confined children into a granted scratch workspace: %s", errOut)
+	}
+	if code != 0 {
+		t.Fatalf("confined git init failed in %s (%d): %s", ws, code, errOut)
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(ws, "f.txt"), []byte("x\n"), 0o644))
+	if code, _, errOut := run("add", "f.txt"); code != 0 {
+		t.Fatalf("confined git add failed (%d): %s", code, errOut)
+	}
+	if code, _, errOut := run("commit", "-q", "-m", "t"); code != 0 {
+		t.Fatalf("confined git commit failed (%d): %s", code, errOut)
+	}
+	// The workflow leaves no git lock behind.
+	_, err := os.Stat(filepath.Join(ws, ".git", "index.lock"))
+	require.True(t, os.IsNotExist(err), "index.lock must be removed by git itself")
+}

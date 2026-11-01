@@ -778,6 +778,51 @@ func (c Confinement) Blocked(argv []string, cwd string) error {
 	return nil
 }
 
+// fileMutatingCommands are the external programs whose non-flag operands
+// name files they delete, move, or overwrite. The fence covers them
+// explicitly because argv-based checks never see their side effects:
+// `rm .git/index.lock` deletes protected metadata even though no
+// redirect or interpreter open passes through ProtectedWriteBlocked.
+var fileMutatingCommands = map[string]bool{
+	"rm": true, "mv": true, "cp": true, "install": true, "tee": true,
+	"touch": true, "mkdir": true, "rmdir": true, "ln": true,
+	"truncate": true, "shred": true, "unlink": true,
+}
+
+// CommandWriteBlocked reports whether argv names a file-mutating program
+// operating on a protected path (config files, repository metadata). It
+// closes the argv-side leak of the write fence: redirects are caught by
+// ProtectedWriteBlocked, but `rm .git/config` only reaches the policy
+// through this check. git itself is exempt — repository state changes
+// through git commands are the sanctioned path.
+func (c Confinement) CommandWriteBlocked(argv []string, cwd string) error {
+	if c.WorkspaceRoot == "" || len(argv) == 0 {
+		return nil
+	}
+	name := filepath.Base(argv[0])
+	name = strings.TrimSuffix(name, ".exe")
+	if !fileMutatingCommands[strings.ToLower(name)] {
+		return nil
+	}
+	if cwd == "" {
+		cwd = c.WorkspaceRoot
+	}
+	home := ""
+	if h, err := os.UserHomeDir(); err == nil {
+		home = h
+	}
+	for _, arg := range argv[1:] {
+		if arg == "" || strings.HasPrefix(arg, "-") || isDeviceFile(arg) || isRemoteURL(arg) {
+			continue
+		}
+		absPath := resolveTokenBase(arg, cwd, home)
+		if err := c.ProtectedWriteBlocked(absPath); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // DirBlocked reports whether the interpreter's current working directory
 // itself lies outside the trusted roots. The cd builtin is dispatched
 // inside the interpreter and never reaches the exec-handler chain, so a

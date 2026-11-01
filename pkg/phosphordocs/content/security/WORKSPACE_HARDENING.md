@@ -321,7 +321,14 @@ The same two layers enforce it:
 - **Shell execution**: `Confinement.ProtectGitDirs` routes the same check
   into `Confinement.ProtectedWriteBlocked`, refusing redirect operands such as
   `echo x > .git/hooks/pre-commit` while leaving reads and git commands
-  themselves unrestricted.
+  themselves unrestricted. `Confinement.CommandWriteBlocked` closes the
+  argv-side gap for file-mutating programs (`rm`, `mv`, `cp`, `touch`,
+  `mkdir`, ...): `rm .git/index.lock` deletes metadata through a side
+  effect no redirect check can see, so the exec gate refuses it the same
+  way. git itself stays unrestricted: repository state changes through
+  git commands are the sanctioned path, and the kernel grant for writable
+  roots carries `DELETE`/`FILE_DELETE_CHILD` so git's own lock-file dance
+  (create, rename, unlink) keeps working inside the container.
 
 ### Skills and MCP Servers
 

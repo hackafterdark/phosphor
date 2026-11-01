@@ -62,6 +62,20 @@ func pathConfinementHandler(conf *pathguard.Confinement, blockFuncs []BlockFunc)
 						)
 						return err
 					}
+					// File-mutating programs reach protected paths through
+					// side effects (unlink, rename, copy), never through a
+					// redirect the open gate can see. The argv gate closes
+					// that gap: `rm .git/index.lock` must be refused the
+					// same way `echo x > .git/index.lock` is.
+					if err := conf.CommandWriteBlocked(args, hc.Dir); err != nil {
+						slog.InfoContext(ctx, "Command blocked by workspace path confinement",
+							"command", args[0],
+							"args", args,
+							"workspace", conf.WorkspaceRoot,
+							"reason", err.Error(),
+						)
+						return err
+					}
 				}
 			}
 			return next(ctx, args)

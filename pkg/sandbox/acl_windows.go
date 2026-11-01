@@ -279,12 +279,24 @@ func revokeAccess(cleanupCtx context.Context, g grant) error {
 	return setDaclBounded(ctx, g.path, newAcl)
 }
 
+// fileDeleteChild is ACCESS_MASK.FILE_DELETE_CHILD; x/sys does not
+// export the constant.
+const fileDeleteChild = 0x00000040
+
 // accessFor returns the access mask for a root of the given kind.
 // Read/write roots also carry execute so spawned tools can traverse
 // and load their own binaries.
+//
+// The writable mask carries DELETE and FILE_DELETE_CHILD explicitly:
+// GENERIC_WRITE alone leaves confined children unable to unlink or
+// rename their own scratch files (git's config.lock/index.lock/
+// tmp_obj_* dance fails closed with "unable to unlink: Invalid
+// argument"), because directory delete access lives on the parent
+// object, not the file.
 func accessFor(readOnly bool) windows.ACCESS_MASK {
 	if readOnly {
 		return windows.GENERIC_READ | windows.GENERIC_EXECUTE
 	}
-	return windows.GENERIC_READ | windows.GENERIC_WRITE | windows.GENERIC_EXECUTE
+	return windows.GENERIC_READ | windows.GENERIC_WRITE | windows.GENERIC_EXECUTE |
+		windows.DELETE | fileDeleteChild
 }
