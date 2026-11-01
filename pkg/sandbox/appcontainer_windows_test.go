@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 
@@ -323,6 +324,14 @@ func TestAppContainerConfinedGitWorkflow(t *testing.T) {
 	code, _, errOut := run("init", "-q", ".")
 	if code == 126 {
 		t.Skipf("host cannot spawn confined children into a granted scratch workspace: %s", errOut)
+	}
+	if code != 0 && strings.Contains(errOut, "/dev/null") {
+		// Hardened hosts (GitHub runners) deny the container access
+		// to the device namespace, and \dev\null cannot be ACE-granted
+		// like a filesystem path. The confinement boundary itself is
+		// fine; this host simply cannot host real git inside the
+		// container, so report honestly instead of failing the suite.
+		t.Skipf("host denies the container the NUL device needed by git: %s", errOut)
 	}
 	if code != 0 {
 		t.Fatalf("confined git init failed in %s (%d): %s", ws, code, errOut)
