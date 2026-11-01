@@ -334,7 +334,7 @@ func setupLocalWorkspace(cmd *cobra.Command) (workspace.Workspace, func(), *sql.
 	// database must leave a trace in phosphor.log rather than dying
 	// silently against the DiscardHandler installed in Execute.
 	logFile := filepath.Join(cfg.Options.DataDirectory, "logs", "phosphor.log")
-	logCfg := cfg.Options.Logging.ToLogConfig()
+	logCfg := cfg.Logging.ToLogConfig()
 	phosphorlog.SetupWithConfig(logFile, logCfg, debug)
 
 	gitIgnorePath := filepath.Join(cfg.Options.DataDirectory, ".gitignore")

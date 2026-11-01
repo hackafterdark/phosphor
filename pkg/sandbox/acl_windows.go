@@ -160,14 +160,31 @@ func grantAccess(path string, sid *windows.SID, accessMask windows.ACCESS_MASK) 
 // workspace are rare by design (the trust gate, terminal usage), and
 // the next launch re-grants, so teardown stays unconditional.
 func CleanupContainerGrants(ctx context.Context) error {
-	// Hold aclMu for the whole teardown. grantAccess serializes on the
-	// same lock, so a new grant for a path can never be skipped on the
-	// memo while its revocation is still pending: the grant blocks
-	// until cleanup returns, by which point the memo is empty and the
-	// ACE is applied for real. The revokes themselves are bounded, so
-	// this hold can never outlast revokeDeadline per grant.
-	aclMu.Lock()
-	defer aclMu.Unlock()
+	// Bound the wait for aclMu by the caller's deadline: if grantAccess
+	// holds the mutex in a DACL write that is still crawling, shutdown
+	// returns on its deadline instead of inheriting the write's (much
+	// longer) bound. Poll with TryLock — abandoning a Lock waiter
+	// cannot cancel the wait, and unlocking from the waiter goroutine
+	// races a third party acquiring the mutex in between. The teardown
+	// never unlinks or resets anything, so abandoning it is safe:
+	// unrevoked ACEs stay granted (the container is gone) and are
+	// revoked at the next launch's teardown.
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if aclMu.TryLock() {
+			defer aclMu.Unlock()
+			break
+		}
+		timer := time.NewTimer(50 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
 
 	var errs []error
 	for _, g := range grantedAce {
@@ -189,7 +206,7 @@ func CleanupContainerGrants(ctx context.Context) error {
 			delete(grantedAce, g.key())
 			continue
 		}
-		if err := revokeAccess(g); err != nil {
+		if err := revokeAccess(ctx, g); err != nil {
 			// A third party that changed the DACL mid-session can
 			// refuse the revoke; the ACE then lingers and the next
 			// launch re-grants it, so this is logged, not fatal.
@@ -205,7 +222,12 @@ func CleanupContainerGrants(ctx context.Context) error {
 // path's DACL via SetEntriesInAclW's REVOKE_ACCESS mode, which
 // deletes matching allow ACEs (both the self and inherit-only halves
 // of a split inheritable grant) without touching other trustees.
-func revokeAccess(g grant) error {
+// The per-write deadline is derived from cleanupCtx, so a revoke can
+// never outlive the teardown's own bound.
+func revokeAccess(cleanupCtx context.Context, g grant) error {
+	if err := cleanupCtx.Err(); err != nil {
+		return err
+	}
 	sidStr, err := windows.UTF16PtrFromString(g.sid)
 	if err != nil {
 		return fmt.Errorf("encode sid %q: %w", g.sid, err)
@@ -246,7 +268,13 @@ func revokeAccess(g grant) error {
 	if err != nil {
 		return fmt.Errorf("revoke ACE %q: %w", g.path, err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), revokeDeadline)
+	timeout := revokeDeadline
+	if dl, ok := cleanupCtx.Deadline(); ok {
+		if remaining := time.Until(dl); remaining < timeout {
+			timeout = remaining
+		}
+	}
+	ctx, cancel := context.WithTimeout(cleanupCtx, timeout)
 	defer cancel()
 	return setDaclBounded(ctx, g.path, newAcl)
 }

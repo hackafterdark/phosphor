@@ -3661,6 +3661,10 @@ func (a *sessionAgent) userMessageExistsFor(ctx context.Context, sessionID, text
 	if text == "" {
 		return false
 	}
+	// createUserMessage defangs the prompt before storing it, so compare
+	// against the defanged form too: the raw text can never appear in
+	// storage once it carries a control token.
+	text = defangUserPrompt(text)
 	msgs, err := a.messages.List(ctx, sessionID)
 	if err != nil {
 		return false
