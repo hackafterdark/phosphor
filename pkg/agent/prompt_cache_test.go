@@ -169,7 +169,10 @@ func TestWirePromptByteStableAcrossTodosUpdate(t *testing.T) {
 	_, err = env.sessions.Save(t.Context(), sess)
 	require.NoError(t, err)
 
-	sa := testSessionAgent(env, model, model, "system", tools.NewTodosTool(env.sessions)).(*sessionAgent)
+	// Title generation runs asynchronously after Run returns and tries the
+	// small model first; keeping it off the probe keeps the recorded
+	// prompts exactly the two run steps this test pins.
+	sa := testSessionAgent(env, model, &finishStreamModel{text: "title"}, "system", tools.NewTodosTool(env.sessions)).(*sessionAgent)
 	accept := sa.BeginAccepted(sess.ID)
 	_, err = sa.Run(t.Context(), SessionAgentCall{
 		SessionID: sess.ID,
