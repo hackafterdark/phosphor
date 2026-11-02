@@ -233,6 +233,18 @@ func HasPrefix(path, prefix string) bool {
 	return !strings.HasPrefix(rel, "..")
 }
 
+// UTF8BOM is the UTF-8 byte order mark.
+const UTF8BOM = "\uFEFF"
+
+// StripUTF8BOM removes a leading UTF-8 BOM from content, returning the
+// stripped content and whether a BOM was present.
+func StripUTF8BOM(content string) (string, bool) {
+	if strings.HasPrefix(content, UTF8BOM) {
+		return strings.TrimPrefix(content, UTF8BOM), true
+	}
+	return content, false
+}
+
 // ToUnixLineEndings converts Windows line endings (CRLF) to Unix line endings (LF).
 func ToUnixLineEndings(content string) (string, bool) {
 	if strings.Contains(content, "\r\n") {

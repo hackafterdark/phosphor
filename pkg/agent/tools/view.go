@@ -19,6 +19,7 @@ import (
 
 	"charm.land/fantasy"
 	"github.com/hackafterdark/phosphor/internal/filepathext"
+	"github.com/hackafterdark/phosphor/internal/fsext"
 	"github.com/hackafterdark/phosphor/internal/workspaceindex"
 	"github.com/hackafterdark/phosphor/pkg/filetracker"
 	"github.com/hackafterdark/phosphor/pkg/lsp"
@@ -269,6 +270,10 @@ func NewViewTool(
 				}
 				return fantasy.ToolResponse{}, fmt.Errorf("error reading file: %w", err)
 			}
+
+			// Drop a leading UTF-8 BOM so displayed content and hashline tags
+			// match the BOM-stripped representation the edit tools verify against.
+			content, _ = fsext.StripUTF8BOM(content)
 
 			ext := strings.ToLower(filepath.Ext(filePath))
 			if !utf8.ValidString(content) || isDocExt(ext) {

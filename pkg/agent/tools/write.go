@@ -168,6 +168,12 @@ func NewWriteTool(
 			// round-trip); inert for any other destination, no-op when off.
 			contentToWrite := restoreSecretTokensForWrite(params.Content, filePath, policy)
 
+			// Preserve the original UTF-8 BOM when overwriting a file that
+			// carries one, so encoding fidelity survives the round-trip.
+			if _, oldHasBOM := fsext.StripUTF8BOM(oldContent); oldHasBOM && !strings.HasPrefix(contentToWrite, fsext.UTF8BOM) {
+				contentToWrite = fsext.UTF8BOM + contentToWrite
+			}
+
 			err = os.WriteFile(filePath, []byte(contentToWrite), 0o644)
 			if err != nil {
 				return fantasy.ToolResponse{}, fmt.Errorf("error writing file: %w", err)

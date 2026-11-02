@@ -355,7 +355,7 @@ func deleteContent(edit editContext, filePath, oldString string, replaceAll bool
 	if err != nil {
 		return fantasy.ToolResponse{}, fmt.Errorf("failed to read file: %w", err)
 	}
-	initialContent := string(initialBytes)
+	initialContent, hadBOM := fsext.StripUTF8BOM(string(initialBytes))
 
 	// Perform the edit calculation on the initial content
 	oldContent, isCrlf := fsext.ToUnixLineEndings(initialContent)
@@ -419,7 +419,8 @@ func deleteContent(edit editContext, filePath, oldString string, replaceAll bool
 		if err != nil {
 			return fantasy.ToolResponse{}, fmt.Errorf("failed to read file during atomic write check: %w", err)
 		}
-		currentDiskContent := string(currentDiskBytes)
+		var currentDiskContent string
+		currentDiskContent, hadBOM = fsext.StripUTF8BOM(string(currentDiskBytes))
 
 		if currentDiskContent == initialContent {
 			finalContentToWrite = newContent
@@ -462,6 +463,9 @@ func deleteContent(edit editContext, filePath, oldString string, replaceAll bool
 
 	if isCrlf {
 		finalContentToWrite, _ = fsext.ToWindowsLineEndings(finalContentToWrite)
+	}
+	if hadBOM && !strings.HasPrefix(finalContentToWrite, fsext.UTF8BOM) {
+		finalContentToWrite = fsext.UTF8BOM + finalContentToWrite
 	}
 
 	err = os.WriteFile(filePath, []byte(finalContentToWrite), 0o644)
@@ -567,7 +571,7 @@ func replaceContent(edit editContext, filePath, oldString, newString string, rep
 	if err != nil {
 		return fantasy.ToolResponse{}, fmt.Errorf("failed to read file: %w", err)
 	}
-	initialContent := string(initialBytes)
+	initialContent, hadBOM := fsext.StripUTF8BOM(string(initialBytes))
 
 	// Perform the edit calculation on the initial content
 	oldContent, isCrlf := fsext.ToUnixLineEndings(initialContent)
@@ -646,7 +650,8 @@ func replaceContent(edit editContext, filePath, oldString, newString string, rep
 		if err != nil {
 			return fantasy.ToolResponse{}, fmt.Errorf("failed to read file during atomic write check: %w", err)
 		}
-		currentDiskContent := string(currentDiskBytes)
+		var currentDiskContent string
+		currentDiskContent, hadBOM = fsext.StripUTF8BOM(string(currentDiskBytes))
 
 		if currentDiskContent == initialContent {
 			finalContentToWrite = newContent
@@ -692,6 +697,9 @@ func replaceContent(edit editContext, filePath, oldString, newString string, rep
 
 	if isCrlf {
 		finalContentToWrite, _ = fsext.ToWindowsLineEndings(finalContentToWrite)
+	}
+	if hadBOM && !strings.HasPrefix(finalContentToWrite, fsext.UTF8BOM) {
+		finalContentToWrite = fsext.UTF8BOM + finalContentToWrite
 	}
 
 	err = os.WriteFile(filePath, []byte(finalContentToWrite), 0o644)
@@ -894,10 +902,24 @@ type matchCandidate struct {
 	isWhitespaceOnly bool
 }
 
+// normalizeWhitespace collapses whitespace runs and folds Unicode
+// look-alikes (curly quotes, NBSP, zero-width characters) to their ASCII
+// equivalents so fuzzy matching tolerates encoding noise. It is used for
+// comparison only; replacements always carry the file's original bytes.
 func normalizeWhitespace(s string) string {
 	var sb strings.Builder
 	inSpace := false
 	for _, r := range s {
+		switch r {
+		case '\u2018', '\u2019':
+			r = '\''
+		case '\u201C', '\u201D':
+			r = '"'
+		case '\u200B', '\u200C', '\u200D', '\uFEFF':
+			continue
+		case '\u00A0':
+			r = ' '
+		}
 		if r == ' ' || r == '\t' || r == '\r' || r == '\n' {
 			if !inSpace {
 				sb.WriteByte(' ')
@@ -1074,6 +1096,13 @@ func makeNotFoundError(fileContent, oldString string) fantasy.ToolResponse {
 		sb.WriteString(c.text)
 		sb.WriteString("\n------------------------------------\n")
 	}
+
+	// Hand the model a hashline-tagged view of the closest region so it can
+	// retry with verified on-disk content in one turn instead of guessing.
+	best := candidates[0]
+	sb.WriteString("\nRetry using the current on-disk content of the closest region (hashline-tagged):\n\n")
+	sb.WriteString(addLineNumbers(best.text, best.lineStart, true))
+	sb.WriteString("\n")
 
 	return fantasy.NewTextErrorResponse(sb.String())
 }

@@ -357,7 +357,7 @@ func processMultiEditExistingFile(edit editContext, params MultiEditParams, call
 	if err != nil {
 		return fantasy.ToolResponse{}, fmt.Errorf("failed to read file: %w", err)
 	}
-	initialContent := string(initialBytes)
+	initialContent, hadBOM := fsext.StripUTF8BOM(string(initialBytes))
 
 	oldContent, isCrlf := fsext.ToUnixLineEndings(initialContent)
 	currentContent := oldContent
@@ -449,7 +449,8 @@ func processMultiEditExistingFile(edit editContext, params MultiEditParams, call
 		if err != nil {
 			return fantasy.ToolResponse{}, fmt.Errorf("failed to read file during atomic write check: %w", err)
 		}
-		currentDiskContent := string(currentDiskBytes)
+		var currentDiskContent string
+		currentDiskContent, hadBOM = fsext.StripUTF8BOM(string(currentDiskBytes))
 
 		if currentDiskContent == initialContent {
 			finalContentToWrite = currentContent
@@ -499,6 +500,9 @@ func processMultiEditExistingFile(edit editContext, params MultiEditParams, call
 
 	if isCrlf {
 		finalContentToWrite, _ = fsext.ToWindowsLineEndings(finalContentToWrite)
+	}
+	if hadBOM && !strings.HasPrefix(finalContentToWrite, fsext.UTF8BOM) {
+		finalContentToWrite = fsext.UTF8BOM + finalContentToWrite
 	}
 
 	// Validate secrets and syntax
