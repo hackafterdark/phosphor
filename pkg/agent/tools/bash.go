@@ -577,7 +577,7 @@ func NewBashTool(permissions permission.Service, workingDir string, bashCfg conf
 						return fantasy.ToolResponse{}, fmt.Errorf("[Job %s] error executing command: %w", bgShell.ID, execErr)
 					}
 
-					stdout = formatOutput(stdout, stderr, execErr, params.Command, policy)
+					stdout = formatOutput(stdout, stderr, execErr, params.Command, policy, workingDir, sessionID)
 					stdout = appendSandboxGuidance(stdout, shell.ExitCode(execErr), sandboxActive, escalated)
 					if bgShell.Shell.SandboxDegraded() {
 						stdout = shell.SandboxDegradedWarning + "\n\n" + stdout
@@ -668,7 +668,7 @@ func NewBashTool(permissions permission.Service, workingDir string, bashCfg conf
 					return fantasy.ToolResponse{}, fmt.Errorf("[Job %s] error executing command: %w", bgShell.ID, execErr)
 				}
 
-				stdout = formatOutput(stdout, stderr, execErr, params.Command, policy)
+				stdout = formatOutput(stdout, stderr, execErr, params.Command, policy, workingDir, sessionID)
 				stdout = appendSandboxGuidance(stdout, exitCode, sandboxActive, escalated)
 				if bgShell.Shell.SandboxDegraded() {
 					stdout = shell.SandboxDegradedWarning + "\n\n" + stdout
@@ -707,13 +707,12 @@ func NewBashTool(permissions permission.Service, workingDir string, bashCfg conf
 	)
 }
 
-// formatOutput formats the output of a completed command with error handling
-func formatOutput(stdout, stderr string, execErr error, command string, policy *Policy) string {
+// formatOutput formats the output of a completed command with error handling.
+// Redaction runs on the full output before truncation so the spilled artifact
+// only ever contains content the redaction pipeline has already scrubbed.
+func formatOutput(stdout, stderr string, execErr error, command string, policy *Policy, workspaceDir, sessionID string) string {
 	interrupted := shell.IsInterrupt(execErr)
 	exitCode := shell.ExitCode(execErr)
-
-	stdout = truncateOutput(stdout)
-	stderr = truncateOutput(stderr)
 
 	// Whole-value redaction (A) when the command argv referenced a sensitive path
 	// (cat/source/less .env, credentials, keys): drop assignment values from the
@@ -756,7 +755,10 @@ func formatOutput(stdout, stderr string, execErr error, command string, policy *
 	// untouched. Bash output is path-less, so it is scanned in full mode and
 	// honours the read-path secrets toggle.
 	stdout = RedactJSONForTool(stdout, "bash", policy)
-	return redactSecretsForTool(stdout, "", "bash", policy)
+	stdout = redactSecretsForTool(stdout, "", "bash", policy)
+	// Truncate last so the spill artifact holds the same (redacted) content
+	// the model was shown, just without the dropped middle.
+	return truncateForSpill(stdout, workspaceDir, sessionID, BashToolName)
 }
 
 func TruncateOutput(content string) string {
@@ -770,10 +772,6 @@ func TruncateOutput(content string) string {
 
 	truncatedLinesCount := countLines(content[halfLength : len(content)-halfLength])
 	return fmt.Sprintf("%s\n\n... [%d lines truncated] ...\n\n%s", start, truncatedLinesCount, end)
-}
-
-func truncateOutput(content string) string {
-	return TruncateOutput(content)
 }
 
 func countLines(s string) int {
