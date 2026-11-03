@@ -48,12 +48,15 @@ Add a `logging` section to your `phosphor.json`:
     "level": "info",
     "max_size_mb": 10,
     "max_age_days": 30,
-    "max_backups": 0,
+    "max_backups": 5,
     "compress": false,
     "filters": [
       {"field": "msg", "pattern": ".*password.*"},
       {"field": "msg", "pattern": ".*secret.*"}
-    ]
+    ],
+    "source_levels": {
+      "github.com/charmbracelet/x/powernap/pkg/transport": "info"
+    }
   }
 }
 ```
@@ -66,9 +69,10 @@ Add a `logging` section to your `phosphor.json`:
 | `level` | `"off" \| "info" \| "debug"` | `"info"` | slog log level. `"off"` disables logging even if `enabled: true`. |
 | `max_size_mb` | `int` | `10` | Maximum log file size in MB before rotation (lumberjack). Max 1000. |
 | `max_age_days` | `int` | `30` | Maximum age of log files in days before cleanup. |
-| `max_backups` | `int` | `0` | Maximum number of old rotated log files to retain. |
+| `max_backups` | `int` | `0` | Maximum number of old rotated log files to retain. `0` (lumberjack default) keeps **all** old files until `max_age_days` expires; set a small number (e.g. `5`) to bound disk usage regardless of age. |
 | `compress` | `bool` | `false` | Enable gzip compression of rotated log files. |
 | `filters` | `LogFilter[]` | `[]` | Regex filters to exclude matching log entries. See [Filters](#filters). |
+| `source_levels` | `map[string]string` | built-in defaults | Minimum log level per third-party source package prefix. See [Source Levels](#source-levels). |
 
 ## Log File Location
 
@@ -175,13 +179,52 @@ Filters exclude log entries whose fields match regex patterns. This is useful fo
 {"field": "msg", "pattern": "^Failed to create LSP client"}
 ```
 
+## Source Levels
+
+Third-party libraries log through the same slog logger, and some are
+chatty at `debug` level — for example the powernap LSP transport logs
+every message exchanged with gopls-style servers, which can add
+megabytes per session. `source_levels` sets a **minimum level per
+source package prefix**: records whose source lives under a gated
+prefix are dropped unless they reach that level, while Phosphor's own
+logging (and every other source) is unaffected.
+
+Phosphor ships defaults that cap the LSP transport chatter:
+
+```json
+{
+  "logging": {
+    "source_levels": {
+      "github.com/charmbracelet/x/powernap/pkg/transport": "info",
+      "github.com/charmbracelet/x/powernap/pkg/lsp": "info"
+    }
+  }
+}
+```
+
+Your `source_levels` entries are merged over these defaults, so you
+can also **re-enable** a gated source when debugging it:
+
+```json
+{
+  "logging": {
+    "level": "debug",
+    "source_levels": {
+      "github.com/charmbracelet/x/powernap/pkg/transport": "debug"
+    }
+  }
+}
+```
+
+Valid levels are `debug`, `info`, `warn`, and `error`.
+
 ## Log Rotation
 
 Phosphor uses [lumberjack](https://github.com/natefinch/lumberjack) for log rotation:
 
 - **MaxSize**: Maximum size of a single log file in MB before rotation
 - **MaxAge**: Maximum number of days to retain old log files
-- **MaxBackups**: Maximum number of old log files to retain
+- **MaxBackups**: Maximum number of old log files to retain (`0` keeps all old files until `max_age_days` prunes them)
 - **Compress**: Enable gzip compression of rotated files
 
 When the active log file exceeds `max_size_mb`, it's rotated and a new file is created. Old files are cleaned up after `max_age_days`.
