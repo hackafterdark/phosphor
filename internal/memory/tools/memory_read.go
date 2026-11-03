@@ -29,7 +29,7 @@ type ReadParams struct {
 // summaries plus snippets, and this returns the full, sanitized body on demand so
 // the index→summary→body ladder never over-pays the context window.
 func NewMemoryReadTool(cfg *config.ConfigStore, workingDir string) fantasy.AgentTool {
-	return fantasy.NewAgentTool(
+	return fantasy.NewParallelAgentTool(
 		ReadToolName,
 		renderMemoryReadDescription(),
 		func(ctx context.Context, params ReadParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {

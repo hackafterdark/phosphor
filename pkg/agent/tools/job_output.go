@@ -33,7 +33,7 @@ type JobOutputResponseMetadata struct {
 }
 
 func NewJobOutputTool(workingDir string, policy *Policy) fantasy.AgentTool {
-	return fantasy.NewAgentTool(
+	return fantasy.NewParallelAgentTool(
 		JobOutputToolName,
 		jobOutputDescription,
 		func(ctx context.Context, params JobOutputParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {

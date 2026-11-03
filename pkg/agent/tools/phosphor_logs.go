@@ -76,7 +76,7 @@ type PhosphorLogsParams struct {
 }
 
 func NewPhosphorLogsTool(logFile string) fantasy.AgentTool {
-	return fantasy.NewAgentTool(
+	return fantasy.NewParallelAgentTool(
 		PhosphorLogsToolName,
 		phosphorLogsDescription(),
 		func(ctx context.Context, params PhosphorLogsParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {

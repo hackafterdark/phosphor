@@ -65,7 +65,7 @@ type secretFinding struct {
 }
 
 func NewScanSecretsTool(workingDir string, policy *Policy) fantasy.AgentTool {
-	return fantasy.NewAgentTool(
+	return fantasy.NewParallelAgentTool(
 		ScanSecretsToolName,
 		scanSecretsDescriptionStr,
 		func(ctx context.Context, params ScanSecretsParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {

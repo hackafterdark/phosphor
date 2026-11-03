@@ -31,7 +31,7 @@ func NewPhosphorInfoTool(
 	activeSkills []*skills.Skill,
 	skillTracker *skills.Tracker,
 ) fantasy.AgentTool {
-	return fantasy.NewAgentTool(
+	return fantasy.NewParallelAgentTool(
 		PhosphorInfoToolName,
 		phosphorInfoDescription,
 		func(ctx context.Context, _ PhosphorInfoParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {

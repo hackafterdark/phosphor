@@ -63,7 +63,7 @@ type PhosphorTraceParams struct {
 }
 
 func NewPhosphorTraceTool() fantasy.AgentTool {
-	return fantasy.NewAgentTool(
+	return fantasy.NewParallelAgentTool(
 		PhosphorTraceToolName,
 		phosphorTraceDescription(),
 		func(ctx context.Context, params PhosphorTraceParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {

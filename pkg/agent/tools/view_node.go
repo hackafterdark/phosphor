@@ -24,7 +24,7 @@ const ViewNodeToolName = "view_node"
 var viewNodeDescription = "View the implementation/definition of a specific function, struct, class, or interface in a file by name. Uses Tree-sitter AST parsing if available, falling back to smart indentation/brace matching if Tree-sitter is unavailable."
 
 func NewViewNodeTool(workingDir string) fantasy.AgentTool {
-	return fantasy.NewAgentTool(
+	return fantasy.NewParallelAgentTool(
 		ViewNodeToolName,
 		viewNodeDescription,
 		func(ctx context.Context, params ViewNodeParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
