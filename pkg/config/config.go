@@ -548,8 +548,10 @@ type LoggingOptions struct {
 	MaxAgeDays int `json:"max_age_days,omitempty" jsonschema:"description=Maximum age of log files in days,default=30"`
 
 	// MaxBackups is the maximum number of old log files to retain.
-	// Default: 0 (no backups).
-	MaxBackups int `json:"max_backups,omitempty" jsonschema:"description=Maximum number of old log files to retain,default=0"`
+	// Default: 0, which lumberjack treats as "keep all old files";
+	// they are only pruned once older than MaxAgeDays. Set a small
+	// number (e.g. 5) to bound disk usage regardless of age.
+	MaxBackups int `json:"max_backups,omitempty" jsonschema:"description=Maximum number of old log files to retain; 0 keeps all until MaxAgeDays expires,default=0"`
 
 	// Compress enables gzip compression of rotated log files.
 	// Default: false.
@@ -560,6 +562,13 @@ type LoggingOptions struct {
 	// a JSON object with "field" and "pattern" keys, e.g.:
 	// [{"field": "msg", "pattern": ".*password.*"}].
 	Filters []LogFilter `json:"filters,omitempty" jsonschema:"description=Regex filters to exclude matching log entries. Each filter has field and pattern keys."`
+
+	// SourceLevels sets a minimum log level per third-party package
+	// path prefix, e.g. {"github.com/charmbracelet/x/powernap/pkg/transport":
+	// "info"} keeps LSP transport chatter out of debug logs. These are
+	// merged over the built-in defaults, so an entry can also
+	// re-enable a source that is gated by default.
+	SourceLevels map[string]string `json:"source_levels,omitempty" jsonschema:"description=Minimum log level per source package prefix, merged over built-in defaults"`
 }
 
 // LogFilter defines a regex-based exclusion rule for log entries.
@@ -580,12 +589,13 @@ func (o *LoggingOptions) ToLogConfig() *log.LogConfig {
 		return nil
 	}
 	lc := &log.LogConfig{
-		Enabled:    true,
-		Level:      o.Level,
-		MaxSizeMB:  o.MaxSizeMB,
-		MaxAgeDays: o.MaxAgeDays,
-		MaxBackups: o.MaxBackups,
-		Compress:   o.Compress,
+		Enabled:      true,
+		Level:        o.Level,
+		MaxSizeMB:    o.MaxSizeMB,
+		MaxAgeDays:   o.MaxAgeDays,
+		MaxBackups:   o.MaxBackups,
+		Compress:     o.Compress,
+		SourceLevels: o.SourceLevels,
 	}
 	for _, f := range o.Filters {
 		lc.Filters = append(lc.Filters, log.LogFilter{Field: f.Field, Pattern: f.Pattern})
