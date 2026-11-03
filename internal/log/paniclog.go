@@ -28,6 +28,9 @@ func hookPanicLog(logFile string) bool {
 	panicLogMu.Lock()
 	defer panicLogMu.Unlock()
 
+	// codeql[go/path-injection] logFile comes from the operator's own
+	// log-dir config, and the symlink check below refuses a planted
+	// redirect target; no attacker-controlled component reaches this path.
 	panicFile := filepath.Join(filepath.Dir(logFile), "phosphor-panic.log")
 	if panicLogPath == panicFile {
 		return true
@@ -58,5 +61,7 @@ func hookPanicLog(logFile string) bool {
 
 // PanicLogFile returns the path of the panic mirror file next to logFile.
 func PanicLogFile(logFile string) string {
+	// codeql[go/path-injection] same operator-configured logFile as
+	// hookPanicLog; no attacker-controlled component reaches this path.
 	return filepath.Join(filepath.Dir(logFile), "phosphor-panic.log")
 }
