@@ -91,7 +91,9 @@ var (
 	// workspaces' containers on the shared temp dir — must not
 	// interleave their Get/merge/Set steps, or the later write drops
 	// the earlier SID's ACE while its memo entry stays behind. The
-	// later caller waits for the in-flight write's result instead.
+	// later caller waits for the in-flight write's result instead,
+	// and the slot stays held until the write returns even if the
+	// writer's own deadline passed first.
 	rootWrites = map[string]*rootWrite{}
 )
 
@@ -195,10 +197,25 @@ func grantAccessImpl(path string, sid *windows.SID, accessMask windows.ACCESS_MA
 	// slow-warmup complaints.
 	merged, err := mergeGrantAce(path, sid, accessMask)
 	if err == nil {
+		errCh := make(chan error, 1)
+		go func() {
+			errCh <- windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
+				windows.DACL_SECURITY_INFORMATION, nil, nil, merged, nil)
+		}()
 		ctx, cancel := context.WithTimeout(context.Background(), grantDeadline)
 		defer cancel()
 		started := time.Now()
-		err = setDaclBounded(ctx, path, merged)
+		select {
+		case err = <-errCh:
+			finishGrantWrite(w, path, g, err)
+		case <-ctx.Done():
+			err = fmt.Errorf("set DACL %q: %w", path, ctx.Err())
+			// Windows gives no way to cancel the syscall, so the
+			// root slot stays held until the background write
+			// returns; releasing it on timeout would let a newer
+			// grant race the still-in-flight DACL update.
+			go func() { finishGrantWrite(w, path, g, <-errCh) }()
+		}
 		if err != nil {
 			// The failure itself is reported by the caller (launch or
 			// pre-warm), which decides whether a refused root is
@@ -209,26 +226,35 @@ func grantAccessImpl(path string, sid *windows.SID, accessMask windows.ACCESS_MA
 			slog.Info("Applied sandbox container ACE grant",
 				"path", path, "dur", time.Since(started), "persistent", persistent)
 		}
+	} else {
+		finishGrantWrite(w, path, g, err)
 	}
+	return err
+}
+
+// finishGrantWrite records the outcome of a root's DACL update and
+// releases the root's write slot, memoizing the grant when the write
+// succeeded. Callers whose deadline passed while the syscall kept
+// running release the slot only when this runs, so a newer grant can
+// never race the still-in-flight update.
+func finishGrantWrite(w *rootWrite, path string, g grant, err error) {
 	if err == nil {
 		aclMu.Lock()
-		if prev, ok := grantedAce[key]; ok && prev.persistent {
+		if prev, ok := grantedAce[g.key()]; ok && prev.persistent {
 			// The entry may have been upgraded while the crawl ran.
 			g.persistent = true
 		}
-		grantedAce[key] = g
+		grantedAce[g.key()] = g
 		if g.persistent {
 			savePersistentGrants()
 		}
 		aclMu.Unlock()
 	}
-
 	w.err = err
 	aclMu.Lock()
 	delete(rootWrites, path)
 	aclMu.Unlock()
 	close(w.done)
-	return err
 }
 
 // waitRootWrite waits for an in-flight DACL write on the same root,
