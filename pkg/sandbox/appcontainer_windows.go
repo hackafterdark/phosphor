@@ -151,41 +151,68 @@ func containerSidFor(workspace string) (*windows.SID, error) {
 // launched binary"s own directory per launch.
 //
 // Grants are additive and shared across launches (the memoized
-// grantAccess makes repeated launches free); CleanupContainerGrants
-// revokes them on app shutdown so host DACLs return to their
-// pre-launch state.
+// grantAccess makes repeated launches free); ephemeral grants are
+// revoked on app shutdown by CleanupContainerGrants, while cache
+// roots (toolchain caches, temp) are granted persistently so their
+// subtree crawls are reused by the next session.
 func prepareConfinedRoots(sid *windows.SID, spec Spec) error {
-	if err := grantRoot(spec.WorkspaceRoot, sid, accessFor(false)); err != nil {
-		return err
+	type rootGrant struct {
+		path       string
+		mask       windows.ACCESS_MASK
+		persistent bool
 	}
+	roots := []rootGrant{{path: spec.WorkspaceRoot, mask: accessFor(false)}}
 	for _, root := range spec.ReadOnlyRoots {
-		if err := grantRoot(root, sid, accessFor(true)); err != nil {
-			return err
-		}
+		roots = append(roots, rootGrant{path: root, mask: accessFor(true), persistent: true})
 	}
 	for _, root := range spec.ReadWriteRoots {
-		if err := grantRoot(root, sid, accessFor(false)); err != nil {
-			return err
-		}
+		roots = append(roots, rootGrant{path: root, mask: accessFor(false), persistent: true})
 	}
-	// DenyRead needs no code here: everything outside the granted
-	// roots is default-denied for the container identity.
-	return nil
+
+	// The kernel-side crawls are independent per root and run
+	// without the ACL mutex, so a bounded fan-out overlaps them.
+	// The crawl is kernel-internal and CPU-bound, so more than a
+	// few in parallel buys nothing.
+	var mu sync.Mutex
+	var errs []error
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 4)
+	for _, r := range roots {
+		wg.Add(1)
+		go func(r rootGrant) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			grant := grantAccess
+			if r.persistent {
+				grant = grantAccessPersistent
+			}
+			if err := grantRoot(r.path, sid, r.mask, grant); err != nil {
+				mu.Lock()
+				errs = append(errs, fmt.Errorf("%s: %w", r.path, err))
+				mu.Unlock()
+			}
+		}(r)
+	}
+	wg.Wait()
+	return errors.Join(errs...)
 }
 
-// grantRoot applies grantAccess, tolerating roots the toolchain has
-// not created yet and roots we do not own: a read-only root that
-// refuses the ACE (POSIX-style paths like /dev, foreign-volume
-// directories) stays default-denied for the container, which is the
-// safe direction — the kernel boundary still holds everywhere else.
-func grantRoot(path string, sid *windows.SID, accessMask windows.ACCESS_MASK) error {
+// grantRoot applies the given grant function, tolerating roots the
+// toolchain has not created yet and roots we do not own: a read-only
+// root that refuses the ACE (POSIX-style paths like /dev,
+// foreign-volume directories) stays default-denied for the container,
+// which is the safe direction — the kernel boundary still holds
+// everywhere else.
+func grantRoot(path string, sid *windows.SID, accessMask windows.ACCESS_MASK,
+	grantFn func(string, *windows.SID, windows.ACCESS_MASK) error) error {
 	if _, err := os.Stat(path); err != nil {
 		if os.IsNotExist(err) {
 			return nil
 		}
 		return err
 	}
-	err := grantAccess(path, sid, accessMask)
+	err := grantFn(path, sid, accessMask)
 	if err != nil && errors.Is(err, windows.ERROR_ACCESS_DENIED) {
 		return nil
 	}

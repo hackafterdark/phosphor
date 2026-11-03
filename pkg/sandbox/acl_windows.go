@@ -4,9 +4,11 @@ package sandbox
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime"
 	"sync"
 	"time"
@@ -45,10 +47,15 @@ const (
 // grant is the material needed to undo a grantAccess: the path, the
 // trustee SID in string form, and the access mask. The SID is stored
 // as a string and reparsed during teardown.
+//
+// persistent grants (toolchain caches) are not revoked at teardown:
+// their subtree crawl is recorded in a per-container memo file and
+// reused by the next session.
 type grant struct {
-	path string
-	sid  string
-	mask windows.ACCESS_MASK
+	path       string
+	sid        string
+	mask       windows.ACCESS_MASK
+	persistent bool
 }
 
 // key returns the memoization key for the grant.
@@ -56,18 +63,21 @@ func (g grant) key() string {
 	return g.path + "\x00" + g.sid + "\x00" + fmt.Sprint(uint32(g.mask))
 }
 
-// grantAccess adds an ACE allowing sid accessMask on path. Existing
-// ACEs are preserved (SetEntriesInAclW merges). Objects with a NULL
-// DACL (allow-all) keep their semantics; the container grant is added
-// on top.
+// grantAccess adds an ephemeral ACE allowing sid accessMask on path:
+// CleanupContainerGrants revokes it at shutdown. Cache-style roots
+// that churn rarely (GOCACHE/GOMODCACHE) should use
+// grantAccessPersistent instead, so the kernel-side subtree crawl is
+// reused across sessions.
 //
-// The Get→merge→Set sequence is a read-modify-write on the object's
-// DACL, so it runs under aclMu: concurrent launches that share a root
-// (e.g. a toolchain cache) must not overwrite each other's ACE.
-// Successful grants are memoized so the expensive tree crawl does not
-// repeat on every launch. The crawl itself is bounded by
-// grantDeadline: a workspace whose tree is too slow to crawl in time
-// fails the launch instead of parking the caller on the ACL mutex.
+// The Get→merge half is a read-modify-write on the object's DACL and
+// runs under aclMu: concurrent launches that share a root (e.g. a
+// toolchain cache) must not overwrite each other's ACE. The kernel
+// subtree crawl itself runs without the mutex, so independent roots
+// crawl in parallel; two crawls racing on the same path re-apply the
+// same merged DACL, which is idempotent. Successful grants are
+// memoized so the crawl does not repeat on every launch. The crawl is
+// bounded by grantDeadline: a workspace whose tree is too slow to
+// crawl in time fails the launch instead of stalling forever.
 var (
 	aclMu      sync.Mutex
 	grantedAce = map[string]grant{}
@@ -92,15 +102,64 @@ func setDaclBounded(ctx context.Context, path string, acl *windows.ACL) error {
 	}
 }
 
+// grantAccessPersistent adds an ACE that survives app shutdown: the
+// grant is recorded in a per-container memo file and deliberately not
+// revoked by CleanupContainerGrants, so the next session skips the
+// kernel-side subtree crawl entirely. The persisted state is only a
+// cache: a memo hit is confirmed by reading the root's DACL, and a
+// missing ACE (third-party reset, manual cleanup) re-applies the
+// grant with the usual kernel crawl.
+func grantAccessPersistent(path string, sid *windows.SID, accessMask windows.ACCESS_MASK) error {
+	return grantAccessImpl(path, sid, accessMask, true)
+}
+
 func grantAccess(path string, sid *windows.SID, accessMask windows.ACCESS_MASK) error {
-	g := grant{path: path, sid: sid.String(), mask: accessMask}
+	return grantAccessImpl(path, sid, accessMask, false)
+}
+
+func grantAccessImpl(path string, sid *windows.SID, accessMask windows.ACCESS_MASK, persistent bool) error {
+	g := grant{path: path, sid: sid.String(), mask: accessMask, persistent: persistent}
 	key := g.key()
+
 	aclMu.Lock()
-	defer aclMu.Unlock()
 	if _, ok := grantedAce[key]; ok {
+		aclMu.Unlock()
+		return nil
+	}
+	if persistent && persistedGrantOK(g) {
+		grantedAce[key] = g
+		aclMu.Unlock()
 		return nil
 	}
 
+	merged, err := mergeGrantAce(path, sid, accessMask)
+	if err != nil {
+		aclMu.Unlock()
+		return err
+	}
+	aclMu.Unlock()
+
+	// The crawl runs unlocked: independent roots propagate in
+	// parallel, and the caller is still bounded by grantDeadline.
+	ctx, cancel := context.WithTimeout(context.Background(), grantDeadline)
+	defer cancel()
+	if err := setDaclBounded(ctx, path, merged); err != nil {
+		return err
+	}
+
+	aclMu.Lock()
+	grantedAce[key] = g
+	if persistent {
+		savePersistentGrants()
+	}
+	aclMu.Unlock()
+	return nil
+}
+
+// mergeGrantAce builds the DACL for path with sid's accessMask added
+// on top of the existing ACEs (SetEntriesInAclW merges; objects with
+// a NULL DACL keep their semantics).
+func mergeGrantAce(path string, sid *windows.SID, accessMask windows.ACCESS_MASK) (*windows.ACL, error) {
 	trustee := windows.TRUSTEE{
 		TrusteeForm:  windows.TRUSTEE_IS_SID,
 		TrusteeType:  windows.TRUSTEE_IS_WELL_KNOWN_GROUP,
@@ -115,11 +174,11 @@ func grantAccess(path string, sid *windows.SID, accessMask windows.ACCESS_MASK) 
 
 	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
 	if err != nil {
-		return fmt.Errorf("get security info %q: %w", path, err)
+		return nil, fmt.Errorf("get security info %q: %w", path, err)
 	}
 	dacl, _, err := sd.DACL()
 	if err != nil {
-		return fmt.Errorf("read DACL %q: %w", path, err)
+		return nil, fmt.Errorf("read DACL %q: %w", path, err)
 	}
 
 	newAcl, err := windows.ACLFromEntries([]windows.EXPLICIT_ACCESS{ea}, dacl)
@@ -127,22 +186,142 @@ func grantAccess(path string, sid *windows.SID, accessMask windows.ACCESS_MASK) 
 	// once we stop referencing sd. Pin it across the ACL merge.
 	runtime.KeepAlive(sd)
 	if err != nil {
-		return fmt.Errorf("merge ACE %q: %w", path, err)
+		return nil, fmt.Errorf("merge ACE %q: %w", path, err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), grantDeadline)
-	defer cancel()
-	if err := setDaclBounded(ctx, path, newAcl); err != nil {
-		return err
-	}
-	grantedAce[key] = g
-	return nil
+	return newAcl, nil
 }
 
-// CleanupContainerGrants revokes every container-SID ACE this process
-// granted, restoring host DACLs (workspace root, toolchain caches,
+// persistedGrant is one entry of the on-disk grant memo. The trustee
+// SID is the memo file's name, so it is not repeated per entry.
+type persistedGrant struct {
+	Path string              `json:"path"`
+	Mask windows.ACCESS_MASK `json:"mask"`
+}
+
+// persistentGrantFile returns the per-container memo file listing the
+// grants that survive app shutdown. It lives outside the workspace
+// (the crawled cache roots are host-wide) under the user cache
+// directory, keyed by the container SID.
+func persistentGrantFile(sid string) string {
+	cache := os.Getenv("XDG_CACHE_HOME")
+	if cache == "" {
+		if dir, err := os.UserCacheDir(); err == nil {
+			cache = dir
+		}
+	}
+	if cache == "" {
+		return ""
+	}
+	return filepath.Join(cache, "phosphor", "sandbox-grants", sid+".json")
+}
+
+// persistedGrantOK reports whether the memo file records g and the
+// root object still carries the trustee's ACE. The file is only a
+// cache hint; the DACL check is the source of truth, so a third-party
+// ACL reset forces the full crawl again. Reading the root descriptor
+// is cheap — the expensive part is the subtree propagation, which the
+// kernel already completed when the ACE was applied.
+func persistedGrantOK(g grant) bool {
+	file := persistentGrantFile(g.sid)
+	if file == "" {
+		return false
+	}
+	data, err := os.ReadFile(file)
+	if err != nil {
+		return false
+	}
+	var entries []persistedGrant
+	if err := json.Unmarshal(data, &entries); err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if e.Path == g.path && e.Mask == g.mask {
+			return sidHasAccess(g.path, g.sid)
+		}
+	}
+	return false
+}
+
+// savePersistentGrants (re)writes the memo files for the persistent
+// grants known to this process. Must be called with aclMu held; I/O
+// failures degrade to the next session re-crawling, so they are
+// ignored.
+func savePersistentGrants() {
+	bySid := map[string][]persistedGrant{}
+	for _, g := range grantedAce {
+		if !g.persistent {
+			continue
+		}
+		bySid[g.sid] = append(bySid[g.sid], persistedGrant{Path: g.path, Mask: g.mask})
+	}
+	for sid, entries := range bySid {
+		file := persistentGrantFile(sid)
+		if file == "" {
+			continue
+		}
+		data, err := json.Marshal(entries)
+		if err != nil {
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
+			continue
+		}
+		_ = os.WriteFile(file, data, 0o644)
+	}
+}
+
+// sidHasAccess reports whether path's DACL carries an allow ACE for
+// the trustee SID. The check reads only the root descriptor; it is
+// the cheap source-of-truth probe for memo reuse.
+func sidHasAccess(path, sid string) bool {
+	sidPtr, err := windows.UTF16PtrFromString(sid)
+	if err != nil {
+		return false
+	}
+	var parsed *windows.SID
+	if err := windows.ConvertStringSidToSid(sidPtr, &parsed); err != nil {
+		return false
+	}
+	// ConvertStringSidToSidW allocates with LocalAlloc; the SID must
+	// be returned with LocalFree, not FreeSid.
+	defer windows.LocalFree(windows.Handle(unsafe.Pointer(parsed)))
+
+	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
+	if err != nil {
+		return false
+	}
+	dacl, _, err := sd.DACL()
+	if err != nil || dacl == nil {
+		return false
+	}
+	for i := uint32(0); i < uint32(dacl.AceCount); i++ {
+		var ace *windows.ACCESS_ALLOWED_ACE
+		if err := windows.GetAce(dacl, i, &ace); err != nil {
+			continue
+		}
+		if ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE {
+			continue
+		}
+		aceSid := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
+		if windows.EqualSid(aceSid, parsed) {
+			return true
+		}
+	}
+	return false
+}
+
+// CleanupContainerGrants revokes every ephemeral container-SID ACE
+// this process granted, restoring host DACLs (workspace root,
 // launched-binary directories) to their pre-launch state. It is wired
 // into the app shutdown path so grants do not linger on host
 // directories after Phosphor exits.
+//
+// Persistent grants (toolchain caches, see grantAccessPersistent) are
+// intentionally left behind: revoking them would force the next
+// session to re-crawl the same subtrees. The lingering ACE is inert —
+// only this workspace's container can hold that SID — and the memo
+// file records it so the next session skips the crawl after verifying
+// the root ACE is still present.
 //
 // The AppContainer profile itself stays registered: it is inert
 // without ACEs, costs nothing, and recreating it is cheap.
@@ -188,6 +367,11 @@ func CleanupContainerGrants(ctx context.Context) error {
 
 	var errs []error
 	for _, g := range grantedAce {
+		// Persistent grants are reused by the next session; leave
+		// the ACE, the memo entry, and the memo file untouched.
+		if g.persistent {
+			continue
+		}
 		// Once the caller's deadline passes, stop revoking: each
 		// remaining ACE keeps its memo entry and its grant, which is
 		// safe (the container is gone) and re-doable next launch.
