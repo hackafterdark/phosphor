@@ -72,6 +72,11 @@ func Setup(logFile string, debug bool, ws ...io.Writer) {
 // wrapper that provides sensible defaults.
 func SetupWithConfig(logFile string, opts *LogConfig, debug bool, ws ...io.Writer) {
 	initOnce.Do(func() {
+		// Mirror stderr into the panic log before anything can crash:
+		// panic and runtime-fatal output goes straight to stderr and is
+		// otherwise lost with the terminal scrollback.
+		hookPanicLog(logFile)
+
 		// If logging is disabled, use discard handler.
 		if opts == nil || !opts.Enabled {
 			slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
