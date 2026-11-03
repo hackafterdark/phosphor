@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -73,8 +74,19 @@ func containerNameFor(workspace string) string {
 var procCreateAppContainerProfile = userenv.NewProc("CreateAppContainerProfile")
 
 // containerSidFor returns the AppContainer SID for a workspace,
-// creating the profile on first use and deriving it once it exists.
-// The profile persists per-user (same posture as the MXC backends).
+// creating the profile on first use. The profile persists per-user
+// (same posture as the MXC backends).
+//
+// When the profile is already registered the SID is re-derived by
+// deleting and re-registering the profile: the kernel derives the
+// profile SID deterministically from (user, name), so recreation
+// yields the identical identity. DeriveAppContainerSidFromAppContainerName
+// must NOT be used for registered profiles: it returns the name-only
+// SID (without the user context), which is not the registered profile
+// SID, and the kernel rejects launches carrying it
+// (ERROR_INVALID_PARAMETER). The registry entry is inert between the
+// delete and the recreate — running children hold their token SID,
+// and directory ACEs reference the SID itself, not the registration.
 func containerSidFor(workspace string) (*windows.SID, error) {
 	name := containerNameFor(workspace)
 	namePtr, err := windows.UTF16PtrFromString(name)
@@ -101,9 +113,25 @@ func containerSidFor(workspace string) (*windows.SID, error) {
 	if int32(hr) == 0 && sid != nil {
 		return sid, nil
 	}
-	// The profile already exists (or the name is claimed): derive the
-	// SID for the existing identity.
-	return deriveContainerSid(name)
+	// The profile already exists (or the name is claimed): delete and
+	// re-register to obtain the registered profile SID.
+	_, _, _ = procDeleteAppContainerProfile.Call(uintptr(unsafe.Pointer(namePtr)))
+	sid = nil
+	hr, _, _ = procCreateAppContainerProfile.Call(
+		uintptr(unsafe.Pointer(namePtr)),
+		uintptr(unsafe.Pointer(display)),
+		uintptr(unsafe.Pointer(desc)),
+		0,
+		0,
+		uintptr(unsafe.Pointer(&sid)),
+	)
+	if int32(hr) == 0 && sid != nil {
+		return sid, nil
+	}
+	if int32(hr) == 0 {
+		return nil, fmt.Errorf("container sid for %q: profile registered but no SID returned", name)
+	}
+	return nil, fmt.Errorf("container sid for %q: %w", name, syscall.Errno(hr))
 }
 
 // prepareConfinedRoots grants the container SID the access the spec
@@ -563,6 +591,7 @@ func SpawnConfined(argv []string, env []string, dir string, spec Spec, stdin io.
 	// launcher's copy after the job assignment keeps one alive.
 	releaseJob, cerr := attachContainmentJob(pi.Process, true)
 	if cerr != nil {
+		_ = proc.Release()
 		_ = windows.TerminateProcess(pi.Process, 1)
 		windows.CloseHandle(pi.Process)
 		return nil, cerr
@@ -570,6 +599,7 @@ func SpawnConfined(argv []string, env []string, dir string, spec Spec, stdin io.
 	// Containment is in place: let the child run.
 	if _, err := windows.ResumeThread(pi.Thread); err != nil {
 		releaseJob()
+		_ = proc.Release()
 		_ = windows.TerminateProcess(pi.Process, 1)
 		windows.CloseHandle(pi.Process)
 		windows.CloseHandle(pi.Thread)
@@ -579,5 +609,11 @@ func SpawnConfined(argv []string, env []string, dir string, spec Spec, stdin io.
 	return &ConfinedProcess{proc: proc, release: func() {
 		releaseJob()
 		windows.CloseHandle(pi.Process)
+		// The os.Process from FindProcess holds its own handle,
+		// closed by Wait or by GC cleanup. The Kill path reaches
+		// this release without a Wait, so release the process
+		// explicitly; on the Wait path the process is already
+		// released and the second call is a harmless EINVAL.
+		_ = proc.Release()
 	}, copiers: &stdio.copiers}, nil
 }
