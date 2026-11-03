@@ -61,7 +61,7 @@ func processGroupExecHandler(killTimeout time.Duration, sbx *sandboxPolicy) inte
 			Stderr: hc.Stderr,
 		}
 		isolateProcess(&cmd)
-		child, refused := confineSpawn(&cmd, sbx, hc.Stderr)
+		child, refused := confineSpawn(ctx, &cmd, sbx, hc.Stderr)
 		if refused != nil {
 			return refused
 		}

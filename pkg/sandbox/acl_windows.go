@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -129,6 +130,8 @@ func grantAccessImpl(path string, sid *windows.SID, accessMask windows.ACCESS_MA
 	if persistent && persistedGrantOK(g) {
 		grantedAce[key] = g
 		aclMu.Unlock()
+		slog.Debug("Reused sandbox container ACE grant from memo",
+			"path", path, "persistent", true)
 		return nil
 	}
 
@@ -141,11 +144,22 @@ func grantAccessImpl(path string, sid *windows.SID, accessMask windows.ACCESS_MA
 
 	// The crawl runs unlocked: independent roots propagate in
 	// parallel, and the caller is still bounded by grantDeadline.
+	// Crawls are long and invisible when they succeed, so the
+	// duration is always logged; it is the primary signal for
+	// slow-warmup complaints.
 	ctx, cancel := context.WithTimeout(context.Background(), grantDeadline)
 	defer cancel()
+	started := time.Now()
 	if err := setDaclBounded(ctx, path, merged); err != nil {
+		// The failure itself is reported by the caller (launch or
+		// pre-warm), which decides whether a refused root is
+		// tolerated or fatal; only the timing is recorded here.
+		slog.Info("Sandbox container ACE crawl failed",
+			"path", path, "dur", time.Since(started), "error", err)
 		return err
 	}
+	slog.Info("Applied sandbox container ACE grant",
+		"path", path, "dur", time.Since(started), "persistent", persistent)
 
 	aclMu.Lock()
 	grantedAce[key] = g

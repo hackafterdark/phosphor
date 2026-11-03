@@ -4,6 +4,7 @@ package sandbox
 
 import (
 	"log/slog"
+	"time"
 
 	"golang.org/x/sys/windows"
 )
@@ -40,12 +41,18 @@ func PreWarm(mode, workspace string, limits ResourceLimits) bool {
 // preWarmGrants derives the workspace's container SID and applies the
 // spec's root grants. The grants memoize, so a confined launch racing
 // the pre-warm either waits on the ACL mutex for the crawl it would
-// have paid itself, or finds the grant already applied.
+// have paid itself, or finds the grant already applied. The total
+// duration is logged so the pre-warm's overlap with startup work is
+// measurable.
 func preWarmGrants(workspace string, spec Spec) error {
+	started := time.Now()
 	sid, err := containerSidFor(workspace)
 	if err != nil {
 		return err
 	}
 	defer windows.FreeSid(sid)
-	return prepareConfinedRoots(sid, spec)
+	err = prepareConfinedRoots(sid, spec)
+	slog.Info("Sandbox pre-warm finished",
+		"workspace", workspace, "dur", time.Since(started), "err", err)
+	return err
 }
