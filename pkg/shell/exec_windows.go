@@ -120,6 +120,13 @@ func exitStatusFromError(ctx context.Context, stderr io.Writer, err error) error
 		fmt.Fprintf(stderr, "%v\n", err)
 		return interp.ExitStatus(127)
 	default:
+		// A canceled context that killed the child before or during
+		// Wait surfaces as a bare syscall error (EINVAL once the
+		// handle is gone); report the cancellation, matching the
+		// *exec.ExitError branch above.
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		return err
 	}
 }

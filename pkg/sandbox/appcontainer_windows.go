@@ -165,8 +165,22 @@ func prepareConfinedRoots(sid *windows.SID, spec Spec) error {
 	for _, root := range spec.ReadOnlyRoots {
 		roots = append(roots, rootGrant{path: root, mask: accessFor(true), persistent: true})
 	}
+	// Persistent ACEs survive shutdown, so only the default cache and
+	// temp roots — the stable toolchain locations — keep their grants
+	// across sessions. Extra trusted roots (pathguard additions) are
+	// config-driven and can be removed again: granting them
+	// persistently would leave the container SID with write access to
+	// a directory the current spec no longer trusts.
+	defaultRW := DefaultReadWriteDirs()
 	for _, root := range spec.ReadWriteRoots {
-		roots = append(roots, rootGrant{path: root, mask: accessFor(false), persistent: true})
+		persistent := false
+		for _, d := range defaultRW {
+			if strings.EqualFold(root, d) {
+				persistent = true
+				break
+			}
+		}
+		roots = append(roots, rootGrant{path: root, mask: accessFor(false), persistent: persistent})
 	}
 
 	// The kernel-side crawls are independent per root and run

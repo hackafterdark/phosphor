@@ -243,3 +243,68 @@ func TestGrantAccessConcurrentRoots(t *testing.T) {
 	require.True(t, hasContainerAce(t, dirB, sid))
 	require.NoError(t, CleanupContainerGrants(context.Background()))
 }
+
+// TestGrantAccessReappliesAfterExternalReset verifies the in-memory
+// memo entry is not the source of truth: when a third party removes
+// the ACE while the memo stands, the DACL probe must force a re-grant
+// instead of short-circuiting and denying the child until restart.
+func TestGrantAccessReappliesAfterExternalReset(t *testing.T) {
+	dir := t.TempDir()
+	sid, err := deriveContainerSid("phosphor.sandbox.stalememo")
+	require.NoError(t, err)
+	defer windows.FreeSid(sid)
+
+	g := grant{path: dir, sid: sid.String(), mask: accessFor(false)}
+	require.NoError(t, grantAccess(dir, sid, accessFor(false)))
+	require.True(t, hasContainerAce(t, dir, sid))
+
+	// A third party removes the ACE; the memo entry stays behind.
+	// The existing revocation tests delete the memo entry first, so
+	// this stale-memo path is otherwise uncovered.
+	require.NoError(t, revokeAccess(context.Background(), g))
+	require.False(t, hasContainerAce(t, dir, sid))
+
+	// The stale memo must not short-circuit the grant: the DACL
+	// probe sees the missing ACE and re-applies it.
+	require.NoError(t, grantAccess(dir, sid, accessFor(false)))
+	require.True(t, hasContainerAce(t, dir, sid),
+		"stale memo entry must fall through to re-apply")
+	require.NoError(t, CleanupContainerGrants(context.Background()))
+}
+
+// TestGrantAccessConcurrentSameRootTwoSids verifies the serialization
+// covers the case the mutex cannot: two container SIDs granting the
+// same root (e.g. the shared temp dir across workspaces) must both
+// keep their ACEs, never dropping one via an interleaved
+// read-modify-write. Run with -race.
+func TestGrantAccessConcurrentSameRootTwoSids(t *testing.T) {
+	dir := t.TempDir()
+	sidA, err := deriveContainerSid("phosphor.sandbox.samewsid1")
+	require.NoError(t, err)
+	defer windows.FreeSid(sidA)
+	sidB, err := deriveContainerSid("phosphor.sandbox.samewsid2")
+	require.NoError(t, err)
+	defer windows.FreeSid(sidB)
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 2)
+	for _, sid := range []*windows.SID{sidA, sidB} {
+		wg.Add(1)
+		go func(sid *windows.SID) {
+			defer wg.Done()
+			if err := grantAccess(dir, sid, accessFor(false)); err != nil {
+				errs <- err
+			}
+		}(sid)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		require.NoError(t, err)
+	}
+	require.True(t, hasContainerAce(t, dir, sidA),
+		"first container ACE must survive the second grant")
+	require.True(t, hasContainerAce(t, dir, sidB),
+		"second container ACE must be applied")
+	require.NoError(t, CleanupContainerGrants(context.Background()))
+}

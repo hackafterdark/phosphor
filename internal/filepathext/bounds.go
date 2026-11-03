@@ -119,7 +119,10 @@ func resolveSymlinks(absPath string) string {
 			for i := len(missing) - 1; i >= 0; i-- {
 				result = filepath.Join(result, missing[i])
 			}
-			return result
+			// The re-appended components are themselves unresolved
+			// reparse points (e.g. a junction EvalSymlinks refused to
+			// follow): resolve them so containment cannot be bypassed.
+			return followReparseTargets(result)
 		}
 		parent := filepath.Dir(root)
 		if parent == root {

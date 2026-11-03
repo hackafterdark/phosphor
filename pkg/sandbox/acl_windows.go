@@ -74,15 +74,33 @@ func (g grant) key() string {
 // runs under aclMu: concurrent launches that share a root (e.g. a
 // toolchain cache) must not overwrite each other's ACE. The kernel
 // subtree crawl itself runs without the mutex, so independent roots
-// crawl in parallel; two crawls racing on the same path re-apply the
-// same merged DACL, which is idempotent. Successful grants are
-// memoized so the crawl does not repeat on every launch. The crawl is
-// bounded by grantDeadline: a workspace whose tree is too slow to
-// crawl in time fails the launch instead of stalling forever.
+// crawl in parallel; two grants racing on the same path serialize
+// their read-modify-write through rootWrites, and the later caller
+// waits for the in-flight write's result rather than reading a DACL
+// the earlier write has not updated yet. Successful grants are
+// memoized so the crawl does not repeat on every launch; a memo hit
+// is validated against the live DACL so an external reset re-applies
+// the grant instead of denying the child. The crawl is bounded by
+// grantDeadline: a workspace whose tree is too slow to crawl in time
+// fails the launch instead of stalling forever.
 var (
 	aclMu      sync.Mutex
 	grantedAce = map[string]grant{}
+	// rootWrites tracks the in-progress DACL read-modify-write per
+	// root path. Concurrent grants for the same root — e.g. two
+	// workspaces' containers on the shared temp dir — must not
+	// interleave their Get/merge/Set steps, or the later write drops
+	// the earlier SID's ACE while its memo entry stays behind. The
+	// later caller waits for the in-flight write's result instead.
+	rootWrites = map[string]*rootWrite{}
 )
+
+// rootWrite is one in-progress DACL write for a root. done is closed
+// when the write returns, with err holding its result.
+type rootWrite struct {
+	done chan struct{}
+	err  error
+}
 
 // setDaclBounded runs the blocking DACL write on its own goroutine and
 // waits no longer than ctx allows. If the deadline passes first, the
@@ -122,52 +140,107 @@ func grantAccessImpl(path string, sid *windows.SID, accessMask windows.ACCESS_MA
 	g := grant{path: path, sid: sid.String(), mask: accessMask, persistent: persistent}
 	key := g.key()
 
-	aclMu.Lock()
-	if _, ok := grantedAce[key]; ok {
+	var w *rootWrite
+	for {
+		aclMu.Lock()
+		if existing, ok := grantedAce[key]; ok {
+			// The workspace root can be granted both ephemeral and
+			// persistent with the same mask; the entry lifetime
+			// upgrades monotonically so teardown never skips a
+			// persistent grant based on memo-entry ordering.
+			if g.persistent && !existing.persistent {
+				existing.persistent = true
+				grantedAce[key] = existing
+				savePersistentGrants()
+			}
+			// A third party can reset the DACL while the memo entry
+			// stays behind; probe the live ACE and re-apply on a
+			// stale hit instead of denying the child until restart.
+			if sidHasAccess(path, g.sid, g.mask) {
+				aclMu.Unlock()
+				return nil
+			}
+			delete(grantedAce, key)
+		}
+		if persistent && persistedGrantOK(g) {
+			grantedAce[key] = g
+			aclMu.Unlock()
+			slog.Debug("Reused sandbox container ACE grant from memo",
+				"path", path, "persistent", true)
+			return nil
+		}
+		if rw, ok := rootWrites[path]; ok {
+			// A DACL write for this root is already in flight; wait
+			// for its result (bounded like our own crawl would be)
+			// and retry the memo path.
+			aclMu.Unlock()
+			ctx, cancel := context.WithTimeout(context.Background(), grantDeadline)
+			werr := waitRootWrite(ctx, rw)
+			cancel()
+			if werr != nil {
+				return werr
+			}
+			continue
+		}
+		w = &rootWrite{done: make(chan struct{})}
+		rootWrites[path] = w
 		aclMu.Unlock()
-		return nil
+		break
 	}
-	if persistent && persistedGrantOK(g) {
-		grantedAce[key] = g
-		aclMu.Unlock()
-		slog.Debug("Reused sandbox container ACE grant from memo",
-			"path", path, "persistent", true)
-		return nil
-	}
-
-	merged, err := mergeGrantAce(path, sid, accessMask)
-	if err != nil {
-		aclMu.Unlock()
-		return err
-	}
-	aclMu.Unlock()
 
 	// The crawl runs unlocked: independent roots propagate in
 	// parallel, and the caller is still bounded by grantDeadline.
 	// Crawls are long and invisible when they succeed, so the
 	// duration is always logged; it is the primary signal for
 	// slow-warmup complaints.
-	ctx, cancel := context.WithTimeout(context.Background(), grantDeadline)
-	defer cancel()
-	started := time.Now()
-	if err := setDaclBounded(ctx, path, merged); err != nil {
-		// The failure itself is reported by the caller (launch or
-		// pre-warm), which decides whether a refused root is
-		// tolerated or fatal; only the timing is recorded here.
-		slog.Info("Sandbox container ACE crawl failed",
-			"path", path, "dur", time.Since(started), "error", err)
-		return err
+	merged, err := mergeGrantAce(path, sid, accessMask)
+	if err == nil {
+		ctx, cancel := context.WithTimeout(context.Background(), grantDeadline)
+		defer cancel()
+		started := time.Now()
+		err = setDaclBounded(ctx, path, merged)
+		if err != nil {
+			// The failure itself is reported by the caller (launch or
+			// pre-warm), which decides whether a refused root is
+			// tolerated or fatal; only the timing is recorded here.
+			slog.Info("Sandbox container ACE crawl failed",
+				"path", path, "dur", time.Since(started), "error", err)
+		} else {
+			slog.Info("Applied sandbox container ACE grant",
+				"path", path, "dur", time.Since(started), "persistent", persistent)
+		}
 	}
-	slog.Info("Applied sandbox container ACE grant",
-		"path", path, "dur", time.Since(started), "persistent", persistent)
+	if err == nil {
+		aclMu.Lock()
+		if prev, ok := grantedAce[key]; ok && prev.persistent {
+			// The entry may have been upgraded while the crawl ran.
+			g.persistent = true
+		}
+		grantedAce[key] = g
+		if g.persistent {
+			savePersistentGrants()
+		}
+		aclMu.Unlock()
+	}
 
+	w.err = err
 	aclMu.Lock()
-	grantedAce[key] = g
-	if persistent {
-		savePersistentGrants()
-	}
+	delete(rootWrites, path)
 	aclMu.Unlock()
-	return nil
+	close(w.done)
+	return err
+}
+
+// waitRootWrite waits for an in-flight DACL write on the same root,
+// bounded by ctx. A failed write returns its error so the caller
+// fails closed the same way the writer did.
+func waitRootWrite(ctx context.Context, w *rootWrite) error {
+	select {
+	case <-w.done:
+		return w.err
+	case <-ctx.Done():
+		return fmt.Errorf("waiting for in-flight DACL write: %w", ctx.Err())
+	}
 }
 
 // mergeGrantAce builds the DACL for path with sid's accessMask added
@@ -250,7 +323,7 @@ func persistedGrantOK(g grant) bool {
 	}
 	for _, e := range entries {
 		if e.Path == g.path && e.Mask == g.mask {
-			return sidHasAccess(g.path, g.sid)
+			return sidHasAccess(g.path, g.sid, g.mask)
 		}
 	}
 	return false
@@ -285,9 +358,12 @@ func savePersistentGrants() {
 }
 
 // sidHasAccess reports whether path's DACL carries an allow ACE for
-// the trustee SID. The check reads only the root descriptor; it is
-// the cheap source-of-truth probe for memo reuse.
-func sidHasAccess(path, sid string) bool {
+// the trustee SID that covers accessMask. The check reads only the
+// root descriptor; it is the cheap source-of-truth probe for memo
+// reuse. The stored ACE may hold either the generic or the mapped
+// file-specific spelling of the requested rights, so both are
+// compared after mapping generic rights to specific rights.
+func sidHasAccess(path, sid string, accessMask windows.ACCESS_MASK) bool {
 	sidPtr, err := windows.UTF16PtrFromString(sid)
 	if err != nil {
 		return false
@@ -317,11 +393,44 @@ func sidHasAccess(path, sid string) bool {
 			continue
 		}
 		aceSid := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
-		if windows.EqualSid(aceSid, parsed) {
+		if windows.EqualSid(aceSid, parsed) &&
+			accessCovers(windows.ACCESS_MASK(ace.Mask), accessMask) {
 			return true
 		}
 	}
 	return false
+}
+
+// genericToSpecific maps each GENERIC_* right in mask to the
+// file-specific rights it stands for at access-check time (the
+// FILE_GENERIC_* macros of the Windows headers). ACEs written by
+// SetEntriesInAcl keep the generic bits, but a third-party tool may
+// have written the expanded spelling instead; both spellings are
+// equivalent for the kernel's access check.
+func genericToSpecific(mask windows.ACCESS_MASK) windows.ACCESS_MASK {
+	mapped := mask
+	if mask&windows.GENERIC_READ != 0 {
+		mapped |= 0x00120089 // FILE_GENERIC_READ
+	}
+	if mask&windows.GENERIC_WRITE != 0 {
+		mapped |= 0x00120116 // FILE_GENERIC_WRITE
+	}
+	if mask&windows.GENERIC_EXECUTE != 0 {
+		mapped |= 0x001200A9 // FILE_GENERIC_EXECUTE
+	}
+	if mask&windows.GENERIC_ALL != 0 {
+		mapped |= 0x001F01FF // FILE_ALL_ACCESS
+	}
+	return mapped
+}
+
+// accessCovers reports whether an ACE mask grants at least the
+// requested access, after mapping generic rights to specific rights
+// so either spelling of the grant satisfies the check.
+func accessCovers(aceMask, requested windows.ACCESS_MASK) bool {
+	need := genericToSpecific(requested)
+	have := genericToSpecific(aceMask)
+	return have&need == need
 }
 
 // CleanupContainerGrants revokes every ephemeral container-SID ACE

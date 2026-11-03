@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"testing"
 	"time"
 
 	"github.com/charmbracelet/x/term"
@@ -92,8 +93,14 @@ func SetupWithConfig(logFile string, opts *LogConfig, debug bool, ws ...io.Write
 	initOnce.Do(func() {
 		// Mirror stderr into the panic log before anything can crash:
 		// panic and runtime-fatal output goes straight to stderr and is
-		// otherwise lost with the terminal scrollback.
-		hookPanicLog(logFile)
+		// otherwise lost with the terminal scrollback. The mirror holds
+		// its file open for the process lifetime (SetCrashOutput cannot
+		// be closed), which would wedge t.TempDir cleanup on Windows in
+		// any test binary that reaches Setup; test binaries get their
+		// crash reporting from the test framework instead.
+		if !testing.Testing() {
+			hookPanicLog(logFile)
+		}
 
 		// If logging is disabled, use discard handler.
 		if opts == nil || !opts.Enabled {
@@ -196,6 +203,11 @@ func sourceGated(h slog.Handler, opts *LogConfig) slog.Handler {
 	gates := make(map[string]slog.Level, len(levels))
 	maxGate := slog.LevelDebug
 	for prefix, name := range levels {
+		if prefix == "" {
+			// An empty prefix matches every source file and would
+			// gate the whole log; drop it before it reaches the handler.
+			continue
+		}
 		lvl, ok := parseLevel(name)
 		if !ok {
 			continue
@@ -242,6 +254,7 @@ func (h *sourceGatedHandler) Enabled(ctx context.Context, level slog.Level) bool
 func (h *sourceGatedHandler) Handle(ctx context.Context, r slog.Record) error {
 	if r.Level < h.maxGate && r.PC != 0 {
 		if file, ok := recordSourceFile(r.PC); ok {
+			file = normalizeModuleCacheFile(file)
 			for prefix, lvl := range h.gates {
 				if strings.Contains(file, prefix) && r.Level < lvl {
 					return nil
@@ -250,6 +263,42 @@ func (h *sourceGatedHandler) Handle(ctx context.Context, r slog.Record) error {
 		}
 	}
 	return h.inner.Handle(ctx, r)
+}
+
+// moduleCacheNorm caches source-file normalization per call site; the
+// file behind a PC never changes, so one normalization per PC is enough.
+var moduleCacheNorm sync.Map // uintptr -> string
+
+// normalizeModuleCacheFile removes the module-cache version segment so
+// gate prefixes match third-party sources compiled from the module
+// cache: <modcache>/github.com/charmbracelet/x/powernap@v0.3.0/pkg/...
+// reads as <modcache>/github.com/charmbracelet/x/powernap/pkg/....
+// The result is memoized per PC in the handler, keyed here by file.
+func normalizeModuleCacheFile(file string) string {
+	if v, ok := moduleCacheNorm.Load(file); ok {
+		return v.(string)
+	}
+	normalized := stripModuleCacheVersion(file)
+	moduleCacheNorm.Store(file, normalized)
+	return normalized
+}
+
+func stripModuleCacheVersion(file string) string {
+	const marker = "/pkg/mod/"
+	i := strings.Index(file, marker)
+	if i < 0 {
+		return file
+	}
+	rest := file[i+len(marker):]
+	at := strings.IndexByte(rest, '@')
+	if at < 0 {
+		return file
+	}
+	slash := strings.IndexByte(rest[at:], '/')
+	if slash < 0 {
+		return file
+	}
+	return file[:i+len(marker)] + rest[:at] + rest[at+slash:]
 }
 
 func (h *sourceGatedHandler) WithAttrs(attrs []slog.Attr) slog.Handler {

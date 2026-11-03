@@ -13,6 +13,7 @@ import (
 	"github.com/hackafterdark/phosphor/pkg/sandbox"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 	"mvdan.cc/sh/v3/interp"
 )
@@ -127,15 +128,22 @@ func confineSpawn(ctx context.Context, cmd *exec.Cmd, sbx *sandboxPolicy, stderr
 		trace.WithAttributes(attribute.String("argv0", cmd.Path)))
 	defer span.End()
 	started := time.Now()
+	// The threshold check runs in the defer so the exec.Cmd fallback
+	// path is timed too: when SpawnConfinedChild fails, confineProcess
+	// carries the actual setup cost.
+	defer func() {
+		if d := time.Since(started); d > confineSpawnTimeout {
+			slog.Info("Confined launch setup was slow",
+				"argv0", cmd.Path, "dur", d, "mode", sbx.mode)
+		}
+	}()
 	child, err := sandbox.SpawnConfinedChild(cmd, sbx.mode, sbx.spec)
-	if d := time.Since(started); d > confineSpawnTimeout {
-		slog.Info("Confined launch setup was slow",
-			"argv0", cmd.Path, "dur", d, "mode", sbx.mode)
-	}
 	if err == nil && child != nil {
 		return child, nil
 	}
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		if strings.EqualFold(sbx.mode, "strict") {
 			fmt.Fprintf(stderr, "%s: %v\n", SandboxRefusalMarker, err)
 			return nil, interp.ExitStatus(126)

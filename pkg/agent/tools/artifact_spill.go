@@ -7,7 +7,10 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
+
+	"github.com/hackafterdark/phosphor/internal/filepathext"
 )
 
 // spillFullOutput writes the complete tool output that would otherwise be
@@ -22,7 +25,27 @@ func spillFullOutput(workspaceDir, sessionID, toolName, content string) (path st
 	if workspaceDir == "" || sessionID == "" {
 		return "", "", fmt.Errorf("missing workspace or session context")
 	}
+	// sessionID reaches the filesystem path directly, and sub-agent
+	// session IDs embed a model-supplied tool-call ID: it must stay a
+	// single path component or `../` can redirect writes outside the
+	// artifact directory.
+	if sessionID != filepath.Base(sessionID) || strings.ContainsAny(sessionID, `/\`) {
+		return "", "", fmt.Errorf("invalid session id %q for artifact spill", sessionID)
+	}
+	// codeql[go/path-injection] sessionID is validated above to a single
+	// path component and the result is containment-checked below.
 	dir := filepath.Join(workspaceDir, ".phosphor", "artifacts", sessionID)
+	// A committed symlink at `.phosphor` or `artifacts` would redirect
+	// the spill outside the workspace: check the resolved directory
+	// stays inside the workspace before creating or writing anything.
+	// Failures degrade to plain truncation via the caller.
+	absWorkspace, err := filepath.Abs(workspaceDir)
+	if err != nil {
+		return "", "", err
+	}
+	if !filepathext.IsInside(dir, absWorkspace) {
+		return "", "", fmt.Errorf("artifact dir %q resolves outside workspace %q", dir, absWorkspace)
+	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", "", err
 	}
