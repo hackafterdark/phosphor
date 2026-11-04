@@ -737,7 +737,7 @@ func (c *Config) setDefaults(workingDir, dataDir string) {
 		c.Options.Agent.ActiveProfile = "default"
 	}
 	if c.Options.Agent.MicroCompaction != nil {
-		if c.Options.Agent.MicroCompaction.Threshold <= 0 {
+		if c.Options.Agent.MicroCompaction.Threshold <= 0 || c.Options.Agent.MicroCompaction.Threshold > 1 {
 			c.Options.Agent.MicroCompaction.Threshold = 0.5
 		}
 		if c.Options.Agent.MicroCompaction.RetentionTurns <= 0 {

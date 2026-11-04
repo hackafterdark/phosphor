@@ -376,6 +376,15 @@ func TestCanonicalSearchCmd(t *testing.T) {
 		{"rm -rf src/", "rm -rf src/"},
 		{"rg", ""},
 		{"", ""},
+		// Multi-line commands run every line; the canonical form would
+		// splice them into one argument list, so they are rejected.
+		{"rg foo\nrm -rf src/", ""},
+		{"rg foo\r\nrg bar", ""},
+		// Whitespace inside quoted arguments is significant; collapsing it
+		// would deduplicate distinct queries, so quoted commands are
+		// rejected.
+		{`rg "a  b" src`, ""},
+		{"rg 'a  b' src", ""},
 	}
 	for _, c := range cases {
 		require.Equal(t, c.want, canonicalBashCmd(c.cmd), c.cmd)
@@ -434,4 +443,105 @@ func TestMicrocompact_BashIdenticalTestOutputElided(t *testing.T) {
 	out, _ := microcompactToolOutputs(msgs, true, 0.5, 1, 5000, 10000)
 	require.Equal(t, elidedSearchCmdMarker, firstResultContent(t, out[2]))
 	require.Equal(t, testOut, firstResultContent(t, out[5]))
+}
+
+func TestMicrocompact_FailedViewDoesNotSupersede(t *testing.T) {
+	msgs := []message.Message{
+		userMsg("t1"),
+		toolCallMsg("c1", "view", `{"file_path":"a.go"}`),
+		toolResultMsg("c1", "view", bigView("old")),
+		userMsg("t2"),
+		toolCallMsg("c2", "view", `{"file_path":"a.go"}`),
+		toolErrMsg("c2", "view", "permission denied"),
+		userMsg("t3"),
+		toolCallMsg("c3", "bash", `{"command":"true"}`),
+		toolResultMsg("c3", "bash", "ok"),
+	}
+
+	// The later view failed: the earlier successful view must stay
+	// verbatim, since the failed call carries no content.
+	out, freed := microcompactToolOutputs(msgs, true, 0.5, 1, 5000, 10000)
+	require.Zero(t, freed)
+	require.Equal(t, bigView("old"), firstResultContent(t, out[2]))
+}
+
+func TestMicrocompact_FailedSearchDuplicateKeepsEarlier(t *testing.T) {
+	big := bigSearch()
+	msgs := []message.Message{
+		userMsg("t1"),
+		toolCallMsg("c1", "bash", `{"command":"rg foo"}`),
+		toolResultMsg("c1", "bash", big),
+		userMsg("t2"),
+		toolCallMsg("c2", "bash", `{"command":"rg foo"}`),
+		toolErrMsg("c2", "bash", "rg: permission denied"),
+		userMsg("t3"),
+		toolCallMsg("c3", "bash", `{"command":"true"}`),
+		toolResultMsg("c3", "bash", "ok"),
+	}
+
+	// The later identical search failed: it must not supersede the
+	// earlier successful findings.
+	out, freed := microcompactToolOutputs(msgs, true, 0.5, 1, 5000, 10000)
+	require.Zero(t, freed)
+	require.Equal(t, big, firstResultContent(t, out[2]))
+}
+
+func TestMicrocompact_ViewPartialRangeNotSuperseded(t *testing.T) {
+	msgs := []message.Message{
+		userMsg("t1"),
+		toolCallMsg("c1", "view", `{"file_path":"a.go"}`),
+		toolResultMsg("c1", "view", bigView("whole")),
+		userMsg("t2"),
+		toolCallMsg("c2", "view", `{"file_path":"a.go","offset":500,"limit":20}`),
+		toolResultMsg("c2", "view", bigView("tail")),
+		userMsg("t3"),
+		toolCallMsg("c3", "bash", `{"command":"true"}`),
+		toolResultMsg("c3", "bash", "ok"),
+	}
+
+	// The later view reads a different range: it does not cover the
+	// earlier lines, so the earlier result stays verbatim.
+	out, freed := microcompactToolOutputs(msgs, true, 0.5, 1, 5000, 10000)
+	require.Zero(t, freed)
+	require.Equal(t, bigView("whole"), firstResultContent(t, out[2]))
+}
+
+func TestMicrocompact_ViewNodeDedup(t *testing.T) {
+	msgs := []message.Message{
+		userMsg("t1"),
+		toolCallMsg("c1", "view_node", `{"file_path":"a.go","node_name":"Foo"}`),
+		toolResultMsg("c1", "view_node", bigView("foo")),
+		userMsg("t2"),
+		toolCallMsg("c2", "view_node", `{"file_path":"a.go","node_name":"Bar"}`),
+		toolResultMsg("c2", "view_node", bigView("bar")),
+		userMsg("t3"),
+		toolCallMsg("c3", "view_node", `{"file_path":"a.go","node_name":"Foo"}`),
+		toolResultMsg("c3", "view_node", bigView("foo v2")),
+	}
+
+	// c1 is superseded by the identical c3 node view; c2's Bar node is
+	// untouched (different node name).
+	out, freed := microcompactToolOutputs(msgs, true, 0.5, 1, 5000, 10000)
+	require.NotZero(t, freed)
+	require.Equal(t, elidedViewMarker, firstResultContent(t, out[2]))
+	require.Equal(t, bigView("bar"), firstResultContent(t, out[5]))
+}
+
+func TestMicrocompact_PhosphorDocsQueryCollapse(t *testing.T) {
+	msgs := []message.Message{
+		userMsg("t1"),
+		toolCallMsg("c1", "phosphor_docs", `{"query":"compaction"}`),
+		toolResultMsg("c1", "phosphor_docs", bigSearch()),
+		userMsg("t2"),
+		toolCallMsg("c2", "bash", `{"command":"true"}`),
+		toolResultMsg("c2", "bash", "ok"),
+	}
+
+	// Query calls have no file_path: they skip the view dedup and reach
+	// the search collapse instead.
+	out, freed := microcompactToolOutputs(msgs, true, 0.5, 1, 5000, 10000)
+	require.NotZero(t, freed)
+	marker := firstResultContent(t, out[2])
+	require.True(t, strings.HasPrefix(marker, elidedSearchPrefix), marker)
+	require.Contains(t, marker, `"compaction"`)
 }

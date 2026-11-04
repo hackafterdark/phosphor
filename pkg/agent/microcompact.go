@@ -19,8 +19,10 @@ import (
 // truncated, never reordered — according to fixed rules:
 //
 //   - File view deduplication (latest-wins): when the same file path was
-//     viewed several times, only the most recent view survives intact;
-//     earlier ones become "[Elided: superseded by later file view]".
+//     viewed several times with the same parameters, only the most recent
+//     view survives intact; earlier ones become "[Elided: superseded by
+//     later file view]". Partial views (offset/limit) and view_node calls
+//     supersede only calls with the identical range or node.
 //   - Stale search collapse: verbose navigation output (grep, glob, ls,
 //     workspace/structural search, ...) is replaced by a one-line summary
 //     naming the query and, where countable, the match count.
@@ -31,10 +33,12 @@ import (
 // Evidence-bearing results — errors, diagnostics, edit/write results — are
 // never elided: they are the verification chain the model reasons over.
 //
-// The pass operates on an outbound copy of the transcript only. Stored
-// messages are never modified, and elisions are monotonic (a result once
-// elided stays elided), so the prompt prefix only ever shrinks and provider
-// prefix caches keep hitting.
+// The pass operates on an outbound copy of the transcript only; stored
+// messages are never modified. Elision is recomputed for every request, so
+// a previously elided result can return to its full form when the
+// activation gate no longer applies or a newer run of the same bash
+// command produces different output; the outbound prefix can therefore
+// change between requests, though it stays stable under normal use.
 
 const (
 	// elidedViewMarker replaces a cold-zone file view that a later view of
@@ -97,9 +101,6 @@ var searchCmdBinaries = map[string]bool{
 	"find":  true,
 	"ls":    true,
 	"tree":  true,
-	"wc":    true,
-	"sort":  true,
-	"uniq":  true,
 }
 
 // microcompactToolOutputs elides stale cold-zone tool outputs from msgs.
@@ -144,16 +145,21 @@ func microcompactToolOutputs(
 		for _, tc := range m.ToolCalls() {
 			switch {
 			case viewTools[tc.Name]:
-				if path := toolInputPath(tc.Input); path != "" {
-					latestViewByPath[path] = i
+				// Record only calls that produced a successful result: a
+				// failed or still-missing view must not supersede an
+				// earlier copy of the file.
+				if key := viewDedupKey(tc.Name, tc.Input); key != "" && toolResultFor(msgs, i, tc.ID) != "" {
+					latestViewByPath[key] = i
 				}
 			case tc.Name == agenttools.BashToolName:
 				if cmd := canonicalBashCmd(toolInputCommand(tc.Input)); cmd != "" {
-					latestSearchCmd[cmd] = i
-					// Only overwrite when this call actually produced a
-					// result, so the map ends up holding the newest
-					// identical-call output without clobbering it with "".
-					if trs := bashResultFor(msgs, i, tc.ID); trs != "" {
+					// Record only successful calls. A failed or
+					// missing result does not supersede an earlier
+					// successful identical call, and the map then
+					// holds the newest identical-call output
+					// without clobbering it with "".
+					if trs := toolResultFor(msgs, i, tc.ID); trs != "" {
+						latestSearchCmd[cmd] = i
 						latestBashOutput[cmd] = trs
 					}
 				}
@@ -187,24 +193,32 @@ func microcompactToolOutputs(
 				continue
 			}
 			content := tr.Content
-			switch {
-			case viewTools[tr.Name]:
-				path := toolInputPath(toolCallInputFor(msgs, i, tr.ToolCallID))
-				if path == "" {
+			if !viewTools[tr.Name] && !searchTools[tr.Name] && tr.Name != agenttools.BashToolName {
+				continue
+			}
+			input := toolCallInputFor(msgs, i, tr.ToolCallID)
+			if viewTools[tr.Name] {
+				if key := viewDedupKey(tr.Name, input); key != "" {
+					if latest, ok := latestViewByPath[key]; ok && latest > i {
+						tr.Content = elidedViewMarker
+						parts[j] = tr
+						changed = true
+						elided++
+						freed += approxTokenCount(content) - approxTokenCount(elidedViewMarker)
+					}
+					// View-tool results never take the search
+					// collapse path.
 					continue
 				}
-				if latest, ok := latestViewByPath[path]; ok && latest > i {
-					tr.Content = elidedViewMarker
-					parts[j] = tr
-					changed = true
-					elided++
-					freed += approxTokenCount(content) - approxTokenCount(elidedViewMarker)
-				}
+				// No stable file identity (e.g. a phosphor_docs
+				// query call): fall through to the search rules.
+			}
+			switch {
 			case searchTools[tr.Name]:
 				if len(content) <= defaultSearchCollapseChars {
 					continue
 				}
-				tr.Content = elidedSearchSummary(tr, toolCallInputFor(msgs, i, tr.ToolCallID))
+				tr.Content = elidedSearchSummary(tr, input)
 				parts[j] = tr
 				changed = true
 				elided++
@@ -216,7 +230,7 @@ func microcompactToolOutputs(
 				// requires byte-identical output, so dynamic or evidence-
 				// bearing results (cat of a growing log, go test) stay
 				// verbatim unless the repetition truly adds nothing.
-				cmd := canonicalBashCmd(toolInputCommand(toolCallInputFor(msgs, i, tr.ToolCallID)))
+				cmd := canonicalBashCmd(toolInputCommand(input))
 				if cmd == "" {
 					continue
 				}
@@ -265,16 +279,38 @@ func hotZoneStart(msgs []message.Message, retentionTurns int) int {
 	return len(msgs)
 }
 
-// toolInputPath extracts the file path argument from a view tool call's
-// JSON input.
-func toolInputPath(input string) string {
+// viewDedupKey returns the deduplication identity of a view tool call:
+// whole-file reads are keyed by file path, view_node calls by file path
+// plus node name, and partial views (explicit offset or limit) by path
+// plus the exact range. Only calls with the identical key supersede each
+// other — a later view of a different part of the file never hides the
+// only copy of different lines. Calls without a stable file identity
+// (e.g. a phosphor_docs query, which belongs to the search rules) return
+// "".
+func viewDedupKey(name, input string) string {
 	var args struct {
 		FilePath string `json:"file_path"`
+		NodeName string `json:"node_name"`
+		Offset   int64  `json:"offset"`
+		Limit    int64  `json:"limit"`
 	}
-	if err := json.Unmarshal([]byte(input), &args); err != nil {
+	if err := json.Unmarshal([]byte(input), &args); err != nil || args.FilePath == "" {
 		return ""
 	}
-	return args.FilePath
+	switch name {
+	case agenttools.ViewNodeToolName:
+		if args.NodeName == "" {
+			return ""
+		}
+		return args.FilePath + "\x00" + args.NodeName
+	case agenttools.ViewToolName:
+		if args.Offset == 0 && args.Limit == 0 {
+			return args.FilePath
+		}
+		return fmt.Sprintf("%s\x00%d\x00%d", args.FilePath, args.Offset, args.Limit)
+	default:
+		return args.FilePath
+	}
 }
 
 // toolInputQuery extracts the query argument from a search tool call's JSON
@@ -346,9 +382,18 @@ func toolInputCommand(input string) string {
 // operators (`;` in `...`) but are harmless as arguments. Only operators
 // standing alone (or attached to the reserved /dev/null redirection) are
 // treated as compound/dynamic.
+//
+// Multi-line and quoted commands are rejected outright: whitespace inside
+// quoted arguments is significant (collapsing it would deduplicate distinct
+// queries), and `strings.Fields` would splice each line of a multi-line
+// command into one argument list whose canonical form does not describe
+// what the executor actually ran.
 func canonicalBashCmd(cmd string) string {
 	cmd = strings.TrimSpace(cmd)
-	if cmd == "" {
+	if cmd == "" || strings.ContainsAny(cmd, "\r\n") {
+		return ""
+	}
+	if strings.ContainsAny(cmd, "\"'") {
 		return ""
 	}
 	cmd = strings.TrimSuffix(cmd, " > /dev/null 2>&1")
@@ -375,10 +420,11 @@ func canonicalBashCmd(cmd string) string {
 	return strings.Join(fields, " ")
 }
 
-// bashResultFor returns the tool result content for the bash call with the
-// given ID appearing at or before message index i, or "" when there is no
-// successful result yet.
-func bashResultFor(msgs []message.Message, i int, toolCallID string) string {
+// toolResultFor returns the successful tool result content for the call
+// with the given ID appearing at or before message index i, or "" when
+// there is no successful result yet. Failed and missing results never
+// supersede an earlier call's output.
+func toolResultFor(msgs []message.Message, i int, toolCallID string) string {
 	for k := i + 1; k < len(msgs) && k <= i+2; k++ {
 		m := msgs[k]
 		if m.Role != message.Tool {

@@ -51,6 +51,10 @@
           },
           "type": "array",
           "description": "Restrict structural_search tool description to specific languages (empty = all supported languages). Valid values: go"
+        },
+        "microcompaction": {
+          "$ref": "#/$defs/MicroCompactionConfig",
+          "description": "Deterministic tool-output microcompaction settings"
         }
       },
       "additionalProperties": false,
@@ -814,6 +818,27 @@
           "type": "integer",
           "description": "Times a contended memory write is replayed against another instance holding the index lock",
           "default": 24
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "MicroCompactionConfig": {
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable deterministic tool-output microcompaction",
+          "default": false
+        },
+        "threshold": {
+          "type": "number",
+          "description": "Fraction of the context window at which tool-output elision starts (0-1)",
+          "default": 0.5
+        },
+        "retention_turns": {
+          "type": "integer",
+          "description": "Number of most recent turns whose tool outputs are never elided",
+          "default": 8
         }
       },
       "additionalProperties": false,

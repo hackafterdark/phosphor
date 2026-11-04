@@ -1085,6 +1085,17 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 				}
 			}
 		}
+		// Refresh the estimate: the value computed above predates the
+		// user message, and prompt preparation (microcompaction's
+		// activation gate) must see the usage this request will
+		// actually carry.
+		totalTokens = estimateMessageTokensForMessage(msgs)
+		if currentSession.CurrentTokens != totalTokens {
+			currentSession.CurrentTokens = totalTokens
+			if _, saveErr := a.sessions.Save(ctx, currentSession); saveErr != nil {
+				slog.Warn("Failed to save current tokens", "error", saveErr)
+			}
+		}
 	}
 
 	// Add the session to the agent context so it propagates to genCtx
@@ -1158,7 +1169,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 		a.publishRunComplete(ctx, call, complete)
 	}()
 
-	history, files := a.preparePrompt(ctx, msgs, largeModel.CatwalkCfg.SupportsImages, currentSession.CurrentTokens, call.Attachments...)
+	history, files := a.preparePrompt(ctx, msgs, largeModel.CatwalkCfg.SupportsImages, currentSession.CurrentTokens, int64(largeModel.CatwalkCfg.ContextWindow), true, call.Attachments...)
 
 	// The user message was already persisted to the session above
 	// (createUserMessage at line 755) and is passed separately as
@@ -2192,7 +2203,10 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 		return nil
 	}
 
-	aiMsgs, _ := a.preparePrompt(ctx, msgs, largeModel.CatwalkCfg.SupportsImages, currentSession.CurrentTokens)
+	// The summarizer must see the original tool output details —
+	// microcompaction is skipped so the stored summary covers the full
+	// transcript, not elided markers.
+	aiMsgs, _ := a.preparePrompt(ctx, msgs, largeModel.CatwalkCfg.SupportsImages, currentSession.CurrentTokens, int64(largeModel.CatwalkCfg.ContextWindow), false)
 
 	genCtx, cancel := context.WithCancel(ctx)
 	a.activeRequests.Set(sessionID, cancel)
@@ -2445,20 +2459,21 @@ func (a *sessionAgent) createUserMessage(ctx context.Context, call SessionAgentC
 	return msg, nil
 }
 
-func (a *sessionAgent) preparePrompt(ctx context.Context, msgs []message.Message, supportsImages bool, estimatedTokens int64, attachments ...message.Attachment) ([]fantasy.Message, []fantasy.FilePart) {
+func (a *sessionAgent) preparePrompt(ctx context.Context, msgs []message.Message, supportsImages bool, estimatedTokens, contextWindow int64, microcompact bool, attachments ...message.Attachment) ([]fantasy.Message, []fantasy.FilePart) {
 	// G5: deterministic microcompaction of stale tool outputs, applied to
 	// the outbound copy only — stored messages and the hot zone are never
-	// touched, so the transcript stays append-only and prompt prefixes
-	// keep hitting provider caches. Skipped for sub-agents: they run short
-	// single-purpose sessions where elision would only drop evidence.
-	if !a.isSubAgent && a.microCompactThreshold > 0 {
+	// touched, so the transcript stays append-only. Skipped for sub-agents
+	// (they run short single-purpose sessions where elision would only
+	// drop evidence) and for the summarizer input, which must see the
+	// original tool output details so the stored summary is complete.
+	if microcompact && !a.isSubAgent && a.microCompactThreshold > 0 {
 		msgs, _ = microcompactToolOutputs(
 			msgs,
 			true,
 			a.microCompactThreshold,
 			a.microCompactRetentionTurns,
 			estimatedTokens,
-			int64(a.largeModel.Get().CatwalkCfg.ContextWindow),
+			contextWindow,
 		)
 	}
 

@@ -543,8 +543,8 @@ type MicroCompactionConfig struct {
 
 	// Threshold is the fraction of the context window at which elision
 	// starts. Elision stays off until usage crosses this fraction, so short
-	// sessions never pay any rewriting. A value of 0 means use the built-in
-	// default (0.5).
+	// sessions never pay any rewriting. Values outside (0, 1] fall back to
+	// the built-in default (0.5).
 	Threshold float64 `json:"threshold,omitempty" jsonschema:"description=Fraction of the context window at which tool-output elision starts (0-1),default=0.5"`
 
 	// RetentionTurns is the number of most recent conversation turns kept
