@@ -526,6 +526,31 @@ type AgentConfig struct {
 	// only those languages (by canonical name) to be shown, saving tokens
 	// for projects that work with a limited set of languages.
 	StructuralSearchLanguages []string `json:"structural_search_languages,omitempty" jsonschema:"description=Restrict structural_search tool description to specific languages (empty = all supported languages). Valid values: go, cpp, c, bash, hcl, json, html, css, toml, scala, typescript, javascript, python, php, sql, rust, csharp"`
+
+	// MicroCompaction elides stale tool outputs from the cold zone of the
+	// transcript before they are sent to the model. When nil, the pass is
+	// disabled.
+	MicroCompaction *MicroCompactionConfig `json:"microcompaction,omitempty" jsonschema:"description=Deterministic tool-output microcompaction settings"`
+}
+
+// MicroCompactionConfig controls the deterministic tool-output elision pass
+// (G5). It never involves the LLM: old, redundant tool results are replaced
+// with short markers in the outbound prompt only, so the stored transcript
+// stays intact and the hot zone of the conversation is never touched.
+type MicroCompactionConfig struct {
+	// Enabled toggles the microcompaction pass. Default: false (opt-in).
+	Enabled bool `json:"enabled,omitempty" jsonschema:"description=Enable deterministic tool-output microcompaction,default=false"`
+
+	// Threshold is the fraction of the context window at which elision
+	// starts. Elision stays off until usage crosses this fraction, so short
+	// sessions never pay any rewriting. Values outside (0, 1] fall back to
+	// the built-in default (0.5).
+	Threshold float64 `json:"threshold,omitempty" jsonschema:"description=Fraction of the context window at which tool-output elision starts (0-1),default=0.5"`
+
+	// RetentionTurns is the number of most recent conversation turns kept
+	// untouched as the hot zone. Only tool outputs older than the hot zone
+	// are ever elided. A value of 0 means use the built-in default (8).
+	RetentionTurns int `json:"retention_turns,omitempty" jsonschema:"description=Number of most recent turns whose tool outputs are never elided,default=8"`
 }
 
 // LoggingOptions configures application logging behavior. All fields are

@@ -736,6 +736,14 @@ func (c *Config) setDefaults(workingDir, dataDir string) {
 	if c.Options.Agent.ActiveProfile == "" {
 		c.Options.Agent.ActiveProfile = "default"
 	}
+	if c.Options.Agent.MicroCompaction != nil {
+		if c.Options.Agent.MicroCompaction.Threshold <= 0 || c.Options.Agent.MicroCompaction.Threshold > 1 {
+			c.Options.Agent.MicroCompaction.Threshold = 0.5
+		}
+		if c.Options.Agent.MicroCompaction.RetentionTurns <= 0 {
+			c.Options.Agent.MicroCompaction.RetentionTurns = 8
+		}
+	}
 }
 
 // applyLSPDefaults applies default values from powernap to LSP configurations

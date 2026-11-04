@@ -346,7 +346,8 @@ The catch-all for app behavior. Highlights:
       "enable_reflection": true,
       "max_turns": 60,
       "max_tokens_continuations": 2,
-      "structural_search_languages": ["go", "typescript"]
+      "structural_search_languages": ["go", "typescript"],
+      "microcompaction": { "enabled": false, "threshold": 0.5, "retention_turns": 8 }
     }
   }
 }
@@ -361,6 +362,8 @@ The catch-all for app behavior. Highlights:
   auto-compaction ([details](COMPACTION.md)).
 - `agent.max_turns` — hard cap on tool-use turns per prompt, a guardrail against
   runaway loops.
+- `agent.microcompaction` — deterministic elision of stale tool outputs from
+  older turns, applied before summarization ([details](COMPACTION.md#microcompaction-deterministic-tool-output-elision)).
 - `agent.max_tokens_continuations` — how many times the agent automatically
   resumes a turn that got cut off because it ran out of its output/thinking
   token budget (`0` = default of 2, negative = unlimited). Each continuation

@@ -977,13 +977,25 @@ func (c *coordinator) buildAgent(ctx context.Context, prompt *prompt.Prompt, age
 	}
 
 	result := NewSessionAgent(SessionAgentOptions{
-		LargeModel:             large,
-		SmallModel:             small,
-		SystemPromptPrefix:     largeProviderCfg.SystemPromptPrefix,
-		SystemPrompt:           "",
-		IsSubAgent:             isSubAgent,
-		DisableAutoSummarize:   c.cfg.Config().Options.DisableAutoSummarize,
-		SummarizeThreshold:     c.cfg.Config().Options.SummarizeThreshold,
+		LargeModel:           large,
+		SmallModel:           small,
+		SystemPromptPrefix:   largeProviderCfg.SystemPromptPrefix,
+		SystemPrompt:         "",
+		IsSubAgent:           isSubAgent,
+		DisableAutoSummarize: c.cfg.Config().Options.DisableAutoSummarize,
+		SummarizeThreshold:   c.cfg.Config().Options.SummarizeThreshold,
+		MicroCompactionThreshold: func() float64 {
+			if mc := c.cfg.Config().Options.Agent.MicroCompaction; mc != nil && mc.Enabled {
+				return mc.Threshold
+			}
+			return 0
+		}(),
+		MicroCompactionRetentionTurns: func() int {
+			if mc := c.cfg.Config().Options.Agent.MicroCompaction; mc != nil {
+				return mc.RetentionTurns
+			}
+			return 0
+		}(),
 		IsYolo:                 c.permissions.SkipRequests(),
 		Sessions:               c.sessions,
 		Messages:               c.messages,
