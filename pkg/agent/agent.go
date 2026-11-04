@@ -183,16 +183,21 @@ type sessionAgent struct {
 	systemPrompt       *csync.Value[string]
 	tools              *csync.Slice[fantasy.AgentTool]
 
-	isSubAgent            bool
-	sessions              session.Service
-	messages              message.Service
-	goalService           goal.Service
-	disableAutoSummarize  bool
-	summarizeThreshold    float64
-	isYolo                bool
-	redactOutgoingSecrets bool
-	redactOutgoingPII     bool
-	wireSecretsForced     bool
+	isSubAgent           bool
+	sessions             session.Service
+	messages             message.Service
+	goalService          goal.Service
+	disableAutoSummarize bool
+	summarizeThreshold   float64
+	// microCompactThreshold and microCompactRetentionTurns configure the
+	// deterministic tool-output elision pass (G5); threshold <= 0 disables
+	// it. See pkg/agent/microcompact.go.
+	microCompactThreshold      float64
+	microCompactRetentionTurns int
+	isYolo                     bool
+	redactOutgoingSecrets      bool
+	redactOutgoingPII          bool
+	wireSecretsForced          bool
 	// redactionPolicy is the per-agent frozen snapshot of the secret-protection
 	// switches, shared with this agent's tools so the wire mask and the read
 	// path cannot drift apart and a later agent build cannot alter it.
@@ -278,17 +283,22 @@ type sessionAgent struct {
 }
 
 type SessionAgentOptions struct {
-	LargeModel            Model
-	SmallModel            Model
-	SystemPromptPrefix    string
-	SystemPrompt          string
-	IsSubAgent            bool
-	DisableAutoSummarize  bool
-	SummarizeThreshold    float64
-	IsYolo                bool
-	RedactOutgoingSecrets bool
-	RedactOutgoingPII     bool
-	WireSecretsForced     bool
+	LargeModel           Model
+	SmallModel           Model
+	SystemPromptPrefix   string
+	SystemPrompt         string
+	IsSubAgent           bool
+	DisableAutoSummarize bool
+	SummarizeThreshold   float64
+	// MicroCompactionThreshold is the fraction of the context window at
+	// which stale tool outputs are elided from the cold zone (0 disables).
+	MicroCompactionThreshold float64
+	// MicroCompactionRetentionTurns is the hot-zone size in turns.
+	MicroCompactionRetentionTurns int
+	IsYolo                        bool
+	RedactOutgoingSecrets         bool
+	RedactOutgoingPII             bool
+	WireSecretsForced             bool
 	// RedactionPolicy is the per-agent frozen snapshot of the secret-protection
 	// switches, shared with this agent's tools. Nil falls back to the built-in
 	// secure defaults.
@@ -327,39 +337,41 @@ func NewSessionAgent(
 	opts SessionAgentOptions,
 ) SessionAgent {
 	result := &sessionAgent{
-		largeModel:             csync.NewValue(opts.LargeModel),
-		smallModel:             csync.NewValue(opts.SmallModel),
-		systemPromptPrefix:     csync.NewValue(opts.SystemPromptPrefix),
-		systemPrompt:           csync.NewValue(opts.SystemPrompt),
-		isSubAgent:             opts.IsSubAgent,
-		sessions:               opts.Sessions,
-		messages:               opts.Messages,
-		goalService:            opts.GoalService,
-		disableAutoSummarize:   opts.DisableAutoSummarize,
-		summarizeThreshold:     opts.SummarizeThreshold,
-		tools:                  csync.NewSliceFrom(opts.Tools),
-		isYolo:                 opts.IsYolo,
-		redactOutgoingSecrets:  opts.RedactOutgoingSecrets,
-		redactOutgoingPII:      opts.RedactOutgoingPII,
-		wireSecretsForced:      opts.WireSecretsForced,
-		redactionPolicy:        opts.RedactionPolicy,
-		notify:                 opts.Notify,
-		runComplete:            opts.RunComplete,
-		reflectionEnabled:      csync.NewValue(opts.ReflectionEnabled),
-		maxReflectionTurns:     csync.NewValue(opts.MaxReflectionTurns),
-		maxTokensContinuations: csync.NewValue(opts.MaxTokensContinuations),
-		workingDir:             opts.WorkingDir,
-		memoryEnabled:          opts.MemoryEnabled,
-		memoryDistill:          opts.MemoryDistill,
-		memoryRateFloorPct:     opts.MemoryRateFloorPct,
-		permissions:            opts.Permissions,
-		cfg:                    opts.Config,
-		pendingNotes:           csync.NewMap[string, string](),
-		messageQueue:           csync.NewMap[string, []SessionAgentCall](),
-		activeRequests:         csync.NewMap[string, context.CancelFunc](),
-		dispatchMu:             csync.NewMap[string, *sync.Mutex](),
-		acceptedRuns:           csync.NewMap[string, int](),
-		cancelMark:             csync.NewMap[string, uint64](),
+		largeModel:                 csync.NewValue(opts.LargeModel),
+		smallModel:                 csync.NewValue(opts.SmallModel),
+		systemPromptPrefix:         csync.NewValue(opts.SystemPromptPrefix),
+		systemPrompt:               csync.NewValue(opts.SystemPrompt),
+		isSubAgent:                 opts.IsSubAgent,
+		sessions:                   opts.Sessions,
+		messages:                   opts.Messages,
+		goalService:                opts.GoalService,
+		disableAutoSummarize:       opts.DisableAutoSummarize,
+		summarizeThreshold:         opts.SummarizeThreshold,
+		microCompactThreshold:      opts.MicroCompactionThreshold,
+		microCompactRetentionTurns: opts.MicroCompactionRetentionTurns,
+		tools:                      csync.NewSliceFrom(opts.Tools),
+		isYolo:                     opts.IsYolo,
+		redactOutgoingSecrets:      opts.RedactOutgoingSecrets,
+		redactOutgoingPII:          opts.RedactOutgoingPII,
+		wireSecretsForced:          opts.WireSecretsForced,
+		redactionPolicy:            opts.RedactionPolicy,
+		notify:                     opts.Notify,
+		runComplete:                opts.RunComplete,
+		reflectionEnabled:          csync.NewValue(opts.ReflectionEnabled),
+		maxReflectionTurns:         csync.NewValue(opts.MaxReflectionTurns),
+		maxTokensContinuations:     csync.NewValue(opts.MaxTokensContinuations),
+		workingDir:                 opts.WorkingDir,
+		memoryEnabled:              opts.MemoryEnabled,
+		memoryDistill:              opts.MemoryDistill,
+		memoryRateFloorPct:         opts.MemoryRateFloorPct,
+		permissions:                opts.Permissions,
+		cfg:                        opts.Config,
+		pendingNotes:               csync.NewMap[string, string](),
+		messageQueue:               csync.NewMap[string, []SessionAgentCall](),
+		activeRequests:             csync.NewMap[string, context.CancelFunc](),
+		dispatchMu:                 csync.NewMap[string, *sync.Mutex](),
+		acceptedRuns:               csync.NewMap[string, int](),
+		cancelMark:                 csync.NewMap[string, uint64](),
 	}
 	// The post-turn events only cost anything when a user configured a hook for them,
 	// so the runners stay nil otherwise and an unused event pays nothing.
@@ -1146,7 +1158,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 		a.publishRunComplete(ctx, call, complete)
 	}()
 
-	history, files := a.preparePrompt(ctx, msgs, largeModel.CatwalkCfg.SupportsImages, call.Attachments...)
+	history, files := a.preparePrompt(ctx, msgs, largeModel.CatwalkCfg.SupportsImages, currentSession.CurrentTokens, call.Attachments...)
 
 	// The user message was already persisted to the session above
 	// (createUserMessage at line 755) and is passed separately as
@@ -2180,7 +2192,7 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 		return nil
 	}
 
-	aiMsgs, _ := a.preparePrompt(ctx, msgs, largeModel.CatwalkCfg.SupportsImages)
+	aiMsgs, _ := a.preparePrompt(ctx, msgs, largeModel.CatwalkCfg.SupportsImages, currentSession.CurrentTokens)
 
 	genCtx, cancel := context.WithCancel(ctx)
 	a.activeRequests.Set(sessionID, cancel)
@@ -2433,7 +2445,23 @@ func (a *sessionAgent) createUserMessage(ctx context.Context, call SessionAgentC
 	return msg, nil
 }
 
-func (a *sessionAgent) preparePrompt(ctx context.Context, msgs []message.Message, supportsImages bool, attachments ...message.Attachment) ([]fantasy.Message, []fantasy.FilePart) {
+func (a *sessionAgent) preparePrompt(ctx context.Context, msgs []message.Message, supportsImages bool, estimatedTokens int64, attachments ...message.Attachment) ([]fantasy.Message, []fantasy.FilePart) {
+	// G5: deterministic microcompaction of stale tool outputs, applied to
+	// the outbound copy only — stored messages and the hot zone are never
+	// touched, so the transcript stays append-only and prompt prefixes
+	// keep hitting provider caches. Skipped for sub-agents: they run short
+	// single-purpose sessions where elision would only drop evidence.
+	if !a.isSubAgent && a.microCompactThreshold > 0 {
+		msgs, _ = microcompactToolOutputs(
+			msgs,
+			true,
+			a.microCompactThreshold,
+			a.microCompactRetentionTurns,
+			estimatedTokens,
+			int64(a.largeModel.Get().CatwalkCfg.ContextWindow),
+		)
+	}
+
 	// When the strip-last-tool-call flag is set (used as a 400 Bad Request
 	// recovery path), identify the last assistant message with tool calls
 	// so we can skip its tool call parts.
