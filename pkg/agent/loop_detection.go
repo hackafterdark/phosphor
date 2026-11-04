@@ -227,13 +227,10 @@ func hasConsecutiveToolFailures(steps []fantasy.StepResult) bool {
 					failures = append(failures, toolFail{name: tc.ToolName, count: 1})
 				}
 			} else {
-				// A successful call resets the chain for that tool.
-				for j := range failures {
-					if failures[j].name == tc.ToolName {
-						failures = append(failures[:j], failures[j+1:]...)
-						break
-					}
-				}
+				// Any successful tool call means the agent made progress,
+				// so clear all failure chains. Only a run of failures with
+				// no intervening success is "consecutive".
+				failures = failures[:0]
 			}
 		}
 	}

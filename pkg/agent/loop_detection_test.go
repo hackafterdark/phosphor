@@ -339,6 +339,34 @@ func TestHasConsecutiveToolFailures(t *testing.T) {
 		}
 	})
 
+	t.Run("unrelated tool success clears stale failure chains", func(t *testing.T) {
+		// grep fails twice, an unrelated tool succeeds in between,
+		// grep fails once more. The intervening progress means the
+		// failures are not consecutive, so the run must not halt.
+		steps := make([]fantasy.StepResult, 10)
+		steps[0] = makeStep(
+			[]fantasy.ToolCallContent{{ToolCallID: "fail_0", ToolName: "grep", Input: `{}`}},
+			[]fantasy.ToolResultContent{{ToolCallID: "fail_0", ToolName: "grep", Result: fantasy.ToolResultOutputContentError{}}},
+		)
+		steps[1] = makeToolStep("read", `{}`, "ok")
+		steps[2] = makeStep(
+			[]fantasy.ToolCallContent{{ToolCallID: "fail_1", ToolName: "grep", Input: `{}`}},
+			[]fantasy.ToolResultContent{{ToolCallID: "fail_1", ToolName: "grep", Result: fantasy.ToolResultOutputContentError{}}},
+		)
+		steps[3] = makeToolStep("read", `{}`, "ok")
+		steps[4] = makeStep(
+			[]fantasy.ToolCallContent{{ToolCallID: "fail_2", ToolName: "grep", Input: `{}`}},
+			[]fantasy.ToolResultContent{{ToolCallID: "fail_2", ToolName: "grep", Result: fantasy.ToolResultOutputContentError{}}},
+		)
+		for i := 5; i < 10; i++ {
+			steps[i] = makeToolStep("read", fmt.Sprintf(`{"i":%d}`, i), fmt.Sprintf("result-%d", i))
+		}
+		result := hasConsecutiveToolFailures(steps)
+		if result {
+			t.Error("expected false: intervening successes mean the failures are not consecutive")
+		}
+	})
+
 	t.Run("exceeds threshold returns true", func(t *testing.T) {
 		// 3 consecutive failures for same tool (exceeds toolFailureMaxCount=2)
 		steps := make([]fantasy.StepResult, 10)

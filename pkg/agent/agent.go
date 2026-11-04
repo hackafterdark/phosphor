@@ -776,6 +776,11 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 	// rejects it before Run), so re-issuing it is always safe — see
 	// _PLANS/TOOL_CALL_JSON_TRUNCATION_DEAD_END.md.
 	var sawTruncatedToolCallInput bool
+	// loopGuardHalt holds the human-readable reason when one of the loop
+	// detection guards below stops the run. It is surfaced to the user,
+	// logged, and recorded on the turn span, so a guard-triggered halt
+	// never presents as a silent stall.
+	var loopGuardHalt string
 	defer func() {
 		// Optionally record the final assistant response as the root span's
 		// output.value attribute so observability backends can populate the
@@ -1719,14 +1724,36 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 				}
 				return false
 			},
+			// loopGuard records which guard halted the run so the reason
+			// can be surfaced after Stream returns. fantasy evaluates the
+			// conditions in order and stops on the first true, so only the
+			// firing guard's reason is ever recorded.
 			func(steps []fantasy.StepResult) bool {
-				return hasRepeatedToolCalls(steps, loopDetectionWindowSize, loopDetectionMaxRepeats)
+				if hasRepeatedToolCalls(steps, loopDetectionWindowSize, loopDetectionMaxRepeats) {
+					loopGuardHalt = fmt.Sprintf(
+						"the same tool call was repeated more than %d times within the last %d steps",
+						loopDetectionMaxRepeats, loopDetectionWindowSize,
+					)
+					return true
+				}
+				return false
 			},
 			func(steps []fantasy.StepResult) bool {
-				return hasRepeatedThinking(steps)
+				if hasRepeatedThinking(steps) {
+					loopGuardHalt = "the model repeated the same reasoning without making progress"
+					return true
+				}
+				return false
 			},
 			func(steps []fantasy.StepResult) bool {
-				return hasConsecutiveToolFailures(steps)
+				if hasConsecutiveToolFailures(steps) {
+					loopGuardHalt = fmt.Sprintf(
+						"the same tool failed more than %d times in a row with no successful call in between",
+						toolFailureMaxCount,
+					)
+					return true
+				}
+				return false
 			},
 			func(steps []fantasy.StepResult) bool {
 				// Stop once the self-critique budget for the turn is spent. The count
@@ -1734,6 +1761,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 				// keeps failing its own critique can no longer loop unbounded.
 				if a.reflectionEnabled.Get() && reflectionsUsed >= effectiveMaxReflectionTurns(a.maxReflectionTurns.Get()) {
 					slog.Debug("Max reflection turns reached", "turns", reflectionsUsed)
+					loopGuardHalt = "the self-critique budget for this turn was spent"
 					return true
 				}
 				return false
@@ -1885,6 +1913,31 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 		}
 		slog.Warn("Truncated-tool-call continuation budget exhausted, completing the turn as-is",
 			"used", truncatedToolCallContinuationsUsed, "max", defaultMaxTruncatedToolCallContinuations)
+	}
+
+	// A loop detection guard ended the run: hand the user the reason instead
+	// of leaving the turn to present as a silent stall. The notice rides the
+	// assistant message's finish part (the same channel provider errors use),
+	// is logged, and is recorded on the turn span. It is deliberately not
+	// echoed to the model: the failed tool results that led to the halt are
+	// already in the transcript, and re-feeding the guard's reason could
+	// restart the loop the guard exists to stop. The block sits after every
+	// continuation check above so a recoverable dead end is still recovered
+	// rather than halted-and-explained.
+	if err == nil && loopGuardHalt != "" && currentAssistant != nil {
+		slog.Warn("Loop detection guard halted the run",
+			"session_id", call.SessionID, "reason", loopGuardHalt)
+		haltErr := &fantasy.Error{
+			Title:   "Loop Detected",
+			Message: fmt.Sprintf("Stopped the run to prevent a retry loop: %s. Send a new message to continue, ideally with more specific instructions.", loopGuardHalt),
+		}
+		otel.RecordError(agentTurnSpan, haltErr)
+		currentAssistant.AddFinish(message.FinishReasonError, haltErr.Title, haltErr.Message)
+		wctx, cancelWrite := durableWriteCtx(ctx)
+		defer cancelWrite()
+		if updateErr := a.messages.Update(wctx, *currentAssistant); updateErr != nil {
+			return nil, updateErr
+		}
 	}
 
 	if err == nil && !call.IsStateless {
