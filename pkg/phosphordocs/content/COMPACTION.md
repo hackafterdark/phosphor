@@ -176,7 +176,8 @@ outputs, never by truncating them and never by touching the conversation itself.
 | `threshold`        | `0.50`  | Fraction of the context window at which elision activates.              |
 | `retention_turns`  | `8`     | Number of most recent turns whose tool outputs are never touched.       |
 
-Zero-valued `threshold`/`retention_turns` fall back to the defaults above.
+Zero-valued `threshold`/`retention_turns` — and `threshold` values outside
+`(0, 1]` — fall back to the defaults above.
 
 ### How It Works
 
@@ -189,9 +190,14 @@ The transcript is split into two zones:
   to fixed, deterministic rules:
 
 1. **File view deduplication (latest-wins).** If the same file path was
-   `view`ed several times, only the most recent view survives intact; earlier
-   ones are replaced with `[Elided: superseded by later file view]`. Applies
-   to `view`, `view_node`, and `phosphor_docs` (path mode).
+   `view`ed several times with the same parameters, only the most recent
+   view survives intact; earlier ones are replaced with
+   `[Elided: superseded by later file view]`. Partial views (explicit
+   `offset`/`limit`) only supersede earlier calls with the identical range,
+   and `view_node` calls are keyed by file path plus node name, so a later
+   view of a different part of the file never hides the only copy of
+   different lines. Failed view calls never supersede an earlier successful
+   one. Applies to `view`, `view_node`, and `phosphor_docs` (path mode).
 2. **Stale search collapse.** Verbose navigation output — `grep`, `glob`,
    `ls`, `workspace_search`, `structural_search`, `semantic_search`,
    `sourcegraph`, `web_search`, `lsp_references`, `memory_search`, and
@@ -206,9 +212,12 @@ The transcript is split into two zones:
    binaries (`cat`, `tail`, `head`) and any other canonicalizable command
    additionally require byte-identical output, so `cat` of a growing log or
    a re-run test with new failures is never elided — only repetition that
-   adds nothing is. Compound commands (pipes, `&&`, redirections other than
+   adds nothing is. Commands are only canonicalized when single-line and
+   unquoted (quoted whitespace is significant, and multi-line commands are
+   compound). Compound commands (pipes, `&&`, redirections other than
    `/dev/null`, command substitution) are never canonicalized, and failed
-   results are never elided.
+   or missing results never supersede an earlier call's output — failed
+   results themselves are never elided.
 
 ### Guarantees
 
@@ -216,14 +225,18 @@ The transcript is split into two zones:
   reasoning/thinking content are never rewritten, elided, or reordered.
 - **Evidence is preserved.** Tool results that carry verification information —
   errors, `lsp_diagnostics` output, `edit`/`write` results — are never elided.
-  For `bash`, only successful duplicate commands that add no new information
-  are elided; anything else (builds, tests, compound pipelines, results with
-  new output) stays verbatim.
+  For `bash`, duplicate commands are elided only when the repetition adds
+  nothing: search binaries on an identical canonical command, and any other
+  canonicalizable command only when its output is byte-identical to a later
+  run. Builds, tests, and compound pipelines with new output stay verbatim.
 - **Non-destructive.** The pass rewrites an outbound copy for the current
   request only; stored session messages are untouched, so the transcript stays
   append-only and the UI keeps showing full history.
-- **Monotonic.** Once elided, a result stays elided, so prompt prefixes only
-  shrink and never oscillate (prompt-cache friendly).
+- **Per-request evaluation.** Elision is recomputed for every request from the
+  stored history. An elided result can return to its full form when the
+  activation threshold is no longer met, or when a later run of the same
+  non-search `bash` command returns different output. The outbound prompt
+  prefix can therefore change between requests.
 - **Sub-agents skip the pass** — their sessions are short and single-purpose.
 
 Microcompaction complements (and never replaces) auto-summarization: elision
