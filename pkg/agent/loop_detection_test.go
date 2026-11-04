@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"charm.land/fantasy"
+
+	"github.com/hackafterdark/phosphor/pkg/message"
 )
 
 // makeStep creates a StepResult with the given tool calls and results in its Content.
@@ -339,6 +341,87 @@ func TestHasConsecutiveToolFailures(t *testing.T) {
 		}
 	})
 
+	t.Run("unrelated tool success clears stale failure chains", func(t *testing.T) {
+		// grep fails twice, an unrelated tool succeeds in between,
+		// grep fails once more. The intervening progress means the
+		// failures are not consecutive, so the run must not halt.
+		steps := make([]fantasy.StepResult, 10)
+		steps[0] = makeStep(
+			[]fantasy.ToolCallContent{{ToolCallID: "fail_0", ToolName: "grep", Input: `{}`}},
+			[]fantasy.ToolResultContent{{ToolCallID: "fail_0", ToolName: "grep", Result: fantasy.ToolResultOutputContentError{}}},
+		)
+		steps[1] = makeToolStep("read", `{}`, "ok")
+		steps[2] = makeStep(
+			[]fantasy.ToolCallContent{{ToolCallID: "fail_1", ToolName: "grep", Input: `{}`}},
+			[]fantasy.ToolResultContent{{ToolCallID: "fail_1", ToolName: "grep", Result: fantasy.ToolResultOutputContentError{}}},
+		)
+		steps[3] = makeToolStep("read", `{}`, "ok")
+		steps[4] = makeStep(
+			[]fantasy.ToolCallContent{{ToolCallID: "fail_2", ToolName: "grep", Input: `{}`}},
+			[]fantasy.ToolResultContent{{ToolCallID: "fail_2", ToolName: "grep", Result: fantasy.ToolResultOutputContentError{}}},
+		)
+		for i := 5; i < 10; i++ {
+			steps[i] = makeToolStep("read", fmt.Sprintf(`{"i":%d}`, i), fmt.Sprintf("result-%d", i))
+		}
+		result := hasConsecutiveToolFailures(steps)
+		if result {
+			t.Error("expected false: intervening successes mean the failures are not consecutive")
+		}
+	})
+
+	t.Run("mixed step counts as progress regardless of call order", func(t *testing.T) {
+		// The oldest step mixes a failing grep with a succeeding read,
+		// followed by two more grep failures. When the backward scan
+		// reaches the mixed step, the failure chain stands at 2 and the
+		// mixed step's grep failure would push it over — but the step
+		// also contains a success, so it counts as progress and the
+		// chain is cleared, no matter the order the calls appear in.
+		for _, firstIsFailure := range []bool{true, false} {
+			failCall := fantasy.ToolCallContent{ToolCallID: "f1", ToolName: "grep", Input: `{}`}
+			failResult := fantasy.ToolResultContent{ToolCallID: "f1", ToolName: "grep", Result: fantasy.ToolResultOutputContentError{}}
+			okCall := fantasy.ToolCallContent{ToolCallID: "s1", ToolName: "read", Input: `{}`}
+			okResult := fantasy.ToolResultContent{ToolCallID: "s1", ToolName: "read", Result: fantasy.ToolResultOutputContentText{Text: "ok"}}
+			var mixed fantasy.ResponseContent
+			if firstIsFailure {
+				mixed = fantasy.ResponseContent{failCall, failResult, okCall, okResult}
+			} else {
+				mixed = fantasy.ResponseContent{okCall, okResult, failCall, failResult}
+			}
+			steps := make([]fantasy.StepResult, 10)
+			steps[0] = fantasy.StepResult{Response: fantasy.Response{Content: mixed}}
+			for i := 1; i < 3; i++ {
+				steps[i] = makeStep(
+					[]fantasy.ToolCallContent{{ToolCallID: fmt.Sprintf("fail_%d", i), ToolName: "grep", Input: `{}`}},
+					[]fantasy.ToolResultContent{{ToolCallID: fmt.Sprintf("fail_%d", i), ToolName: "grep", Result: fantasy.ToolResultOutputContentError{}}},
+				)
+			}
+			for i := 3; i < 10; i++ {
+				steps[i] = makeToolStep("read", fmt.Sprintf(`{"i":%d}`, i), fmt.Sprintf("result-%d", i))
+			}
+			if hasConsecutiveToolFailures(steps) {
+				t.Errorf("expected false: the mixed step's success is progress regardless of call order (firstIsFailure=%v)", firstIsFailure)
+			}
+		}
+	})
+
+	t.Run("all-failed step counts every call regardless of order", func(t *testing.T) {
+		// One step with two failing greps: both extend the chain even
+		// though the calls appear in an arbitrary order.
+		steps := make([]fantasy.StepResult, 10)
+		for i := range 3 {
+			steps[i] = makeStep(
+				[]fantasy.ToolCallContent{{ToolCallID: fmt.Sprintf("fail_%d", i), ToolName: "grep", Input: `{}`}},
+				[]fantasy.ToolResultContent{{ToolCallID: fmt.Sprintf("fail_%d", i), ToolName: "grep", Result: fantasy.ToolResultOutputContentError{}}},
+			)
+		}
+		for i := 3; i < 10; i++ {
+			steps[i] = makeToolStep("read", fmt.Sprintf(`{"i":%d}`, i), fmt.Sprintf("result-%d", i))
+		}
+		if !hasConsecutiveToolFailures(steps) {
+			t.Error("expected true: 3 consecutive grep failures exceed the threshold")
+		}
+	})
+
 	t.Run("exceeds threshold returns true", func(t *testing.T) {
 		// 3 consecutive failures for same tool (exceeds toolFailureMaxCount=2)
 		steps := make([]fantasy.StepResult, 10)
@@ -380,6 +463,41 @@ func TestHasConsecutiveToolFailures(t *testing.T) {
 		result := hasConsecutiveToolFailures(steps)
 		if result {
 			t.Error("expected false: each tool has exactly 2 failures (at threshold, not exceeding)")
+		}
+	})
+}
+
+func TestLoopHaltNotice(t *testing.T) {
+	t.Run("error finish carries the notice", func(t *testing.T) {
+		assistant := message.Message{Role: message.Assistant}
+		assistant.AddFinish(message.FinishReasonError, "Loop Detected", "Stopped the run to prevent a retry loop.")
+		notice := LoopHaltNotice([]message.Message{assistant})
+		if notice != "Loop Detected: Stopped the run to prevent a retry loop." {
+			t.Errorf("unexpected notice: %q", notice)
+		}
+	})
+
+	t.Run("normal completion returns empty", func(t *testing.T) {
+		assistant := message.Message{Role: message.Assistant}
+		assistant.AddFinish(message.FinishReasonEndTurn, "", "")
+		if notice := LoopHaltNotice([]message.Message{assistant}); notice != "" {
+			t.Errorf("expected empty notice, got %q", notice)
+		}
+	})
+
+	t.Run("tool results after the assistant are skipped", func(t *testing.T) {
+		assistant := message.Message{Role: message.Assistant}
+		assistant.AddFinish(message.FinishReasonError, "Loop Detected", "Stopped the run to prevent a retry loop.")
+		tool := message.Message{Role: message.Tool}
+		notice := LoopHaltNotice([]message.Message{assistant, tool})
+		if notice == "" {
+			t.Error("expected the notice from the last assistant message")
+		}
+	})
+
+	t.Run("no assistant message returns empty", func(t *testing.T) {
+		if notice := LoopHaltNotice([]message.Message{{Role: message.User}}); notice != "" {
+			t.Errorf("expected empty notice, got %q", notice)
 		}
 	})
 }
