@@ -154,6 +154,10 @@ type SessionAgent interface {
 	BeginAccepted(sessionID string) *AcceptedRun
 	SetModels(large Model, small Model)
 	SetTools(tools []fantasy.AgentTool)
+	// AddTool appends a tool to the live tool list if its name is not yet
+	// advertised. tool_search uses it to promote deferred tools whose
+	// schemas the model has just discovered.
+	AddTool(tool fantasy.AgentTool)
 	SetSystemPrompt(systemPrompt string)
 	SetReflection(enabled bool, maxTurns int)
 	SetMaxTokensContinuations(maxContinuations int)
@@ -3437,6 +3441,16 @@ func (a *sessionAgent) SetModels(large Model, small Model) {
 
 func (a *sessionAgent) SetTools(tools []fantasy.AgentTool) {
 	a.tools.SetSlice(tools)
+}
+
+func (a *sessionAgent) AddTool(tool fantasy.AgentTool) {
+	name := tool.Info().Name
+	for _, t := range a.tools.Copy() {
+		if t.Info().Name == name {
+			return
+		}
+	}
+	a.tools.Append(tool)
 }
 
 func (a *sessionAgent) SetSystemPrompt(systemPrompt string) {

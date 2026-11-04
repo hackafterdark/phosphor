@@ -53,5 +53,6 @@ Search it with the `phosphor_docs` tool, or open a file below with the
 - [Agent Tools Overview](phosphor://docs/tools/OVERVIEW.md)
 - [Scan Secrets](phosphor://docs/tools/SCAN_SECRETS.md)
 - [Semantic Search](phosphor://docs/tools/SEMANTIC_SEARCH.md)
+- [Tool Search (Deferred MCP Tool Schemas)](phosphor://docs/tools/TOOL_SEARCH.md)
 - [Workspace Search (FTS5)](phosphor://docs/tools/WORKSPACE_SEARCH.md)
 - [Edit and Multi-Edit Tools](phosphor://docs/tools/edit_tools.md)

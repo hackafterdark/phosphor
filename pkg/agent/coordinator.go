@@ -1030,7 +1030,7 @@ func (c *coordinator) buildAgent(ctx context.Context, prompt *prompt.Prompt, age
 	})
 
 	c.readyWg.Go(func() error {
-		tools, err := c.buildTools(ctx, agent, isSubAgent)
+		tools, err := c.buildTools(ctx, agent, isSubAgent, result.AddTool)
 		if err != nil {
 			return err
 		}
@@ -1079,7 +1079,7 @@ func (c *coordinator) redactionPolicyFromConfig() *tools.Policy {
 	})
 }
 
-func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, isSubAgent bool) ([]fantasy.AgentTool, error) {
+func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, isSubAgent bool, registerTool func(fantasy.AgentTool)) ([]fantasy.AgentTool, error) {
 	var allTools []fantasy.AgentTool
 
 	// Interactive workspace trust gate: an untrusted repository's repo-local MCP
@@ -1251,6 +1251,29 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, isSubA
 		return strings.Compare(a.Info().Name, b.Info().Name)
 	})
 
+	// Deferred tool schemas (G10): when tool_search is enabled, MCP tool
+	// schemas stay out of the advertised list so the fixed prompt cost
+	// stays flat regardless of MCP server count. The model discovers them
+	// on demand through tool_search, which promotes a tool into the live
+	// list once its schema has been looked up. This is purely client-side:
+	// MCP servers advertise their tools normally and never need to know
+	// about tool_search.
+	var deferredTools []fantasy.AgentTool
+	if ts := c.cfg.Config().Options.Agent.ToolSearch; ts != nil && ts.Enabled {
+		var advertised []fantasy.AgentTool
+		for _, tool := range filteredTools {
+			server, isMCP := mcpServerName(tool)
+			if isMCP && toolSearchDefer(ts, tool.Info().Name, server) {
+				deferredTools = append(deferredTools, tool)
+				continue
+			}
+			advertised = append(advertised, tool)
+		}
+		if len(deferredTools) > 0 {
+			filteredTools = advertised
+		}
+	}
+
 	// Wrap tools with hook interception for the top-level agent only.
 	// Sub-agents (the `agent` task tool, `agentic_fetch`, etc.) run
 	// without hook interception to avoid firing the user's hook N times
@@ -1258,7 +1281,7 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, isSubA
 	// itself is still wrapped from the coder's side.
 	filteredTools = wrapToolsWithHooks(filteredTools, hookRunner, isSubAgent, c.cfg.ActiveProfile())
 
-	// Repair schema type mismatches (e.g. "true" for a boolean
+	// Repair schema type mismatches (e.g. `true` for a boolean
 	// parameter) before hook interception runs: applying this wrapper
 	// directly over the hooks makes its Run repair the raw model input
 	// first and hooks then inspect and may rewrite the repaired input.
@@ -1268,7 +1291,62 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, isSubA
 	// the tool result is produced, so the transcript stays append-only.
 	filteredTools = wrapToolsWithTodoNudge(filteredTools, c.sessions)
 
+	if len(deferredTools) > 0 {
+		// Deferred tools run through the same wrapper chain so promoted
+		// instances behave identically to directly advertised ones.
+		deferredTools = wrapToolsWithHooks(deferredTools, hookRunner, isSubAgent, c.cfg.ActiveProfile())
+		deferredTools = wrapToolsWithCoercion(deferredTools)
+		deferredTools = wrapToolsWithTodoNudge(deferredTools, c.sessions)
+
+		deferredNames := make([]string, 0, len(deferredTools))
+		for _, tool := range deferredTools {
+			deferredNames = append(deferredNames, tool.Info().Name)
+		}
+		// The live resolver re-wraps the current MCP tool state on every
+		// lookup so discovery and drift checks always see the freshest
+		// schemas, even after an MCP tools refresh.
+		liveMCP := func() map[string]fantasy.AgentTool {
+			var live []fantasy.AgentTool
+			for _, tool := range tools.GetMCPTools(c.permissions, c.cfg, c.cfg.WorkingDir(), c.redactionPolicy) {
+				live = append(live, tool)
+			}
+			live = wrapToolsWithHooks(live, hookRunner, isSubAgent, c.cfg.ActiveProfile())
+			live = wrapToolsWithCoercion(live)
+			live = wrapToolsWithTodoNudge(live, c.sessions)
+			current := make(map[string]fantasy.AgentTool, len(live))
+			for _, tool := range live {
+				current[tool.Info().Name] = tool
+			}
+			return current
+		}
+		registry := tools.NewDeferredToolRegistry(deferredNames, liveMCP)
+		filteredTools = append(filteredTools, tools.NewToolSearchTool(registry, registerTool))
+	}
+
 	return filteredTools, nil
+}
+
+// mcpServerName reports the MCP server backing a wrapped tool, if any.
+func mcpServerName(tool fantasy.AgentTool) (string, bool) {
+	mcpTool, ok := tool.(interface{ MCP() string })
+	if !ok {
+		return ``, false
+	}
+	server := mcpTool.MCP()
+	return server, server != ``
+}
+
+// toolSearchDefer decides whether a tool's schema is hidden behind
+// tool_search. keep_loaded pins tools (by full name or server name) so they
+// stay advertised directly, mirroring the alwaysLoad pinning other harnesses
+// support.
+func toolSearchDefer(ts *config.ToolSearchConfig, name, server string) bool {
+	for _, keep := range ts.KeepLoaded {
+		if keep == name || keep == server {
+			return false
+		}
+	}
+	return true
 }
 
 // TODO: when we support multiple agents we need to change this so that we pass in the agent specific model config
@@ -1763,7 +1841,7 @@ func (c *coordinator) UpdateModels(ctx context.Context) error {
 		return errSystemAgentNotConfigured
 	}
 
-	tools, err := c.buildTools(ctx, agentCfg, false)
+	tools, err := c.buildTools(ctx, agentCfg, false, c.currentAgent.AddTool)
 	if err != nil {
 		return err
 	}
