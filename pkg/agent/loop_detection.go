@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"charm.land/fantasy"
+
+	"github.com/hackafterdark/phosphor/pkg/message"
 )
 
 const (
@@ -16,6 +18,33 @@ const (
 	reasoningLoopMaxRepeats = 2
 	toolFailureMaxCount     = 2
 )
+
+// LoopHaltNotice returns the halt notice recorded on the session's last
+// assistant message when a loop guard stopped the run, or "" when the run
+// completed normally. A guard halt returns a nil error from Run (the goal
+// runtime must not route it into a retry of the same loop), so headless
+// callers — non-interactive runs, scheduled jobs — use this to tell a
+// completed turn from a halted one.
+func LoopHaltNotice(msgs []message.Message) string {
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role != message.Assistant {
+			continue
+		}
+		if msgs[i].FinishReason() != message.FinishReasonError {
+			return ""
+		}
+		fp := msgs[i].FinishPart()
+		if fp == nil || fp.Message == "" {
+			return ""
+		}
+		notice := fp.Message
+		if fp.Details != "" {
+			notice += ": " + fp.Details
+		}
+		return notice
+	}
+	return ""
+}
 
 // hasRepeatedToolCalls checks whether the agent is stuck in a loop by looking
 // at recent steps. It examines the last windowSize steps and returns true if
@@ -192,6 +221,9 @@ func hasConsecutiveToolFailures(steps []fantasy.StepResult) bool {
 	for i := len(steps) - 1; i >= 0; i-- {
 		content := steps[i].Content
 		toolCalls := content.ToolCalls()
+		if len(toolCalls) == 0 {
+			continue
+		}
 		toolResults := content.ToolResults()
 
 		// Build a map of tool call IDs to their result types.
@@ -204,33 +236,40 @@ func hasConsecutiveToolFailures(steps []fantasy.StepResult) bool {
 			resultByID[tr.ToolCallID] = isErr
 		}
 
+		// Evaluate the step as a whole, independent of call order: any
+		// successful call in the step is progress and clears the chains.
+		// Only a step whose calls all failed extends them. Evaluating
+		// call-by-call instead would let the result depend on how the
+		// model happened to emit the calls.
+		anySuccess := false
 		for _, tc := range toolCalls {
-			isErr, ok := resultByID[tc.ToolCallID]
-			if !ok {
-				// No result for this call — treat as error.
-				isErr = true
+			if isErr, ok := resultByID[tc.ToolCallID]; ok && !isErr {
+				anySuccess = true
+				break
 			}
-			if isErr {
-				// Check if we already have a failure entry for this tool.
-				found := false
-				for j := range failures {
-					if failures[j].name == tc.ToolName {
-						failures[j].count++
-						if failures[j].count > toolFailureMaxCount {
-							return true
-						}
-						found = true
-						break
+		}
+		if anySuccess {
+			failures = failures[:0]
+			continue
+		}
+
+		for _, tc := range toolCalls {
+			// A call with no result is treated as an error, and any
+			// call that did succeed would have cleared the chains
+			// above, so every call reaching this loop fails.
+			found := false
+			for j := range failures {
+				if failures[j].name == tc.ToolName {
+					failures[j].count++
+					if failures[j].count > toolFailureMaxCount {
+						return true
 					}
+					found = true
+					break
 				}
-				if !found {
-					failures = append(failures, toolFail{name: tc.ToolName, count: 1})
-				}
-			} else {
-				// Any successful tool call means the agent made progress,
-				// so clear all failure chains. Only a run of failures with
-				// no intervening success is "consecutive".
-				failures = failures[:0]
+			}
+			if !found {
+				failures = append(failures, toolFail{name: tc.ToolName, count: 1})
 			}
 		}
 	}

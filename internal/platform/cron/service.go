@@ -15,6 +15,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/hackafterdark/phosphor/internal/app"
+	"github.com/hackafterdark/phosphor/pkg/agent"
 	"github.com/hackafterdark/phosphor/pkg/config"
 	"github.com/hackafterdark/phosphor/pkg/message"
 )
@@ -359,6 +360,22 @@ func (s *Service) runJob(ctx context.Context, jobName string, job *Job) {
 		// Increment failure count.
 		s.incrementFailureCount(jobName)
 		return
+	}
+
+	// A loop-guard halt returns a nil error, so the run also failed to
+	// complete whenever the assistant message carries a halt notice.
+	// Treat it like any other failure: no success log, failure count
+	// incremented.
+	if appInst.Messages != nil {
+		if msgs, listErr := appInst.Messages.List(ctx, sessionID); listErr == nil {
+			if notice := agent.LoopHaltNotice(msgs); notice != "" {
+				s.logger.Error("job halted by loop guard", "job", jobName, "notice", notice)
+				s.incrementFailureCount(jobName)
+				return
+			}
+		} else {
+			s.logger.Error("failed to list session messages after job run", "job", jobName, "error", listErr)
+		}
 	}
 
 	// Success! Reset failure count.

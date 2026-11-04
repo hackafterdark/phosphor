@@ -1163,6 +1163,19 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 			complete.Cancelled = errors.Is(retErr, context.Canceled)
 		} else if ctx.Err() != nil {
 			complete.Cancelled = true
+		} else if currentAssistant != nil && currentAssistant.FinishReason() == message.FinishReasonError {
+			// A loop-guard halt completes the run with a nil error but
+			// leaves an error finish on the assistant message. Surface it
+			// on the terminal event so `phosphor run` and other observers
+			// see the halt as a failure; the run itself keeps its nil
+			// return so the goal runtime is not routed into a retry of
+			// the exact loop the guard stopped.
+			if fp := currentAssistant.FinishPart(); fp != nil && fp.Message != "" {
+				complete.Error = fp.Message
+				if fp.Details != "" {
+					complete.Error += ": " + fp.Details
+				}
+			}
 		}
 		// Prefer the per-call hook when supplied so the coordinator
 		// can coalesce retries (e.g. unauthorized → re-auth → retry)
@@ -1761,7 +1774,14 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 				// keeps failing its own critique can no longer loop unbounded.
 				if a.reflectionEnabled.Get() && reflectionsUsed >= effectiveMaxReflectionTurns(a.maxReflectionTurns.Get()) {
 					slog.Debug("Max reflection turns reached", "turns", reflectionsUsed)
-					loopGuardHalt = "the self-critique budget for this turn was spent"
+					// Budget exhaustion is a normal completion when the
+					// capped step ended cleanly. Only flag a halt when the
+					// step itself is still unresolved: another <reflection>
+					// violation, or tool calls whose results the model
+					// never got to see.
+					if reflectionDetected > 0 || len(steps[len(steps)-1].Content.ToolCalls()) > 0 {
+						loopGuardHalt = "the self-critique budget for this turn was spent"
+					}
 					return true
 				}
 				return false

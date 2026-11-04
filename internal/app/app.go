@@ -578,6 +578,15 @@ func (app *App) RunNonInteractive(ctx context.Context, output io.Writer, prompt,
 				}
 				return fmt.Errorf("agent processing failed: %w", result.err)
 			}
+			// A loop-guard halt returns a nil error; the halt notice on
+			// the assistant message is the failure signal. Report it as
+			// a run failure so the process exits non-zero and the
+			// reason reaches stdout/stderr.
+			if msgs, listErr := app.Messages.List(ctx, sess.ID); listErr == nil {
+				if notice := agent.LoopHaltNotice(msgs); notice != "" {
+					return fmt.Errorf("agent run halted: %s", notice)
+				}
+			}
 			return nil
 
 		case event := <-messageEvents:
