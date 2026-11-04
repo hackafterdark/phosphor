@@ -26,7 +26,7 @@ type PhosphorDocsParams struct {
 }
 
 func NewPhosphorDocsTool() fantasy.AgentTool {
-	return fantasy.NewAgentTool(
+	return fantasy.NewParallelAgentTool(
 		PhosphorDocsToolName,
 		phosphorDocsDescription,
 		func(ctx context.Context, params PhosphorDocsParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {

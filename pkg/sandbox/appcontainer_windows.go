@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -73,8 +74,19 @@ func containerNameFor(workspace string) string {
 var procCreateAppContainerProfile = userenv.NewProc("CreateAppContainerProfile")
 
 // containerSidFor returns the AppContainer SID for a workspace,
-// creating the profile on first use and deriving it once it exists.
-// The profile persists per-user (same posture as the MXC backends).
+// creating the profile on first use. The profile persists per-user
+// (same posture as the MXC backends).
+//
+// When the profile is already registered the SID is re-derived by
+// deleting and re-registering the profile: the kernel derives the
+// profile SID deterministically from (user, name), so recreation
+// yields the identical identity. DeriveAppContainerSidFromAppContainerName
+// must NOT be used for registered profiles: it returns the name-only
+// SID (without the user context), which is not the registered profile
+// SID, and the kernel rejects launches carrying it
+// (ERROR_INVALID_PARAMETER). The registry entry is inert between the
+// delete and the recreate — running children hold their token SID,
+// and directory ACEs reference the SID itself, not the registration.
 func containerSidFor(workspace string) (*windows.SID, error) {
 	name := containerNameFor(workspace)
 	namePtr, err := windows.UTF16PtrFromString(name)
@@ -101,9 +113,25 @@ func containerSidFor(workspace string) (*windows.SID, error) {
 	if int32(hr) == 0 && sid != nil {
 		return sid, nil
 	}
-	// The profile already exists (or the name is claimed): derive the
-	// SID for the existing identity.
-	return deriveContainerSid(name)
+	// The profile already exists (or the name is claimed): delete and
+	// re-register to obtain the registered profile SID.
+	_, _, _ = procDeleteAppContainerProfile.Call(uintptr(unsafe.Pointer(namePtr)))
+	sid = nil
+	hr, _, _ = procCreateAppContainerProfile.Call(
+		uintptr(unsafe.Pointer(namePtr)),
+		uintptr(unsafe.Pointer(display)),
+		uintptr(unsafe.Pointer(desc)),
+		0,
+		0,
+		uintptr(unsafe.Pointer(&sid)),
+	)
+	if int32(hr) == 0 && sid != nil {
+		return sid, nil
+	}
+	if int32(hr) == 0 {
+		return nil, fmt.Errorf("container sid for %q: profile registered but no SID returned", name)
+	}
+	return nil, fmt.Errorf("container sid for %q: %w", name, syscall.Errno(hr))
 }
 
 // prepareConfinedRoots grants the container SID the access the spec
@@ -123,41 +151,82 @@ func containerSidFor(workspace string) (*windows.SID, error) {
 // launched binary"s own directory per launch.
 //
 // Grants are additive and shared across launches (the memoized
-// grantAccess makes repeated launches free); CleanupContainerGrants
-// revokes them on app shutdown so host DACLs return to their
-// pre-launch state.
+// grantAccess makes repeated launches free); ephemeral grants are
+// revoked on app shutdown by CleanupContainerGrants, while cache
+// roots (toolchain caches, temp) are granted persistently so their
+// subtree crawls are reused by the next session.
 func prepareConfinedRoots(sid *windows.SID, spec Spec) error {
-	if err := grantRoot(spec.WorkspaceRoot, sid, accessFor(false)); err != nil {
-		return err
+	type rootGrant struct {
+		path       string
+		mask       windows.ACCESS_MASK
+		persistent bool
 	}
+	roots := []rootGrant{{path: spec.WorkspaceRoot, mask: accessFor(false)}}
 	for _, root := range spec.ReadOnlyRoots {
-		if err := grantRoot(root, sid, accessFor(true)); err != nil {
-			return err
-		}
+		roots = append(roots, rootGrant{path: root, mask: accessFor(true), persistent: true})
 	}
+	// Persistent ACEs survive shutdown, so only the default cache and
+	// temp roots — the stable toolchain locations — keep their grants
+	// across sessions. Extra trusted roots (pathguard additions) are
+	// config-driven and can be removed again: granting them
+	// persistently would leave the container SID with write access to
+	// a directory the current spec no longer trusts.
+	defaultRW := DefaultReadWriteDirs()
 	for _, root := range spec.ReadWriteRoots {
-		if err := grantRoot(root, sid, accessFor(false)); err != nil {
-			return err
+		persistent := false
+		for _, d := range defaultRW {
+			if strings.EqualFold(root, d) {
+				persistent = true
+				break
+			}
 		}
+		roots = append(roots, rootGrant{path: root, mask: accessFor(false), persistent: persistent})
 	}
-	// DenyRead needs no code here: everything outside the granted
-	// roots is default-denied for the container identity.
-	return nil
+
+	// The kernel-side crawls are independent per root and run
+	// without the ACL mutex, so a bounded fan-out overlaps them.
+	// The crawl is kernel-internal and CPU-bound, so more than a
+	// few in parallel buys nothing.
+	var mu sync.Mutex
+	var errs []error
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 4)
+	for _, r := range roots {
+		wg.Add(1)
+		go func(r rootGrant) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			grant := grantAccess
+			if r.persistent {
+				grant = grantAccessPersistent
+			}
+			if err := grantRoot(r.path, sid, r.mask, grant); err != nil {
+				mu.Lock()
+				errs = append(errs, fmt.Errorf("%s: %w", r.path, err))
+				mu.Unlock()
+			}
+		}(r)
+	}
+	wg.Wait()
+	return errors.Join(errs...)
 }
 
-// grantRoot applies grantAccess, tolerating roots the toolchain has
-// not created yet and roots we do not own: a read-only root that
-// refuses the ACE (POSIX-style paths like /dev, foreign-volume
-// directories) stays default-denied for the container, which is the
-// safe direction — the kernel boundary still holds everywhere else.
-func grantRoot(path string, sid *windows.SID, accessMask windows.ACCESS_MASK) error {
+// grantRoot applies the given grant function, tolerating roots the
+// toolchain has not created yet and roots we do not own: a read-only
+// root that refuses the ACE (POSIX-style paths like /dev,
+// foreign-volume directories) stays default-denied for the container,
+// which is the safe direction — the kernel boundary still holds
+// everywhere else.
+func grantRoot(path string, sid *windows.SID, accessMask windows.ACCESS_MASK,
+	grantFn func(string, *windows.SID, windows.ACCESS_MASK) error) error {
 	if _, err := os.Stat(path); err != nil {
 		if os.IsNotExist(err) {
 			return nil
 		}
 		return err
 	}
-	err := grantAccess(path, sid, accessMask)
+	err := grantFn(path, sid, accessMask)
 	if err != nil && errors.Is(err, windows.ERROR_ACCESS_DENIED) {
 		return nil
 	}
@@ -563,6 +632,7 @@ func SpawnConfined(argv []string, env []string, dir string, spec Spec, stdin io.
 	// launcher's copy after the job assignment keeps one alive.
 	releaseJob, cerr := attachContainmentJob(pi.Process, true)
 	if cerr != nil {
+		_ = proc.Release()
 		_ = windows.TerminateProcess(pi.Process, 1)
 		windows.CloseHandle(pi.Process)
 		return nil, cerr
@@ -570,6 +640,7 @@ func SpawnConfined(argv []string, env []string, dir string, spec Spec, stdin io.
 	// Containment is in place: let the child run.
 	if _, err := windows.ResumeThread(pi.Thread); err != nil {
 		releaseJob()
+		_ = proc.Release()
 		_ = windows.TerminateProcess(pi.Process, 1)
 		windows.CloseHandle(pi.Process)
 		windows.CloseHandle(pi.Thread)
@@ -579,5 +650,11 @@ func SpawnConfined(argv []string, env []string, dir string, spec Spec, stdin io.
 	return &ConfinedProcess{proc: proc, release: func() {
 		releaseJob()
 		windows.CloseHandle(pi.Process)
+		// The os.Process from FindProcess holds its own handle,
+		// closed by Wait or by GC cleanup. The Kill path reaches
+		// this release without a Wait, so release the process
+		// explicitly; on the Wait path the process is already
+		// released and the second call is a harmless EINVAL.
+		_ = proc.Release()
 	}, copiers: &stdio.copiers}, nil
 }

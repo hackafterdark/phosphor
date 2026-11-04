@@ -32,8 +32,8 @@ type JobOutputResponseMetadata struct {
 	WorkingDirectory string `json:"working_directory"`
 }
 
-func NewJobOutputTool(policy *Policy) fantasy.AgentTool {
-	return fantasy.NewAgentTool(
+func NewJobOutputTool(workingDir string, policy *Policy) fantasy.AgentTool {
+	return fantasy.NewParallelAgentTool(
 		JobOutputToolName,
 		jobOutputDescription,
 		func(ctx context.Context, params JobOutputParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
@@ -80,14 +80,16 @@ func NewJobOutputTool(policy *Policy) fantasy.AgentTool {
 			}
 
 			output := strings.Join(outputParts, "\n")
-			output = TruncateOutput(output)
 			// Background jobs buffer raw output, so redact on read too (the
 			// formatOutput hook only covers foreground completion). Drop self-labelled
 			// secret fields when the job emitted a bare JSON document, then scrub the
 			// value scanner's findings. Path-less, so scanned in full mode under the
-			// read-path secrets toggle.
+			// read-path secrets toggle. Redaction runs before truncation so the
+			// spilled artifact only holds scrubbed content.
 			output = RedactJSONForTool(output, "job_output", policy)
 			output = redactSecretsForTool(output, "", "job_output", policy)
+			sessionID := GetSessionFromContext(ctx)
+			output = truncateForSpill(output, workingDir, sessionID, JobOutputToolName)
 
 			metadata := JobOutputResponseMetadata{
 				ShellID:          params.ShellID,

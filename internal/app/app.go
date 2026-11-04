@@ -160,6 +160,13 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore, skillsMgr
 		runCompletions:     pubsub.NewBroker[notify.RunComplete](),
 	}
 
+	// Pre-apply sandbox container ACEs in the background so the first
+	// sandboxed bash command does not pay the kernel-side subtree
+	// crawl while the user waits (on large trees it runs for minutes
+	// and the command appears to hang). Grants are additive and are
+	// revoked at shutdown by CleanupContainerGrants like any others.
+	sandbox.PreWarm(cfg.Tools.Bash.BashSandboxMode(), store.WorkingDir(), cfg.Tools.Bash.BashSandboxLimits())
+
 	// Initialize the workspace symbol index store.
 	indexStore, err := workspaceindex.NewStore(store.WorkingDir())
 	if err != nil {

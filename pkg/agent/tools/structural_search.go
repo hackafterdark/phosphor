@@ -497,7 +497,7 @@ done:
 
 // NewStructuralSearchTool creates a new structural search tool.
 func NewStructuralSearchTool(workingDir string, langFilter []string) fantasy.AgentTool {
-	return fantasy.NewAgentTool(
+	return fantasy.NewParallelAgentTool(
 		"structural_search",
 		structuralSearchDescription(langFilter),
 		func(ctx context.Context, params StructuralSearchParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {

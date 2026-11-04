@@ -215,7 +215,7 @@ func dispatchShebang(ctx context.Context, scriptPath string, probe []byte, args 
 	cmd.Stdout = hc.Stdout
 	cmd.Stderr = hc.Stderr
 	isolateProcess(cmd)
-	child, refused := confineSpawn(cmd, sbx, hc.Stderr)
+	child, refused := confineSpawn(ctx, cmd, sbx, hc.Stderr)
 	if refused != nil {
 		return refused
 	}

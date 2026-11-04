@@ -22,7 +22,7 @@ type SemanticSearchParams struct {
 }
 
 func NewSemanticSearchTool(cfg config.Config, workingDir string) fantasy.AgentTool {
-	return fantasy.NewAgentTool(
+	return fantasy.NewParallelAgentTool(
 		SemanticSearchToolName,
 		semanticSearchDescription(),
 		func(ctx context.Context, params SemanticSearchParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {

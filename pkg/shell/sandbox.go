@@ -7,11 +7,23 @@ import (
 	"log/slog"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/hackafterdark/phosphor/pkg/egress"
 	"github.com/hackafterdark/phosphor/pkg/sandbox"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 	"mvdan.cc/sh/v3/interp"
 )
+
+// shellTracer traces confined-launch setup. It uses the upstream otel
+// API directly because pkg/otel imports pkg/config, which imports
+// pkg/shell — routing through pkg/otel here would form an import
+// cycle. The global tracer provider is shared, so these spans land in
+// the same trace buffer as the tool spans.
+var shellTracer = otel.Tracer("github.com/hackafterdark/phosphor/pkg/shell")
 
 // SandboxDegradedWarning is surfaced in tool output when kernel sandboxing
 // was requested but the host could not apply the full policy. The kernel
@@ -89,6 +101,13 @@ func confineProcess(cmd *exec.Cmd, sbx *sandboxPolicy, stderr io.Writer) error {
 	return nil
 }
 
+// confineSpawnTimeout is the setup-time threshold above which the
+// confinement of a single command is logged. Confined launch setup is
+// normally sub-millisecond; anything past this is a bottleneck worth
+// attributing (ACL crawl contention, grant racing pre-warm, host
+// slowdown) rather than silent waiting.
+const confineSpawnTimeout = 100 * time.Millisecond
+
 // confineSpawn routes the child through the kernel-confinement direct
 // launch path when the platform requires it (Windows 11 AppContainer).
 // Returns a non-nil ConfinedChild when the kernel launched the child —
@@ -98,15 +117,33 @@ func confineProcess(cmd *exec.Cmd, sbx *sandboxPolicy, stderr io.Writer) error {
 // workspace mode records the degradation and falls through to the
 // exec.Cmd path, which still carries whatever partial containment
 // Confine can attach.
-func confineSpawn(cmd *exec.Cmd, sbx *sandboxPolicy, stderr io.Writer) (sandbox.ConfinedChild, error) {
+//
+// The setup phase is wrapped in an otel span so its duration is
+// attributable in traces, and slow setups are logged at Info.
+func confineSpawn(ctx context.Context, cmd *exec.Cmd, sbx *sandboxPolicy, stderr io.Writer) (sandbox.ConfinedChild, error) {
 	if sbx == nil {
 		return nil, nil
 	}
+	ctx, span := shellTracer.Start(ctx, "sandbox.confine_spawn",
+		trace.WithAttributes(attribute.String("argv0", cmd.Path)))
+	defer span.End()
+	started := time.Now()
+	// The threshold check runs in the defer so the exec.Cmd fallback
+	// path is timed too: when SpawnConfinedChild fails, confineProcess
+	// carries the actual setup cost.
+	defer func() {
+		if d := time.Since(started); d > confineSpawnTimeout {
+			slog.Info("Confined launch setup was slow",
+				"argv0", cmd.Path, "dur", d, "mode", sbx.mode)
+		}
+	}()
 	child, err := sandbox.SpawnConfinedChild(cmd, sbx.mode, sbx.spec)
 	if err == nil && child != nil {
 		return child, nil
 	}
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		if strings.EqualFold(sbx.mode, "strict") {
 			fmt.Fprintf(stderr, "%s: %v\n", SandboxRefusalMarker, err)
 			return nil, interp.ExitStatus(126)

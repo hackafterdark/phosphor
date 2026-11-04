@@ -31,7 +31,7 @@ func NewPhosphorInfoTool(
 	activeSkills []*skills.Skill,
 	skillTracker *skills.Tracker,
 ) fantasy.AgentTool {
-	return fantasy.NewAgentTool(
+	return fantasy.NewParallelAgentTool(
 		PhosphorInfoToolName,
 		phosphorInfoDescription,
 		func(ctx context.Context, _ PhosphorInfoParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
@@ -329,10 +329,19 @@ func writeSkills(b *strings.Builder, allSkills []*skills.Skill, activeSkills []*
 	}
 	var entries []entry
 
+	// Snapshot the tracker once: parallel tool execution can load a
+	// skill between reads, and the listed states must agree with the
+	// header count.
+	loadedNames := tracker.LoadedNames()
+	loadedSet := make(map[string]bool, len(loadedNames))
+	for _, name := range loadedNames {
+		loadedSet[name] = true
+	}
+
 	// Active skills: loaded or unloaded.
 	for _, s := range activeSkills {
 		state := "unloaded"
-		if tracker.IsLoaded(s.Name) {
+		if loadedSet[s.Name] {
 			state = "loaded"
 		}
 		origin := originMap[s.Name]
@@ -350,7 +359,7 @@ func writeSkills(b *strings.Builder, allSkills []*skills.Skill, activeSkills []*
 
 	slices.SortFunc(entries, func(a, b entry) int { return strings.Compare(a.name, b.name) })
 	b.WriteString("[skills]\n")
-	fmt.Fprintf(b, "loaded_this_session = %d/%d\n", tracker.LoadedCount(), len(activeSkills))
+	fmt.Fprintf(b, "loaded_this_session = %d/%d\n", len(loadedNames), len(activeSkills))
 	for _, e := range entries {
 		fmt.Fprintf(b, "%s = %s, %s\n", e.name, e.origin, e.state)
 	}

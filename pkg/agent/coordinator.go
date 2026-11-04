@@ -1139,7 +1139,7 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, isSubA
 
 	allTools = append(
 		allTools,
-		tools.NewJobOutputTool(c.redactionPolicy),
+		tools.NewJobOutputTool(c.cfg.WorkingDir(), c.redactionPolicy),
 		tools.NewJobKillTool(),
 		tools.NewDownloadTool(c.permissions, c.cfg.WorkingDir(), c.cfg.Config(), networkClient),
 		tools.NewEditTool(c.lspManager, c.permissions, c.history, c.filetracker, c.cfg.WorkingDir(), c.redactionPolicy),

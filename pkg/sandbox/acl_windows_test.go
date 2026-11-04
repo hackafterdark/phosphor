@@ -4,7 +4,9 @@ package sandbox
 
 import (
 	"context"
+	"sync"
 	"testing"
+	"time"
 	"unsafe"
 
 	"github.com/stretchr/testify/require"
@@ -133,4 +135,176 @@ func TestCleanupContainerGrantsHonorsDeadline(t *testing.T) {
 	require.NoError(t, CleanupContainerGrants(context.Background()))
 	require.False(t, hasContainerAce(t, dir, sid),
 		"retained grant must be revoked on the next teardown")
+}
+
+// TestGrantAccessPersistentSurvivesTeardown pins the cache-root
+// contract: persistent grants are not revoked at teardown, so the
+// kernel-side subtree crawl is reused by the next session.
+func TestGrantAccessPersistentSurvivesTeardown(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	sid, err := deriveContainerSid("phosphor.sandbox.persist")
+	require.NoError(t, err)
+	defer windows.FreeSid(sid)
+
+	require.NoError(t, grantAccessPersistent(dir, sid, accessFor(false)))
+	require.True(t, hasContainerAce(t, dir, sid),
+		"container ACE missing after persistent grant")
+
+	require.NoError(t, CleanupContainerGrants(context.Background()))
+	require.True(t, hasContainerAce(t, dir, sid),
+		"persistent ACE must survive teardown for reuse next session")
+}
+
+// TestGrantAccessPersistentReusesMemoAcrossRestart verifies the
+// persisted memo short-circuits the crawl after a restart: with the
+// in-memory memo forgotten, the DACL-verified memo hit must return
+// promptly instead of re-crawling the subtree.
+func TestGrantAccessPersistentReusesMemoAcrossRestart(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	sid, err := deriveContainerSid("phosphor.sandbox.restart")
+	require.NoError(t, err)
+	defer windows.FreeSid(sid)
+
+	g := grant{path: dir, sid: sid.String(), mask: accessFor(false), persistent: true}
+	require.NoError(t, grantAccessPersistent(dir, sid, accessFor(false)))
+
+	// Simulate process restart: forget the in-memory memo entry.
+	aclMu.Lock()
+	delete(grantedAce, g.key())
+	aclMu.Unlock()
+
+	start := time.Now()
+	require.NoError(t, grantAccessPersistent(dir, sid, accessFor(false)))
+	require.Less(t, time.Since(start), 5*time.Second,
+		"memo reuse must skip the kernel crawl")
+	require.True(t, hasContainerAce(t, dir, sid))
+	require.NoError(t, CleanupContainerGrants(context.Background()))
+}
+
+// TestGrantAccessPersistentRecrawlsWhenAceRemoved verifies the memo
+// file is only a cache hint: when a third party resets the DACL, the
+// DACL probe must force the full crawl again rather than trusting the
+// file.
+func TestGrantAccessPersistentRecrawlsWhenAceRemoved(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	sid, err := deriveContainerSid("phosphor.sandbox.invalidation")
+	require.NoError(t, err)
+	defer windows.FreeSid(sid)
+
+	g := grant{path: dir, sid: sid.String(), mask: accessFor(false), persistent: true}
+	require.NoError(t, grantAccessPersistent(dir, sid, accessFor(false)))
+	require.True(t, hasContainerAce(t, dir, sid))
+
+	// A third party resets the DACL: the memo file still says
+	// granted, but the missing ACE must force a re-grant.
+	require.NoError(t, revokeAccess(context.Background(), g))
+	require.False(t, hasContainerAce(t, dir, sid))
+
+	aclMu.Lock()
+	delete(grantedAce, g.key())
+	aclMu.Unlock()
+	require.NoError(t, grantAccessPersistent(dir, sid, accessFor(false)))
+	require.True(t, hasContainerAce(t, dir, sid),
+		"missing ACE must force a re-grant despite the memo file")
+	require.NoError(t, CleanupContainerGrants(context.Background()))
+}
+
+// TestGrantAccessConcurrentRoots verifies independent roots can
+// crawl in parallel: the ACL mutex now covers only the DACL merge,
+// so concurrent grants on distinct paths must both land their ACEs.
+// Run with -race to catch ACL-mutex contract violations.
+func TestGrantAccessConcurrentRoots(t *testing.T) {
+	dirA := t.TempDir()
+	dirB := t.TempDir()
+	sid, err := deriveContainerSid("phosphor.sandbox.parallel")
+	require.NoError(t, err)
+	defer windows.FreeSid(sid)
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 2)
+	for _, dir := range []string{dirA, dirB} {
+		wg.Add(1)
+		go func(dir string) {
+			defer wg.Done()
+			if err := grantAccess(dir, sid, accessFor(false)); err != nil {
+				errs <- err
+			}
+		}(dir)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		require.NoError(t, err)
+	}
+	require.True(t, hasContainerAce(t, dirA, sid))
+	require.True(t, hasContainerAce(t, dirB, sid))
+	require.NoError(t, CleanupContainerGrants(context.Background()))
+}
+
+// TestGrantAccessReappliesAfterExternalReset verifies the in-memory
+// memo entry is not the source of truth: when a third party removes
+// the ACE while the memo stands, the DACL probe must force a re-grant
+// instead of short-circuiting and denying the child until restart.
+func TestGrantAccessReappliesAfterExternalReset(t *testing.T) {
+	dir := t.TempDir()
+	sid, err := deriveContainerSid("phosphor.sandbox.stalememo")
+	require.NoError(t, err)
+	defer windows.FreeSid(sid)
+
+	g := grant{path: dir, sid: sid.String(), mask: accessFor(false)}
+	require.NoError(t, grantAccess(dir, sid, accessFor(false)))
+	require.True(t, hasContainerAce(t, dir, sid))
+
+	// A third party removes the ACE; the memo entry stays behind.
+	// The existing revocation tests delete the memo entry first, so
+	// this stale-memo path is otherwise uncovered.
+	require.NoError(t, revokeAccess(context.Background(), g))
+	require.False(t, hasContainerAce(t, dir, sid))
+
+	// The stale memo must not short-circuit the grant: the DACL
+	// probe sees the missing ACE and re-applies it.
+	require.NoError(t, grantAccess(dir, sid, accessFor(false)))
+	require.True(t, hasContainerAce(t, dir, sid),
+		"stale memo entry must fall through to re-apply")
+	require.NoError(t, CleanupContainerGrants(context.Background()))
+}
+
+// TestGrantAccessConcurrentSameRootTwoSids verifies the serialization
+// covers the case the mutex cannot: two container SIDs granting the
+// same root (e.g. the shared temp dir across workspaces) must both
+// keep their ACEs, never dropping one via an interleaved
+// read-modify-write. Run with -race.
+func TestGrantAccessConcurrentSameRootTwoSids(t *testing.T) {
+	dir := t.TempDir()
+	sidA, err := deriveContainerSid("phosphor.sandbox.samewsid1")
+	require.NoError(t, err)
+	defer windows.FreeSid(sidA)
+	sidB, err := deriveContainerSid("phosphor.sandbox.samewsid2")
+	require.NoError(t, err)
+	defer windows.FreeSid(sidB)
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 2)
+	for _, sid := range []*windows.SID{sidA, sidB} {
+		wg.Add(1)
+		go func(sid *windows.SID) {
+			defer wg.Done()
+			if err := grantAccess(dir, sid, accessFor(false)); err != nil {
+				errs <- err
+			}
+		}(sid)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		require.NoError(t, err)
+	}
+	require.True(t, hasContainerAce(t, dir, sidA),
+		"first container ACE must survive the second grant")
+	require.True(t, hasContainerAce(t, dir, sidB),
+		"second container ACE must be applied")
+	require.NoError(t, CleanupContainerGrants(context.Background()))
 }

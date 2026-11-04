@@ -34,6 +34,24 @@ func cmdExe(t *testing.T) string {
 	return path
 }
 
+// TestContainerSidForStableAcrossReregistration pins the identity
+// contract containerSidFor relies on: the registered profile SID is
+// deterministic, so deleting and re-registering yields the identical
+// SID. The kernel derives the profile SID from (user, name); the
+// name-only SID from DeriveAppContainerSidFromAppContainerName is a
+// different identity and the kernel rejects launches carrying it.
+func TestContainerSidForStableAcrossReregistration(t *testing.T) {
+	ws := t.TempDir()
+	first, err := containerSidFor(ws)
+	require.NoError(t, err)
+	defer windows.FreeSid(first)
+	second, err := containerSidFor(ws)
+	require.NoError(t, err)
+	defer windows.FreeSid(second)
+	require.True(t, windows.EqualSid(first, second),
+		"container SID must be stable across delete+re-register")
+}
+
 func TestAppContainerAllowsWorkspaceWrite(t *testing.T) {
 	requireAppContainer(t)
 	ws := t.TempDir()

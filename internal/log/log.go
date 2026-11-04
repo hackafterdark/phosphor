@@ -5,12 +5,15 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"os"
 	"regexp"
+	"runtime"
 	"runtime/debug"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"testing"
 	"time"
 
 	"github.com/charmbracelet/x/term"
@@ -28,6 +31,22 @@ type LogConfig struct {
 	MaxBackups int
 	Compress   bool
 	Filters    []LogFilter
+	// SourceLevels sets a minimum log level for records whose source
+	// lives under the given package path prefix. Chatty third-party
+	// loggers (e.g. the LSP transport) can be capped at "info" while
+	// first-party debug logging stays enabled. nil applies the
+	// DefaultSourceLevels.
+	SourceLevels map[string]string
+}
+
+// DefaultSourceLevels caps third-party loggers that are chatty below
+// their error surface: the powernap LSP transport logs every message
+// and request at Debug, and gopls-style diagnostics publishing turns
+// that into megabytes per session. User configuration overrides these
+// entries (or re-enables them at a lower level).
+var DefaultSourceLevels = map[string]string{
+	"github.com/charmbracelet/x/powernap/pkg/transport": "info",
+	"github.com/charmbracelet/x/powernap/pkg/lsp":       "info",
 }
 
 // LogFilter defines a regex-based exclusion rule for log entries.
@@ -72,6 +91,17 @@ func Setup(logFile string, debug bool, ws ...io.Writer) {
 // wrapper that provides sensible defaults.
 func SetupWithConfig(logFile string, opts *LogConfig, debug bool, ws ...io.Writer) {
 	initOnce.Do(func() {
+		// Mirror stderr into the panic log before anything can crash:
+		// panic and runtime-fatal output goes straight to stderr and is
+		// otherwise lost with the terminal scrollback. The mirror holds
+		// its file open for the process lifetime (SetCrashOutput cannot
+		// be closed), which would wedge t.TempDir cleanup on Windows in
+		// any test binary that reaches Setup; test binaries get their
+		// crash reporting from the test framework instead.
+		if !testing.Testing() {
+			hookPanicLog(logFile)
+		}
+
 		// If logging is disabled, use discard handler.
 		if opts == nil || !opts.Enabled {
 			slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
@@ -117,17 +147,15 @@ func SetupWithConfig(logFile string, opts *LogConfig, debug bool, ws ...io.Write
 
 		// Build base JSON handler with optional filtering.
 		var baseHandler slog.Handler
+		baseHandler = slog.NewJSONHandler(logRotator, handlerOpts)
+		baseHandler = sourceGated(baseHandler, opts)
 		if len(opts.Filters) > 0 {
 			filters, err := compileFilters(opts.Filters)
 			if err != nil {
 				slog.Warn("Failed to compile log filters, logging without filters", "err", err)
-				baseHandler = slog.NewJSONHandler(logRotator, handlerOpts)
 			} else {
-				baseHandler = slog.NewJSONHandler(logRotator, handlerOpts)
 				baseHandler = &filteredHandler{inner: baseHandler, filters: filters}
 			}
-		} else {
-			baseHandler = slog.NewJSONHandler(logRotator, handlerOpts)
 		}
 
 		var handlers []slog.Handler
@@ -139,30 +167,22 @@ func SetupWithConfig(logFile string, opts *LogConfig, debug bool, ws ...io.Write
 			}
 			if f, ok := w.(term.File); ok && term.IsTerminal(f.Fd()) {
 				var termHandler slog.Handler
+				termHandler = sourceGated(slog.NewTextHandler(w, handlerOpts), opts)
 				if len(opts.Filters) > 0 {
 					filters, err := compileFilters(opts.Filters)
-					if err != nil {
-						termHandler = slog.NewTextHandler(w, handlerOpts)
-					} else {
-						termHandler = slog.NewTextHandler(w, handlerOpts)
+					if err == nil {
 						termHandler = &filteredHandler{inner: termHandler, filters: filters}
 					}
-				} else {
-					termHandler = slog.NewTextHandler(w, handlerOpts)
 				}
 				handlers = append(handlers, termHandler)
 			} else {
 				var jsonHandler slog.Handler
+				jsonHandler = sourceGated(slog.NewJSONHandler(w, handlerOpts), opts)
 				if len(opts.Filters) > 0 {
 					filters, err := compileFilters(opts.Filters)
-					if err != nil {
-						jsonHandler = slog.NewJSONHandler(w, handlerOpts)
-					} else {
-						jsonHandler = slog.NewJSONHandler(w, handlerOpts)
+					if err == nil {
 						jsonHandler = &filteredHandler{inner: jsonHandler, filters: filters}
 					}
-				} else {
-					jsonHandler = slog.NewJSONHandler(w, handlerOpts)
 				}
 				handlers = append(handlers, jsonHandler)
 			}
@@ -171,6 +191,131 @@ func SetupWithConfig(logFile string, opts *LogConfig, debug bool, ws ...io.Write
 		slog.SetDefault(slog.New(slog.NewMultiHandler(handlers...)))
 		initialized.Store(true)
 	})
+}
+
+// sourceGated wraps h with a per-source minimum-level gate. The
+// default gates (DefaultSourceLevels) apply unless SourceLevels is set
+// explicitly; user entries are merged over the defaults so a source
+// can be re-enabled by naming it at a lower level.
+func sourceGated(h slog.Handler, opts *LogConfig) slog.Handler {
+	levels := maps.Clone(DefaultSourceLevels)
+	maps.Copy(levels, opts.SourceLevels)
+	gates := make(map[string]slog.Level, len(levels))
+	maxGate := slog.LevelDebug
+	for prefix, name := range levels {
+		if prefix == "" {
+			// An empty prefix matches every source file and would
+			// gate the whole log; drop it before it reaches the handler.
+			continue
+		}
+		lvl, ok := parseLevel(name)
+		if !ok {
+			continue
+		}
+		gates[prefix] = lvl
+		if lvl > maxGate {
+			maxGate = lvl
+		}
+	}
+	if len(gates) == 0 {
+		return h
+	}
+	return &sourceGatedHandler{inner: h, gates: gates, maxGate: maxGate}
+}
+
+func parseLevel(name string) (slog.Level, bool) {
+	switch strings.ToLower(name) {
+	case "debug":
+		return slog.LevelDebug, true
+	case "info":
+		return slog.LevelInfo, true
+	case "warn":
+		return slog.LevelWarn, true
+	case "error":
+		return slog.LevelError, true
+	default:
+		return 0, false
+	}
+}
+
+// sourceGatedHandler drops records whose source lives under a gated
+// package prefix and whose level is below the gate. Source resolution
+// is skipped unless the record could possibly be gated.
+type sourceGatedHandler struct {
+	inner   slog.Handler
+	gates   map[string]slog.Level
+	maxGate slog.Level
+}
+
+func (h *sourceGatedHandler) Enabled(ctx context.Context, level slog.Level) bool {
+	return h.inner.Enabled(ctx, level)
+}
+
+func (h *sourceGatedHandler) Handle(ctx context.Context, r slog.Record) error {
+	if r.Level < h.maxGate && r.PC != 0 {
+		if file, ok := recordSourceFile(r.PC); ok {
+			file = normalizeModuleCacheFile(file)
+			for prefix, lvl := range h.gates {
+				if strings.Contains(file, prefix) && r.Level < lvl {
+					return nil
+				}
+			}
+		}
+	}
+	return h.inner.Handle(ctx, r)
+}
+
+// moduleCacheNorm caches source-file normalization per call site; the
+// file behind a PC never changes, so one normalization per PC is enough.
+var moduleCacheNorm sync.Map // uintptr -> string
+
+// normalizeModuleCacheFile removes the module-cache version segment so
+// gate prefixes match third-party sources compiled from the module
+// cache: <modcache>/github.com/charmbracelet/x/powernap@v0.3.0/pkg/...
+// reads as <modcache>/github.com/charmbracelet/x/powernap/pkg/....
+// The result is memoized per PC in the handler, keyed here by file.
+func normalizeModuleCacheFile(file string) string {
+	if v, ok := moduleCacheNorm.Load(file); ok {
+		return v.(string)
+	}
+	normalized := stripModuleCacheVersion(file)
+	moduleCacheNorm.Store(file, normalized)
+	return normalized
+}
+
+func stripModuleCacheVersion(file string) string {
+	const marker = "/pkg/mod/"
+	i := strings.Index(file, marker)
+	if i < 0 {
+		return file
+	}
+	rest := file[i+len(marker):]
+	at := strings.IndexByte(rest, '@')
+	if at < 0 {
+		return file
+	}
+	slash := strings.IndexByte(rest[at:], '/')
+	if slash < 0 {
+		return file
+	}
+	return file[:i+len(marker)] + rest[:at] + rest[at+slash:]
+}
+
+func (h *sourceGatedHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	return &sourceGatedHandler{inner: h.inner.WithAttrs(attrs), gates: h.gates, maxGate: h.maxGate}
+}
+
+func (h *sourceGatedHandler) WithGroup(name string) slog.Handler {
+	return &sourceGatedHandler{inner: h.inner.WithGroup(name), gates: h.gates, maxGate: h.maxGate}
+}
+
+func recordSourceFile(pc uintptr) (string, bool) {
+	frames := runtime.CallersFrames([]uintptr{pc})
+	frame, _ := frames.Next()
+	if frame.File == "" {
+		return "", false
+	}
+	return frame.File, true
 }
 
 // compileFilters compiles regex filters from config. Returns compiled filters

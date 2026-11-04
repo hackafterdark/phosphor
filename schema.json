@@ -550,7 +550,7 @@
         },
         "max_backups": {
           "type": "integer",
-          "description": "Maximum number of old log files to retain",
+          "description": "Maximum number of old log files to retain; 0 keeps all until MaxAgeDays expires",
           "default": 0
         },
         "compress": {
@@ -564,6 +564,13 @@
           },
           "type": "array",
           "description": "Regex filters to exclude matching log entries. Each filter has field and pattern keys."
+        },
+        "source_levels": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object",
+          "description": "Minimum log level per source package prefix"
         }
       },
       "additionalProperties": false,
@@ -1290,6 +1297,10 @@
           "type": "boolean",
           "description": "Force read-only mode"
         },
+        "disable_yolo": {
+          "type": "boolean",
+          "description": "Pin YOLO mode off for all workspaces (operator-only)"
+        },
         "redact_outgoing_secrets": {
           "type": "boolean",
           "description": "Last-resort secret mask on the provider request body"
@@ -1672,6 +1683,13 @@
             "strict"
           ],
           "description": "Kernel-enforced sandbox for bash children: off"
+        },
+        "auto_escalate_commands": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Commands whose sandbox escalations auto-approve without prompting (argv-verified; workspace may narrow"
         },
         "sandbox_limits": {
           "$ref": "#/$defs/ToolBashLimits",

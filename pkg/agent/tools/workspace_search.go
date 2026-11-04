@@ -22,7 +22,7 @@ type WorkspaceSearchParams struct {
 }
 
 func NewWorkspaceSearchTool(workingDir string) fantasy.AgentTool {
-	return fantasy.NewAgentTool(
+	return fantasy.NewParallelAgentTool(
 		WorkspaceSearchToolName,
 		workspaceSearchDescription(),
 		func(ctx context.Context, params WorkspaceSearchParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {

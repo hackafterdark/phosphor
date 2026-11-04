@@ -35,7 +35,7 @@ type SearchParams struct {
 // NewMemorySearchTool builds the retrieval tool. Reads are always allowed, including
 // for non-primary agent contexts: a subagent may recall, it just may not write.
 func NewMemorySearchTool(cfg *config.ConfigStore, workingDir string) fantasy.AgentTool {
-	return fantasy.NewAgentTool(
+	return fantasy.NewParallelAgentTool(
 		SearchToolName,
 		renderMemorySearchDescription(),
 		func(ctx context.Context, params SearchParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
