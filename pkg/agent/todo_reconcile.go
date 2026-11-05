@@ -24,6 +24,12 @@ import (
 // Errors are logged, not returned: reconciliation is state hygiene on a
 // terminal path and must never alter the run's outcome.
 func (a *sessionAgent) reconcileStaleTodos(ctx context.Context, sessionID string) {
+	// The terminal defer runs after workspace shutdown cancels the run
+	// context, so detach the cancellation (bounded by a timeout) or the
+	// database writes below would be rejected exactly when reconciliation
+	// matters most.
+	ctx, cancel := durableWriteCtx(ctx)
+	defer cancel()
 	currentSession, err := a.sessions.Get(ctx, sessionID)
 	if err != nil {
 		slog.Warn("Failed to load session for todo reconciliation", "error", err, "session_id", sessionID)

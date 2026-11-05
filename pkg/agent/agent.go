@@ -859,11 +859,19 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 			}
 			if err := a.persistCanceledTurn(ctx, call, false); err != nil {
 				complete.Error = err.Error()
-				a.reconcileStaleTodos(ctx, call.SessionID)
+				// Skip reconciliation while another handle owns the
+				// session: it may have legitimately marked a todo
+				// in_progress after this cancel arrived, and its own
+				// terminal defer reconciles.
+				if !a.IsSessionBusy(call.SessionID) {
+					a.reconcileStaleTodos(ctx, call.SessionID)
+				}
 				a.publishRunComplete(ctx, call, complete)
 				return nil, err
 			}
-			a.reconcileStaleTodos(ctx, call.SessionID)
+			if !a.IsSessionBusy(call.SessionID) {
+				a.reconcileStaleTodos(ctx, call.SessionID)
+			}
 			a.publishRunComplete(ctx, call, complete)
 			return nil, nil
 		}

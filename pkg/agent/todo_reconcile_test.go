@@ -47,8 +47,19 @@ func TestReconcileStaleTodosLeavesCleanListAlone(t *testing.T) {
 	_, err = env.sessions.Save(t.Context(), sess)
 	require.NoError(t, err)
 
+	// Observe writes directly: Save on an unchanged session would rewrite
+	// the same todos and still pass a Todos-equality assertion, so assert
+	// that no session UpdatedEvent is published during reconciliation.
+	events := env.sessions.Subscribe(t.Context())
+
 	sa := testSessionAgent(env, nil, nil, "system").(*sessionAgent)
 	sa.reconcileStaleTodos(t.Context(), sess.ID)
+
+	select {
+	case ev := <-events:
+		t.Fatalf("unexpected session update event: %+v", ev)
+	default:
+	}
 
 	got, err := env.sessions.Get(t.Context(), sess.ID)
 	require.NoError(t, err)
