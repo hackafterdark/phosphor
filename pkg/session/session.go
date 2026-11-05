@@ -75,6 +75,10 @@ type Service interface {
 	GetLast(ctx context.Context) (Session, error)
 	List(ctx context.Context) ([]Session, error)
 	Save(ctx context.Context, session Session) (Session, error)
+	// UpdateTodos writes only the todos column and publishes the
+	// updated session, leaving title, usage, and summary fields
+	// untouched. Safe alongside concurrent title/usage writers.
+	UpdateTodos(ctx context.Context, sessionID string, todos []Todo) error
 	UpdateTitleAndUsage(ctx context.Context, sessionID, title string, promptTokens, completionTokens int64, cost float64) error
 	RecordTokenUsage(ctx context.Context, sessionID, model, provider string, promptTokens, completionTokens, reasoningTokens int64, cost float64) error
 	Rename(ctx context.Context, id string, title string) error
@@ -254,6 +258,24 @@ func (s *service) Save(ctx context.Context, session Session) (Session, error) {
 	session.EstimatedUsage = estimatedUsage
 	s.Publish(pubsub.UpdatedEvent, session)
 	return session, nil
+}
+
+func (s *service) UpdateTodos(ctx context.Context, sessionID string, todos []Todo) error {
+	todosJSON, err := marshalTodos(todos)
+	if err != nil {
+		return err
+	}
+	if err := s.q.UpdateSessionTodos(ctx, db.UpdateSessionTodosParams{
+		Todos: sql.NullString{
+			String: todosJSON,
+			Valid:  todosJSON != "",
+		},
+		ID: sessionID,
+	}); err != nil {
+		return err
+	}
+	s.publishSessionUpdate(ctx, sessionID)
+	return nil
 }
 
 // UpdateTitleAndUsage updates only the title and usage fields atomically.

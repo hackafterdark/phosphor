@@ -156,6 +156,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.updateSessionStmt, err = db.PrepareContext(ctx, updateSession); err != nil {
 		return nil, fmt.Errorf("error preparing query UpdateSession: %w", err)
 	}
+	if q.updateSessionTodosStmt, err = db.PrepareContext(ctx, updateSessionTodos); err != nil {
+		return nil, fmt.Errorf("error preparing query UpdateSessionTodos: %w", err)
+	}
 	if q.updateSessionTitleAndUsageStmt, err = db.PrepareContext(ctx, updateSessionTitleAndUsage); err != nil {
 		return nil, fmt.Errorf("error preparing query UpdateSessionTitleAndUsage: %w", err)
 	}
@@ -405,6 +408,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing updateSessionStmt: %w", cerr)
 		}
 	}
+	if q.updateSessionTodosStmt != nil {
+		if cerr := q.updateSessionTodosStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing updateSessionTodosStmt: %w", cerr)
+		}
+	}
 	if q.updateSessionTitleAndUsageStmt != nil {
 		if cerr := q.updateSessionTitleAndUsageStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing updateSessionTitleAndUsageStmt: %w", cerr)
@@ -531,6 +539,7 @@ type Queries struct {
 	updateGoalStatusStmt           *sql.Stmt
 	updateMessageStmt              *sql.Stmt
 	updateSessionStmt              *sql.Stmt
+	updateSessionTodosStmt         *sql.Stmt
 	updateSessionTitleAndUsageStmt *sql.Stmt
 	updateStatelessSessionStmt     *sql.Stmt
 	updatePinnedStmt               *sql.Stmt
@@ -586,6 +595,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		updateGoalStatusStmt:           q.updateGoalStatusStmt,
 		updateMessageStmt:              q.updateMessageStmt,
 		updateSessionStmt:              q.updateSessionStmt,
+		updateSessionTodosStmt:         q.updateSessionTodosStmt,
 		updateSessionTitleAndUsageStmt: q.updateSessionTitleAndUsageStmt,
 		updateStatelessSessionStmt:     q.updateStatelessSessionStmt,
 		listStatelessSessionsStmt:      q.listStatelessSessionsStmt,

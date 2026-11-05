@@ -117,4 +117,9 @@ ORDER BY updated_at ASC;
 DELETE FROM sessions
 WHERE parent_session_id IS NULL
   AND is_pinned = 0
-  AND updated_at <= ?;
+-- name: UpdateSessionTodos :exec
+UPDATE sessions
+SET
+    todos = ?,
+    updated_at = strftime('%s', 'now')
+WHERE id = ?;
