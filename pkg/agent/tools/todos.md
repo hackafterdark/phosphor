@@ -1,1 +1,1 @@
-Manage a structured task list for multi-step work; each task has pending/in_progress/completed state. Keep exactly one task in_progress at a time. Skip for simple or single-step tasks.
+Manage a structured task list for multi-step work; each task has pending/in_progress/completed state. Keep exactly one task in_progress at a time. Update statuses before ending the turn: the last todo must reach completed before your final response. Skip for simple or single-step tasks.

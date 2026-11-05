@@ -859,9 +859,11 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 			}
 			if err := a.persistCanceledTurn(ctx, call, false); err != nil {
 				complete.Error = err.Error()
+				a.reconcileStaleTodos(ctx, call.SessionID)
 				a.publishRunComplete(ctx, call, complete)
 				return nil, err
 			}
+			a.reconcileStaleTodos(ctx, call.SessionID)
 			a.publishRunComplete(ctx, call, complete)
 			return nil, nil
 		}
@@ -1163,6 +1165,11 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 		if skipRunComplete {
 			return
 		}
+		// Demote any todo the model left in_progress before the terminal
+		// event, so observers of RunComplete (and the next turn's prompt)
+		// never see stale active work. Covers completion, error, and
+		// cancel alike. See pkg/agent/todo_reconcile.go.
+		a.reconcileStaleTodos(ctx, call.SessionID)
 		complete := notify.RunComplete{SessionID: call.SessionID, RunID: call.RunID}
 		if currentAssistant != nil {
 			complete.MessageID = currentAssistant.ID
