@@ -274,7 +274,17 @@ func TestBashTool_InterpreterCodeExecutionBlocked(t *testing.T) {
 
 	workingDir := t.TempDir()
 	ctx := context.WithValue(context.Background(), SessionIDContextKey, "test-session")
-	tool := newBashToolForTest(workingDir)
+	// The sandbox stays off for this test: the allowed commands exec real
+	// interpreters, and on Windows the confined-launch ACL setup for those
+	// children can hold handles to the temp workspace long enough to race
+	// t.TempDir cleanup (observed on CI: setup blocked for 1m30s and the
+	// cleanup failed with "used by another process"). The sandbox denial
+	// path itself is covered by the escalation and escape-hatch tests;
+	// this one targets the argv interpreter blocker, which refuses the
+	// blocked forms with "not allowed for security reasons" regardless.
+	permissions := &mockBashPermissionService{Broker: pubsub.NewBroker[permission.PermissionRequest]()}
+	attribution := &config.Attribution{TrailerStyle: config.TrailerStyleNone}
+	tool := NewBashTool(permissions, workingDir, config.ToolBash{SandboxMode: config.SandboxModeOff}, attribution, "test-model", nil)
 
 	blocked := []string{
 		"python -c 'import os; print(os.environ)'",

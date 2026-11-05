@@ -83,6 +83,7 @@ Phosphor provides a comprehensive suite of agent tools organized by function. Ea
 | Tool | Description |
 |------|-------------|
 | `mcp_*` | Dynamically loaded tools from configured MCP servers. |
+| `tool_search` | Discovers deferred MCP tool schemas on demand (BM25 fuzzy or `select:<name>` exact lookup) so server tools stay out of the prompt until needed. |
 | `read_mcp_resource` | Read a specific resource from an MCP server by URI. |
 | `list_mcp_resources` | List all resources available from an MCP server. |
 
@@ -105,7 +106,7 @@ Phosphor provides a comprehensive suite of agent tools organized by function. Ea
 ## Quick Reference
 
 ```
-Total built-in tools: 34
+Total built-in tools: 35
 
 By category:
   File Operations:      9 tools (view, edit, write, append, multiedit, ls, glob, grep, view_node)
@@ -117,7 +118,7 @@ By category:
   Structural Search:    1 tool  (structural_search)
   Semantic Search:      1 tool  (semantic_search)
   Security:             1 tool  (scan_secrets)
-  MCP:                  3 tools (mcp_*, read_mcp_resource, list_mcp_resources)
+  MCP:                  4 tools (mcp_*, tool_search, read_mcp_resource, list_mcp_resources)
   System:               4 tools (phosphor_info, phosphor_logs, phosphor_trace, reload_queries)
   Task Management:      2 tools (update_goal, todos)
 ```
@@ -129,6 +130,7 @@ By category:
 - [Semantic Search](./SEMANTIC_SEARCH.md) — Usage, parameters, and tips for `semantic_search`.
 - [Structural Search](../structural_search/) — Templates, languages, and usage patterns for `structural_search`.
 - [Scan Secrets](./SCAN_SECRETS.md) — Usage, parameters, masking behavior, and ignore files for `scan_secrets`.
+- [Tool Search](./TOOL_SEARCH.md) — Deferred MCP tool schemas and on-demand discovery via `tool_search`.
 - [Codebase Indexing](../embeddings/CODEBASE_INDEXING.md) — Configuration, exclusion files, and how indexing works.
 - [MCP Tools](../hooks/) — Information about MCP server integration and dynamically loaded tools.
 

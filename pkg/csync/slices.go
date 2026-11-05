@@ -62,6 +62,21 @@ func (s *Slice[T]) Append(items ...T) {
 	s.inner = append(s.inner, items...)
 }
 
+// ReplaceOrSet replaces the first element satisfying match with item, or
+// appends item when no element matches. The check and the update happen
+// under the same lock, so concurrent callers can never duplicate an entry.
+func (s *Slice[T]) ReplaceOrSet(match func(T) bool, item T) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i, v := range s.inner {
+		if match(v) {
+			s.inner[i] = item
+			return
+		}
+	}
+	s.inner = append(s.inner, item)
+}
+
 // Get returns the element at the specified index.
 func (s *Slice[T]) Get(index int) (T, bool) {
 	s.mu.RLock()

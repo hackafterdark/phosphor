@@ -531,6 +531,27 @@ type AgentConfig struct {
 	// transcript before they are sent to the model. When nil, the pass is
 	// disabled.
 	MicroCompaction *MicroCompactionConfig `json:"microcompaction,omitempty" jsonschema:"description=Deterministic tool-output microcompaction settings"`
+
+	// ToolSearch defers MCP tool schemas out of the advertised tool list and
+	// discovers them on demand through the tool_search tool. When nil, MCP
+	// tools are advertised directly as before.
+	ToolSearch *ToolSearchConfig `json:"tool_search,omitempty" jsonschema:"description=Deferred MCP tool schemas with on-demand tool_search discovery"`
+}
+
+// ToolSearchConfig controls the deferred-tool-schema feature (G10). MCP tool
+// schemas stay out of the prompt until the model discovers them via the
+// tool_search tool, keeping the fixed prompt cost flat regardless of how many
+// MCP servers are connected. Deferral is purely client-side: MCP servers
+// advertise their tools normally and never need to support tool_search.
+type ToolSearchConfig struct {
+	// Enabled toggles schema deferral for MCP tools. Default: false.
+	Enabled bool `json:"enabled,omitempty" jsonschema:"description=Defer MCP tool schemas behind the tool_search tool,default=false"`
+
+	// KeepLoaded lists tool names (mcp_<server>_<tool>) or MCP server names
+	// whose schemas stay advertised directly, bypassing discovery. Mirrors
+	// the pinned-tool behavior other harnesses express via
+	// _meta["anthropic/alwaysLoad"].
+	KeepLoaded []string `json:"keep_loaded,omitempty" jsonschema:"description=Tool names or MCP server names whose schemas stay loaded without tool_search,example=mcp_sentry_get_issue,example=sentry"`
 }
 
 // MicroCompactionConfig controls the deterministic tool-output elision pass
@@ -1805,6 +1826,7 @@ func allToolNames() []string {
 		"append",
 		"list_mcp_resources",
 		"read_mcp_resource",
+		"tool_search",
 	}
 }
 

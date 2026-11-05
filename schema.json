@@ -55,6 +55,10 @@
         "microcompaction": {
           "$ref": "#/$defs/MicroCompactionConfig",
           "description": "Deterministic tool-output microcompaction settings"
+        },
+        "tool_search": {
+          "$ref": "#/$defs/ToolSearchConfig",
+          "description": "Deferred MCP tool schemas with on-demand tool_search discovery"
         }
       },
       "additionalProperties": false,
@@ -1793,6 +1797,28 @@
           "examples": [
             100
           ]
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "ToolSearchConfig": {
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Defer MCP tool schemas behind the tool_search tool",
+          "default": false
+        },
+        "keep_loaded": {
+          "items": {
+            "type": "string",
+            "examples": [
+              "mcp_sentry_get_issue",
+              "sentry"
+            ]
+          },
+          "type": "array",
+          "description": "Tool names or MCP server names whose schemas stay loaded without tool_search"
         }
       },
       "additionalProperties": false,

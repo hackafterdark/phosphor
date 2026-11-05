@@ -109,6 +109,35 @@ func TestSlice(t *testing.T) {
 		require.Equal(t, "world", val)
 	})
 
+	t.Run("ReplaceOrSet", func(t *testing.T) {
+		s := NewSliceFrom([]string{"a", "b"})
+		s.ReplaceOrSet(func(v string) bool { return v == "b" }, "B")
+		require.Equal(t, []string{"a", "B"}, slices.Collect(s.Seq()))
+
+		// No match appends instead of replacing.
+		s.ReplaceOrSet(func(v string) bool { return v == "c" }, "C")
+		require.Equal(t, []string{"a", "B", "C"}, slices.Collect(s.Seq()))
+	})
+
+	t.Run("ReplaceOrSetConcurrent", func(t *testing.T) {
+		s := NewSlice[string]()
+		const numGoroutines = 50
+
+		var wg sync.WaitGroup
+		for range numGoroutines {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				s.ReplaceOrSet(func(v string) bool { return v == "dup" }, "dup")
+			}()
+		}
+		wg.Wait()
+
+		// The check and the update share one lock, so concurrent callers
+		// with the same target value can never duplicate the entry.
+		require.Equal(t, 1, s.Len())
+	})
+
 	t.Run("Get", func(t *testing.T) {
 		s := NewSliceFrom([]string{"a", "b", "c"})
 
