@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"unicode"
 
 	"charm.land/fantasy"
 
@@ -60,33 +61,48 @@ func ToolSchemaFingerprint(info fantasy.ToolInfo) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// DeferredToolKey identifies a deferred tool by its MCP server and raw
+// tool name rather than the concatenated wrapped name. Wrapped names like
+// mcp_<server>_<tool> are ambiguous across servers whose names contain
+// underscores (server "a_b" with tool "c" and server "a" with tool "b_c"
+// both wrap to mcp_a_b_c), so identity must be carried separately.
+type DeferredToolKey struct {
+	Server string
+	Tool   string
+}
+
 // DeferredToolRegistry holds the tools whose schemas are hidden from the
 // model until tool_search discovers them. The registry resolves candidates
 // lazily through a live provider so drift between the deferred snapshot and
 // the current MCP tool state is always observable.
 type DeferredToolRegistry struct {
-	// allowed is the set of tool names eligible for deferred lookup,
+	// allowed is the set of tool identities eligible for deferred lookup,
 	// captured when the tool list was built (agent permission filters).
-	allowed map[string]bool
-	// live returns the current tool instances keyed by name.
-	live func() map[string]fantasy.AgentTool
+	allowed map[DeferredToolKey]bool
+	// live returns the current tool instances keyed by identity.
+	live func() map[DeferredToolKey]fantasy.AgentTool
 	// mu guards allowed (built once, but read concurrently).
 	mu sync.RWMutex
 }
 
 // NewDeferredToolRegistry returns a registry whose candidates are the
-// intersection of allowedNames and the live provider's current map.
-func NewDeferredToolRegistry(allowedNames []string, live func() map[string]fantasy.AgentTool) *DeferredToolRegistry {
-	allowed := make(map[string]bool, len(allowedNames))
-	for _, name := range allowedNames {
-		allowed[name] = true
+// intersection of allowedKeys and the live provider's current map.
+func NewDeferredToolRegistry(allowedKeys []DeferredToolKey, live func() map[DeferredToolKey]fantasy.AgentTool) *DeferredToolRegistry {
+	allowed := make(map[DeferredToolKey]bool, len(allowedKeys))
+	for _, key := range allowedKeys {
+		allowed[key] = true
 	}
 	return &DeferredToolRegistry{allowed: allowed, live: live}
 }
 
-// DeferredEntry is one discoverable tool with its live schema fingerprint.
+// DeferredEntry is one discoverable tool with its identity and live schema
+// fingerprint.
 type DeferredEntry struct {
-	Tool        fantasy.AgentTool
+	Key  DeferredToolKey
+	Tool fantasy.AgentTool
+	// RawName is the MCP tool name before wrapping, kept for exact
+	// lookups (the wrapper chain hides MCPToolName()).
+	RawName     string
 	Fingerprint string
 }
 
@@ -99,12 +115,14 @@ func (r *DeferredToolRegistry) Candidates() []DeferredEntry {
 
 	live := r.live()
 	entries := make([]DeferredEntry, 0, len(allowed))
-	for name, tool := range live {
-		if !allowed[name] {
+	for key, tool := range live {
+		if !allowed[key] {
 			continue
 		}
 		entries = append(entries, DeferredEntry{
+			Key:         key,
 			Tool:        tool,
+			RawName:     key.Tool,
 			Fingerprint: ToolSchemaFingerprint(tool.Info()),
 		})
 	}
@@ -114,28 +132,29 @@ func (r *DeferredToolRegistry) Candidates() []DeferredEntry {
 	return entries
 }
 
-// Lookup resolves a tool name against the live registry state and returns
-// its current fingerprint. ok is false when the tool has disappeared.
-func (r *DeferredToolRegistry) Lookup(name string) (fantasy.AgentTool, string, bool) {
+// Lookup resolves a tool identity against the live registry state and
+// returns its current fingerprint. ok is false when the tool has
+// disappeared.
+func (r *DeferredToolRegistry) Lookup(key DeferredToolKey) (fantasy.AgentTool, string, bool) {
 	r.mu.RLock()
 	allowed := r.allowed
 	r.mu.RUnlock()
-	if !allowed[name] {
+	if !allowed[key] {
 		return nil, "", false
 	}
-	tool, ok := r.live()[name]
+	tool, ok := r.live()[key]
 	if !ok {
 		return nil, "", false
 	}
 	return tool, ToolSchemaFingerprint(tool.Info()), true
 }
 
-// DeferAll marks every named tool as eligible for deferred lookup.
-func (r *DeferredToolRegistry) DeferAll(names []string) {
+// DeferAll marks every named tool identity as eligible for deferred lookup.
+func (r *DeferredToolRegistry) DeferAll(keys []DeferredToolKey) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	for _, name := range names {
-		r.allowed[name] = true
+	for _, key := range keys {
+		r.allowed[key] = true
 	}
 }
 
@@ -143,10 +162,11 @@ func (r *DeferredToolRegistry) DeferAll(names []string) {
 // registry state before every call. If the server-side schema drifted or the
 // tool disappeared since discovery, the call is rejected with a
 // re-discovery instruction instead of running against a stale contract.
-func (r *DeferredToolRegistry) Guard(tool fantasy.AgentTool, fingerprint string) fantasy.AgentTool {
+func (r *DeferredToolRegistry) Guard(key DeferredToolKey, tool fantasy.AgentTool, fingerprint string) fantasy.AgentTool {
 	return &schemaGuardTool{
 		AgentTool:   tool,
 		registry:    r,
+		key:         key,
 		fingerprint: fingerprint,
 	}
 }
@@ -154,12 +174,13 @@ func (r *DeferredToolRegistry) Guard(tool fantasy.AgentTool, fingerprint string)
 type schemaGuardTool struct {
 	fantasy.AgentTool
 	registry    *DeferredToolRegistry
+	key         DeferredToolKey
 	fingerprint string
 }
 
 func (g *schemaGuardTool) Run(ctx context.Context, params fantasy.ToolCall) (fantasy.ToolResponse, error) {
 	name := g.Info().Name
-	_, current, ok := g.registry.Lookup(name)
+	_, current, ok := g.registry.Lookup(g.key)
 	if !ok {
 		return fantasy.NewTextErrorResponse(fmt.Sprintf(
 			"Tool %s is no longer available (the server dropped it or permissions changed). Run tool_search again to discover the current tool set.",
@@ -216,13 +237,21 @@ func NewToolSearchTool(registry *DeferredToolRegistry, register func(fantasy.Age
 			var hits []DeferredEntry
 			if names, exact := parseSelectQuery(query); exact {
 				var missing []string
+				var ambiguous []string
 				for _, name := range names {
-					entry, found := lookupByExactName(entries, name)
-					if !found {
-						missing = append(missing, name)
+					entry, rawMatches, found := lookupByExactName(entries, name)
+					if found {
+						hits = append(hits, entry)
 						continue
 					}
-					hits = append(hits, entry)
+					if len(rawMatches) > 0 {
+						ambiguous = append(ambiguous, fmt.Sprintf(
+							"'%s' is ambiguous: it matches %s. Select one of these full names instead.",
+							name, strings.Join(rawMatches, ", "),
+						))
+						continue
+					}
+					missing = append(missing, name)
 				}
 				if len(hits) == 0 {
 					return fantasy.NewTextErrorResponse(fmt.Sprintf(
@@ -230,13 +259,25 @@ func NewToolSearchTool(registry *DeferredToolRegistry, register func(fantasy.Age
 						strings.Join(missing, ", "), strings.Join(entryNames(entries), ", "),
 					)), nil
 				}
+				var notes []string
 				if len(missing) > 0 {
 					// Partial exact hits: report the misses alongside the
 					// schemas so the model can retry with corrected names.
-					missMsg := fmt.Sprintf("Not found: %s.", strings.Join(missing, ", "))
-					return promotedResponse(hits, registry, register, missMsg), nil
+					notes = append(notes, "Not found: "+strings.Join(missing, ", ")+".")
 				}
-				return promotedResponse(hits, registry, register, ""), nil
+				notes = append(notes, ambiguous...)
+				// Exact hits respect the limit too: promoting every named
+				// schema at once can flood the context. The omitted names
+				// are reported so the model can look them up again.
+				if len(hits) > limit {
+					omitted := entryNames(hits[limit:])
+					hits = hits[:limit]
+					notes = append(notes, fmt.Sprintf(
+						"Not promoted due to limit (%d): %s. Query them again to promote them.",
+						limit, strings.Join(omitted, ", "),
+					))
+				}
+				return promotedResponse(hits, registry, register, strings.Join(notes, "\n")), nil
 			}
 
 			hits = bm25Search(query, entries, limit)
@@ -262,7 +303,7 @@ func promotedResponse(hits []DeferredEntry, registry *DeferredToolRegistry, regi
 	fmt.Fprintf(&sb, "Discovered %d tool(s). Their full schemas are now advertised and callable:\n\n", len(hits))
 	for _, hit := range hits {
 		info := hit.Tool.Info()
-		guarded := registry.Guard(hit.Tool, hit.Fingerprint)
+		guarded := registry.Guard(hit.Key, hit.Tool, hit.Fingerprint)
 		register(guarded)
 		params, err := json.Marshal(info.Parameters)
 		if err != nil {
@@ -292,21 +333,32 @@ func parseSelectQuery(query string) ([]string, bool) {
 	return names, true
 }
 
-// lookupByExactName matches a tool name case-insensitively, accepting both
-// the full wrapped name (mcp_<server>_<tool>) and the raw MCP tool name
-// (matched as a trailing segment, since server names may contain
-// underscores).
-func lookupByExactName(entries []DeferredEntry, name string) (DeferredEntry, bool) {
+// lookupByExactName matches a tool name case-insensitively. The full
+// wrapped name (mcp_<server>_<tool>) is checked first; only when no full
+// name matches does it fall back to the raw MCP tool name. When several
+// entries share the raw name, none is promoted and the ambiguous full
+// names are returned so the caller can disambiguate.
+func lookupByExactName(entries []DeferredEntry, name string) (DeferredEntry, []string, bool) {
 	for _, entry := range entries {
-		info := entry.Tool.Info()
-		if strings.EqualFold(info.Name, name) {
-			return entry, true
-		}
-		if strings.HasSuffix(strings.ToLower(info.Name), "_"+strings.ToLower(name)) {
-			return entry, true
+		if strings.EqualFold(entry.Tool.Info().Name, name) {
+			return entry, nil, true
 		}
 	}
-	return DeferredEntry{}, false
+	var rawMatches []string
+	var match DeferredEntry
+	for _, entry := range entries {
+		if strings.EqualFold(entry.RawName, name) {
+			rawMatches = append(rawMatches, entry.Tool.Info().Name)
+			match = entry
+		}
+	}
+	if len(rawMatches) == 1 {
+		return match, nil, true
+	}
+	if len(rawMatches) > 1 {
+		return DeferredEntry{}, rawMatches, false
+	}
+	return DeferredEntry{}, nil, false
 }
 
 func entryNames(entries []DeferredEntry) []string {
@@ -327,6 +379,10 @@ func bm25Search(query string, entries []DeferredEntry, limit int) []DeferredEntr
 
 	k1, b := 1.2, 0.75
 	queryTokens := tokenizeText(query)
+	// Deduplicate query tokens: a repeated word must not inflate document
+	// frequency (which would push IDF negative and drop real matches).
+	slices.Sort(queryTokens)
+	queryTokens = slices.Compact(queryTokens)
 	if len(queryTokens) == 0 {
 		return nil
 	}
@@ -399,7 +455,7 @@ func bm25Search(query string, entries []DeferredEntry, limit int) []DeferredEntr
 // mcp_sentry_get_issue matches "sentry" and "issue".
 func tokenizeText(text string) []string {
 	fields := strings.FieldsFunc(strings.ToLower(text), func(r rune) bool {
-		return !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_' || r == ':')
+		return !(unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' || r == ':')
 	})
 	var tokens []string
 	for _, field := range fields {

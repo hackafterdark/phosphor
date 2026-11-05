@@ -32,9 +32,9 @@ searchable through the `phosphor_docs` tool or by viewing any
 | [tools/OVERVIEW.md](tools/OVERVIEW.md) | Catalog of all built-in agent tools. |
 | [tools/edit_tools.md](tools/edit_tools.md) | `edit` and `multiedit`: matching, safety, and diagnostics. |
 | [tools/SCAN_SECRETS.md](tools/SCAN_SECRETS.md) | Scanning files and git history for leaked credentials. |
-|| [tools/SEMANTIC_SEARCH.md](tools/SEMANTIC_SEARCH.md) | Embedding-based natural-language code search. |
-|| [tools/TOOL_SEARCH.md](tools/TOOL_SEARCH.md) | Deferred MCP tool schemas and on-demand discovery. |
-|| [tools/WORKSPACE_SEARCH.md](tools/WORKSPACE_SEARCH.md) | Zero-API full-text search over symbols and docs. |
+| [tools/SEMANTIC_SEARCH.md](tools/SEMANTIC_SEARCH.md) | Embedding-based natural-language code search. |
+| [tools/TOOL_SEARCH.md](tools/TOOL_SEARCH.md) | Deferred MCP tool schemas and on-demand discovery. |
+| [tools/WORKSPACE_SEARCH.md](tools/WORKSPACE_SEARCH.md) | Zero-API full-text search over symbols and docs. |
 | [structural_search/README.md](structural_search/README.md) | AST-based structural search with tree-sitter. |
 | [structural_search/CONFIGURATION.md](structural_search/CONFIGURATION.md) | Filtering which languages the tool advertises. |
 | [structural_search/LANGUAGE_NOTES.md](structural_search/LANGUAGE_NOTES.md) | Per-language support notes and caveats. |

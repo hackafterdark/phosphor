@@ -154,9 +154,10 @@ type SessionAgent interface {
 	BeginAccepted(sessionID string) *AcceptedRun
 	SetModels(large Model, small Model)
 	SetTools(tools []fantasy.AgentTool)
-	// AddTool appends a tool to the live tool list if its name is not yet
-	// advertised. tool_search uses it to promote deferred tools whose
-	// schemas the model has just discovered.
+	// AddTool adds a tool to the live tool list, replacing any existing
+	// tool with the same name. tool_search uses it to promote deferred
+	// tools whose schemas the model has just discovered, and rediscovery
+	// after schema drift swaps in the fresh guarded instance.
 	AddTool(tool fantasy.AgentTool)
 	SetSystemPrompt(systemPrompt string)
 	SetReflection(enabled bool, maxTurns int)
@@ -186,6 +187,10 @@ type sessionAgent struct {
 	systemPromptPrefix *csync.Value[string]
 	systemPrompt       *csync.Value[string]
 	tools              *csync.Slice[fantasy.AgentTool]
+	// promotedTools holds the deferred tools that tool_search promoted
+	// into the live list. SetTools re-applies them after a rebuild so a
+	// model switch (UpdateModels) cannot silently drop discovered tools.
+	promotedTools *csync.Map[string, fantasy.AgentTool]
 
 	isSubAgent           bool
 	sessions             session.Service
@@ -354,6 +359,7 @@ func NewSessionAgent(
 		microCompactThreshold:      opts.MicroCompactionThreshold,
 		microCompactRetentionTurns: opts.MicroCompactionRetentionTurns,
 		tools:                      csync.NewSliceFrom(opts.Tools),
+		promotedTools:              csync.NewMap[string, fantasy.AgentTool](),
 		isYolo:                     opts.IsYolo,
 		redactOutgoingSecrets:      opts.RedactOutgoingSecrets,
 		redactOutgoingPII:          opts.RedactOutgoingPII,
@@ -3440,17 +3446,38 @@ func (a *sessionAgent) SetModels(large Model, small Model) {
 }
 
 func (a *sessionAgent) SetTools(tools []fantasy.AgentTool) {
+	// Rebuilt tool lists (e.g. UpdateModels after a model switch) never
+	// carry tool_search-promoted deferred tools, so re-apply them here.
+	// The schema guard on each promoted wrapper keeps rejecting calls if
+	// the underlying MCP tool disappeared or drifted in the meantime.
+	if a.promotedTools != nil {
+		rebuilt := make(map[string]bool, len(tools))
+		for _, tool := range tools {
+			rebuilt[tool.Info().Name] = true
+		}
+		for name, promoted := range a.promotedTools.Copy() {
+			// The rebuilt list wins when it carries the name (e.g. the
+			// tool stopped being deferred).
+			if !rebuilt[name] {
+				tools = append(tools, promoted)
+			}
+		}
+	}
 	a.tools.SetSlice(tools)
 }
 
 func (a *sessionAgent) AddTool(tool fantasy.AgentTool) {
 	name := tool.Info().Name
-	for _, t := range a.tools.Copy() {
-		if t.Info().Name == name {
-			return
-		}
+	if a.promotedTools != nil {
+		a.promotedTools.Set(name, tool)
 	}
-	a.tools.Append(tool)
+	// Replace-or-append in one locked operation: a rediscovery after
+	// schema drift swaps in the fresh guarded instance instead of
+	// leaving the stale one, and concurrent promotions cannot duplicate
+	// an entry.
+	a.tools.ReplaceOrSet(func(t fantasy.AgentTool) bool {
+		return t.Info().Name == name
+	}, tool)
 }
 
 func (a *sessionAgent) SetSystemPrompt(systemPrompt string) {

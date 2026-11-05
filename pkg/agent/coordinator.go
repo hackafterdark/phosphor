@@ -1222,27 +1222,11 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, isSubA
 
 	if allowRepoTooling {
 		for _, tool := range tools.GetMCPTools(c.permissions, c.cfg, c.cfg.WorkingDir(), c.redactionPolicy) {
-			if agent.AllowedMCP == nil {
-				// No MCP restrictions
-				filteredTools = append(filteredTools, tool)
+			if !mcpToolAllowed(agent, tool.MCP(), tool.MCPToolName()) {
+				slog.Debug("MCP not allowed", "tool", tool.Name(), "agent", agent.Name)
 				continue
 			}
-			if len(agent.AllowedMCP) == 0 {
-				// No MCPs allowed
-				slog.Debug("No MCPs allowed", "tool", tool.Name(), "agent", agent.Name)
-				break
-			}
-
-			for mcp, tools := range agent.AllowedMCP {
-				if mcp != tool.MCP() {
-					continue
-				}
-				if len(tools) == 0 || slices.Contains(tools, tool.MCPToolName()) {
-					filteredTools = append(filteredTools, tool)
-					break
-				}
-				slog.Debug("MCP not allowed", "tool", tool.Name(), "agent", agent.Name)
-			}
+			filteredTools = append(filteredTools, tool)
 		}
 	} else {
 		slog.Warn("Ignoring repo-local MCP tools: untrusted workspace", "working_dir", c.cfg.WorkingDir())
@@ -1259,12 +1243,18 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, isSubA
 	// MCP servers advertise their tools normally and never need to know
 	// about tool_search.
 	var deferredTools []fantasy.AgentTool
-	if ts := c.cfg.Config().Options.Agent.ToolSearch; ts != nil && ts.Enabled {
+	var deferredKeys []tools.DeferredToolKey
+	if ts := c.cfg.Config().Options.Agent.ToolSearch; ts != nil && ts.Enabled &&
+		slices.Contains(agent.AllowedTools, tools.ToolSearchToolName) {
 		var advertised []fantasy.AgentTool
 		for _, tool := range filteredTools {
 			server, isMCP := mcpServerName(tool)
 			if isMCP && toolSearchDefer(ts, tool.Info().Name, server) {
 				deferredTools = append(deferredTools, tool)
+				deferredKeys = append(deferredKeys, tools.DeferredToolKey{
+					Server: server,
+					Tool:   mcpRawToolName(tool),
+				})
 				continue
 			}
 			advertised = append(advertised, tool)
@@ -1298,29 +1288,44 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, isSubA
 		deferredTools = wrapToolsWithCoercion(deferredTools)
 		deferredTools = wrapToolsWithTodoNudge(deferredTools, c.sessions)
 
-		deferredNames := make([]string, 0, len(deferredTools))
-		for _, tool := range deferredTools {
-			deferredNames = append(deferredNames, tool.Info().Name)
-		}
 		// The live resolver re-wraps the current MCP tool state on every
 		// lookup so discovery and drift checks always see the freshest
-		// schemas, even after an MCP tools refresh.
-		liveMCP := func() map[string]fantasy.AgentTool {
-			var live []fantasy.AgentTool
+		// schemas, even after an MCP tools refresh. It applies the same
+		// AllowedMCP filter as the advertised list so a server the agent
+		// may not use can never win a wrapped-name collision and leak
+		// through tool_search.
+		liveMCP := func() map[tools.DeferredToolKey]fantasy.AgentTool {
+			var raw []fantasy.AgentTool
+			var keys []tools.DeferredToolKey
 			for _, tool := range tools.GetMCPTools(c.permissions, c.cfg, c.cfg.WorkingDir(), c.redactionPolicy) {
-				live = append(live, tool)
+				if !mcpToolAllowed(agent, tool.MCP(), tool.MCPToolName()) {
+					continue
+				}
+				raw = append(raw, tool)
+				keys = append(keys, tools.DeferredToolKey{
+					Server: tool.MCP(),
+					Tool:   tool.MCPToolName(),
+				})
 			}
-			live = wrapToolsWithHooks(live, hookRunner, isSubAgent, c.cfg.ActiveProfile())
+			live := wrapToolsWithHooks(raw, hookRunner, isSubAgent, c.cfg.ActiveProfile())
 			live = wrapToolsWithCoercion(live)
 			live = wrapToolsWithTodoNudge(live, c.sessions)
-			current := make(map[string]fantasy.AgentTool, len(live))
-			for _, tool := range live {
-				current[tool.Info().Name] = tool
+			// The wrapper chain maps each tool to exactly one wrapper, so
+			// identity stays aligned with the wrapped slice by index.
+			current := make(map[tools.DeferredToolKey]fantasy.AgentTool, len(live))
+			for i, tool := range live {
+				current[keys[i]] = tool
 			}
 			return current
 		}
-		registry := tools.NewDeferredToolRegistry(deferredNames, liveMCP)
-		filteredTools = append(filteredTools, tools.NewToolSearchTool(registry, registerTool))
+		registry := tools.NewDeferredToolRegistry(deferredKeys, liveMCP)
+		// The gateway itself goes through the same wrapper chain as every
+		// other top-level tool so PreToolUse hooks can gate tool_search
+		// calls too.
+		gateway := wrapToolsWithHooks([]fantasy.AgentTool{tools.NewToolSearchTool(registry, registerTool)}, hookRunner, isSubAgent, c.cfg.ActiveProfile())
+		gateway = wrapToolsWithCoercion(gateway)
+		gateway = wrapToolsWithTodoNudge(gateway, c.sessions)
+		filteredTools = append(filteredTools, gateway...)
 	}
 
 	return filteredTools, nil
@@ -1334,6 +1339,39 @@ func mcpServerName(tool fantasy.AgentTool) (string, bool) {
 	}
 	server := mcpTool.MCP()
 	return server, server != ``
+}
+
+// mcpRawToolName reports the MCP tool name before wrapping.
+func mcpRawToolName(tool fantasy.AgentTool) string {
+	mcpTool, ok := tool.(interface{ MCPToolName() string })
+	if !ok {
+		return ``
+	}
+	return mcpTool.MCPToolName()
+}
+
+// mcpToolAllowed reports whether an agent may use the given MCP server
+// tool. It applies the same AllowedMCP filter used for the advertised tool
+// list, and it is shared by the live tool_search resolver so deferred
+// discovery cannot reach tools the agent was never allowed to call.
+func mcpToolAllowed(agent config.Agent, server, toolName string) bool {
+	if agent.AllowedMCP == nil {
+		// No MCP restrictions.
+		return true
+	}
+	if len(agent.AllowedMCP) == 0 {
+		// No MCPs allowed.
+		return false
+	}
+	for mcp, allowedTools := range agent.AllowedMCP {
+		if mcp != server {
+			continue
+		}
+		if len(allowedTools) == 0 || slices.Contains(allowedTools, toolName) {
+			return true
+		}
+	}
+	return false
 }
 
 // toolSearchDefer decides whether a tool's schema is hidden behind

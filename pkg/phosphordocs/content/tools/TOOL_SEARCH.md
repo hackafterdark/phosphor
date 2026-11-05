@@ -98,6 +98,6 @@ same wrapper chain.
 | Server behavior | Result |
 |---|---|
 | Server advertises tools normally | Deferral and discovery work unchanged |
-| Server provides no tools | Nothing is deferred; `tool_search` reports an empty registry |
+| Server provides no tools | Nothing is deferred; no `tool_search` tool is advertised |
 | Server refreshes its tool list mid-session | The live resolver re-reads current schemas; drift is caught by the guard on the next call |
 | Harness with its own native tool search | Unaffected — each side defers independently |

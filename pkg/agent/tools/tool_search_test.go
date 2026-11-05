@@ -26,31 +26,32 @@ func (t *fakeDeferredTool) SetProviderOptions(fantasy.ProviderOptions) {}
 
 func (t *fakeDeferredTool) ProviderOptions() fantasy.ProviderOptions { return nil }
 
-func newRegistryState() (*map[string]fantasy.AgentTool, *DeferredToolRegistry) {
-	state := map[string]fantasy.AgentTool{}
-	registry := NewDeferredToolRegistry(nil, func() map[string]fantasy.AgentTool {
-		current := make(map[string]fantasy.AgentTool, len(state))
+func newRegistryState() (*map[DeferredToolKey]fantasy.AgentTool, *DeferredToolRegistry) {
+	state := map[DeferredToolKey]fantasy.AgentTool{}
+	registry := NewDeferredToolRegistry(nil, func() map[DeferredToolKey]fantasy.AgentTool {
+		current := make(map[DeferredToolKey]fantasy.AgentTool, len(state))
 		maps.Copy(current, state)
 		return current
 	})
 	return &state, registry
 }
 
-func addDeferred(state *map[string]fantasy.AgentTool, registry *DeferredToolRegistry, name, description string) {
+func addDeferred(state *map[DeferredToolKey]fantasy.AgentTool, registry *DeferredToolRegistry, server, raw, description string) {
+	key := DeferredToolKey{Server: server, Tool: raw}
 	tool := &fakeDeferredTool{info: fantasy.ToolInfo{
-		Name:        name,
+		Name:        "mcp_" + server + "_" + raw,
 		Description: description,
 		Parameters:  map[string]any{"query": map[string]any{"type": "string"}},
 		Required:    []string{"query"},
 	}}
-	(*state)[name] = tool
-	registry.DeferAll([]string{name})
+	(*state)[key] = tool
+	registry.DeferAll([]DeferredToolKey{key})
 }
 
 func TestToolSearchRegistryCandidatesSorted(t *testing.T) {
 	state, registry := newRegistryState()
-	addDeferred(state, registry, "mcp_zeta_last", "does zeta things")
-	addDeferred(state, registry, "mcp_alpha_first", "does alpha things")
+	addDeferred(state, registry, "zeta", "last", "does zeta things")
+	addDeferred(state, registry, "alpha", "first", "does alpha things")
 
 	var names []string
 	for _, entry := range registry.Candidates() {
@@ -60,22 +61,41 @@ func TestToolSearchRegistryCandidatesSorted(t *testing.T) {
 }
 
 func TestToolSearchRegistryIgnoresNonAllowed(t *testing.T) {
-	state := map[string]fantasy.AgentTool{
-		"mcp_x_allowed":   &fakeDeferredTool{info: fantasy.ToolInfo{Name: "mcp_x_allowed"}},
-		"mcp_x_forbidden": &fakeDeferredTool{info: fantasy.ToolInfo{Name: "mcp_x_forbidden"}},
+	allowedKey := DeferredToolKey{Server: "x", Tool: "allowed"}
+	forbiddenKey := DeferredToolKey{Server: "x", Tool: "forbidden"}
+	state := map[DeferredToolKey]fantasy.AgentTool{
+		allowedKey:   &fakeDeferredTool{info: fantasy.ToolInfo{Name: "mcp_x_allowed"}},
+		forbiddenKey: &fakeDeferredTool{info: fantasy.ToolInfo{Name: "mcp_x_forbidden"}},
 	}
-	registry := NewDeferredToolRegistry([]string{"mcp_x_allowed"}, func() map[string]fantasy.AgentTool {
+	registry := NewDeferredToolRegistry([]DeferredToolKey{allowedKey}, func() map[DeferredToolKey]fantasy.AgentTool {
 		return state
 	})
 	require.Len(t, registry.Candidates(), 1)
-	_, _, ok := registry.Lookup("mcp_x_forbidden")
+	_, _, ok := registry.Lookup(forbiddenKey)
 	require.False(t, ok)
+}
+
+// Colliding wrapped names (server "a_b" tool "c" vs server "a" tool
+// "b_c") must stay distinct identities so one cannot overwrite the other
+// in the live map.
+func TestToolSearchRegistryCollidingWrappedNames(t *testing.T) {
+	state, registry := newRegistryState()
+	addDeferred(state, registry, "a_b", "c", "the a_b server's c tool")
+	addDeferred(state, registry, "a", "b_c", "the a server's b_c tool")
+	require.Len(t, registry.Candidates(), 2)
+	for _, entry := range registry.Candidates() {
+		require.Equal(t, "mcp_a_b_c", entry.Tool.Info().Name)
+	}
+	_, _, ok := registry.Lookup(DeferredToolKey{Server: "a_b", Tool: "c"})
+	require.True(t, ok)
+	_, _, ok = registry.Lookup(DeferredToolKey{Server: "a", Tool: "b_c"})
+	require.True(t, ok)
 }
 
 func TestToolSearchPromotesAndRegisters(t *testing.T) {
 	state, registry := newRegistryState()
-	addDeferred(state, registry, "mcp_sentry_get_issue", "fetch a sentry issue by id")
-	addDeferred(state, registry, "mcp_demo_echo", "echo text back")
+	addDeferred(state, registry, "sentry", "get_issue", "fetch a sentry issue by id")
+	addDeferred(state, registry, "demo", "echo", "echo text back")
 
 	var promoted []fantasy.AgentTool
 	tool := NewToolSearchTool(registry, func(t fantasy.AgentTool) { promoted = append(promoted, t) })
@@ -97,8 +117,8 @@ func TestToolSearchPromotesAndRegisters(t *testing.T) {
 
 func TestToolSearchExactSelect(t *testing.T) {
 	state, registry := newRegistryState()
-	addDeferred(state, registry, "mcp_sentry_get_issue", "fetch a sentry issue by id")
-	addDeferred(state, registry, "mcp_demo_echo", "echo text back")
+	addDeferred(state, registry, "sentry", "get_issue", "fetch a sentry issue by id")
+	addDeferred(state, registry, "demo", "echo", "echo text back")
 
 	var promoted []fantasy.AgentTool
 	tool := NewToolSearchTool(registry, func(t fantasy.AgentTool) { promoted = append(promoted, t) })
@@ -114,7 +134,7 @@ func TestToolSearchExactSelect(t *testing.T) {
 
 func TestToolSearchExactSelectRawMCPName(t *testing.T) {
 	state, registry := newRegistryState()
-	addDeferred(state, registry, "mcp_sentry_get_issue", "fetch a sentry issue by id")
+	addDeferred(state, registry, "sentry", "get_issue", "fetch a sentry issue by id")
 
 	var promoted []fantasy.AgentTool
 	tool := NewToolSearchTool(registry, func(t fantasy.AgentTool) { promoted = append(promoted, t) })
@@ -126,9 +146,67 @@ func TestToolSearchExactSelectRawMCPName(t *testing.T) {
 	require.Len(t, promoted, 1)
 }
 
+// The full wrapped name must win over a raw-name suffix match: "issue"
+// is the raw tail of both tools, but "mcp_sentry_issue" itself is a raw
+// name too and only one entry has that raw name.
+func TestToolSearchExactSelectPrefersFullThenRawName(t *testing.T) {
+	state, registry := newRegistryState()
+	addDeferred(state, registry, "sentry", "get_issue", "fetch a sentry issue by id")
+	addDeferred(state, registry, "sentry", "issue", "the issue tool itself")
+
+	var promoted []fantasy.AgentTool
+	tool := NewToolSearchTool(registry, func(t fantasy.AgentTool) { promoted = append(promoted, t) })
+
+	_, err := tool.Run(context.Background(), fantasy.ToolCall{
+		Input: `{"query":"select:issue"}`,
+	})
+	require.NoError(t, err)
+	require.Len(t, promoted, 1)
+	require.Equal(t, "mcp_sentry_issue", promoted[0].Info().Name)
+}
+
+// Two servers exposing the same raw tool name must not promote either:
+// the lookup reports the ambiguity with the full names instead.
+func TestToolSearchExactSelectAmbiguousRawName(t *testing.T) {
+	state, registry := newRegistryState()
+	addDeferred(state, registry, "alpha", "search", "alpha search")
+	addDeferred(state, registry, "beta", "search", "beta search")
+
+	var promoted []fantasy.AgentTool
+	tool := NewToolSearchTool(registry, func(t fantasy.AgentTool) { promoted = append(promoted, t) })
+
+	resp, err := tool.Run(context.Background(), fantasy.ToolCall{
+		Input: `{"query":"select:search"}`,
+	})
+	require.NoError(t, err)
+	require.Empty(t, promoted)
+	require.True(t, resp.IsError)
+	require.Contains(t, resp.Content, "mcp_alpha_search")
+	require.Contains(t, resp.Content, "mcp_beta_search")
+}
+
+// Exact select lookups respect the limit and report the omitted names.
+func TestToolSearchExactSelectHonorsLimit(t *testing.T) {
+	state, registry := newRegistryState()
+	addDeferred(state, registry, "demo", "one", "first")
+	addDeferred(state, registry, "demo", "two", "second")
+	addDeferred(state, registry, "demo", "three", "third")
+
+	var promoted []fantasy.AgentTool
+	tool := NewToolSearchTool(registry, func(t fantasy.AgentTool) { promoted = append(promoted, t) })
+
+	resp, err := tool.Run(context.Background(), fantasy.ToolCall{
+		Input: `{"query":"select:mcp_demo_one,mcp_demo_two,mcp_demo_three","limit":2}`,
+	})
+	require.NoError(t, err)
+	require.Len(t, promoted, 2)
+	require.Contains(t, resp.Content, "mcp_demo_three")
+	require.Contains(t, resp.Content, "limit")
+}
+
 func TestToolSearchExactSelectUnknown(t *testing.T) {
 	state, registry := newRegistryState()
-	addDeferred(state, registry, "mcp_demo_echo", "echo text back")
+	addDeferred(state, registry, "demo", "echo", "echo text back")
 
 	tool := NewToolSearchTool(registry, func(fantasy.AgentTool) {})
 	resp, err := tool.Run(context.Background(), fantasy.ToolCall{
@@ -141,7 +219,7 @@ func TestToolSearchExactSelectUnknown(t *testing.T) {
 
 func TestToolSearchFuzzyMiss(t *testing.T) {
 	state, registry := newRegistryState()
-	addDeferred(state, registry, "mcp_demo_echo", "echo text back")
+	addDeferred(state, registry, "demo", "echo", "echo text back")
 
 	tool := NewToolSearchTool(registry, func(fantasy.AgentTool) {})
 	resp, err := tool.Run(context.Background(), fantasy.ToolCall{
@@ -164,7 +242,7 @@ func TestToolSearchEmptyRegistry(t *testing.T) {
 
 func TestToolSearchGuardRejectsDrift(t *testing.T) {
 	state, registry := newRegistryState()
-	addDeferred(state, registry, "mcp_demo_echo", "echo text back")
+	addDeferred(state, registry, "demo", "echo", "echo text back")
 
 	var promoted []fantasy.AgentTool
 	tool := NewToolSearchTool(registry, func(t fantasy.AgentTool) { promoted = append(promoted, t) })
@@ -173,7 +251,7 @@ func TestToolSearchGuardRejectsDrift(t *testing.T) {
 	require.Len(t, promoted, 1)
 
 	// Server-side refresh swaps in a changed schema for the same name.
-	(*state)["mcp_demo_echo"] = &fakeDeferredTool{info: fantasy.ToolInfo{
+	(*state)[DeferredToolKey{Server: "demo", Tool: "echo"}] = &fakeDeferredTool{info: fantasy.ToolInfo{
 		Name:        "mcp_demo_echo",
 		Description: "echo text back (now with streaming)",
 		Parameters:  map[string]any{"text": map[string]any{"type": "string"}},
@@ -188,14 +266,14 @@ func TestToolSearchGuardRejectsDrift(t *testing.T) {
 
 func TestToolSearchGuardRejectsRemovedTool(t *testing.T) {
 	state, registry := newRegistryState()
-	addDeferred(state, registry, "mcp_demo_echo", "echo text back")
+	addDeferred(state, registry, "demo", "echo", "echo text back")
 
 	var promoted []fantasy.AgentTool
 	tool := NewToolSearchTool(registry, func(t fantasy.AgentTool) { promoted = append(promoted, t) })
 	_, err := tool.Run(context.Background(), fantasy.ToolCall{Input: `{"query":"echo"}`})
 	require.NoError(t, err)
 
-	delete(*state, "mcp_demo_echo")
+	delete(*state, DeferredToolKey{Server: "demo", Tool: "echo"})
 	resp, err := promoted[0].Run(context.Background(), fantasy.ToolCall{ID: "1"})
 	require.NoError(t, err)
 	require.True(t, resp.IsError)
@@ -204,7 +282,7 @@ func TestToolSearchGuardRejectsRemovedTool(t *testing.T) {
 
 func TestToolSearchGuardPassesStableSchema(t *testing.T) {
 	state, registry := newRegistryState()
-	addDeferred(state, registry, "mcp_demo_echo", "echo text back")
+	addDeferred(state, registry, "demo", "echo", "echo text back")
 
 	var promoted []fantasy.AgentTool
 	tool := NewToolSearchTool(registry, func(t fantasy.AgentTool) { promoted = append(promoted, t) })
@@ -212,7 +290,7 @@ func TestToolSearchGuardPassesStableSchema(t *testing.T) {
 	require.NoError(t, err)
 
 	// Same schema content in a fresh wrapper instance must pass the guard.
-	(*state)["mcp_demo_echo"] = &fakeDeferredTool{info: fantasy.ToolInfo{
+	(*state)[DeferredToolKey{Server: "demo", Tool: "echo"}] = &fakeDeferredTool{info: fantasy.ToolInfo{
 		Name:        "mcp_demo_echo",
 		Description: "echo text back",
 		Parameters:  map[string]any{"query": map[string]any{"type": "string"}},
@@ -263,6 +341,30 @@ func TestTokenizeTextSubtokens(t *testing.T) {
 	require.Contains(t, tokens, "sentry")
 	require.Contains(t, tokens, "issue")
 	require.Contains(t, tokens, "mcp_sentry_get_issue")
+}
+
+// A repeated query word must not inflate document frequency into a
+// negative IDF that drops the only real match.
+func TestBM25SearchDeduplicatesQueryTokens(t *testing.T) {
+	entries := []DeferredEntry{
+		{Tool: &fakeDeferredTool{info: fantasy.ToolInfo{Name: "mcp_demo_echo", Description: "echo text back"}}},
+	}
+	hits := bm25Search("echo echo", entries, 5)
+	require.Len(t, hits, 1)
+	require.Equal(t, "mcp_demo_echo", hits[0].Tool.Info().Name)
+}
+
+// Non-ASCII runs must tokenize as whole tokens so CJK queries can match
+// CJK tool descriptions.
+func TestTokenizeTextUnicode(t *testing.T) {
+	tokens := tokenizeText("查询订单")
+	require.Equal(t, []string{"查询订单"}, tokens)
+
+	entries := []DeferredEntry{
+		{Tool: &fakeDeferredTool{info: fantasy.ToolInfo{Name: "mcp_shop_lookup", Description: "查询订单 status"}}},
+	}
+	hits := bm25Search("查询订单", entries, 5)
+	require.Len(t, hits, 1)
 }
 
 func TestToolSearchDescriptionLoaded(t *testing.T) {
