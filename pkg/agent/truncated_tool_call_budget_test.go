@@ -51,6 +51,17 @@ func (m *truncatedCallModel) Generate(ctx context.Context, call fantasy.Call) (*
 }
 
 func (m *truncatedCallModel) Stream(ctx context.Context, call fantasy.Call) (fantasy.StreamResponse, error) {
+	// The post-run session-title generator (see sessionAgent.Run) fires
+	// GenerateTitle on this same model from a background goroutine, and
+	// its Stream call races with the exact call-count assertions below.
+	// Turn calls always carry the tool set; the title agent never has
+	// tools, so those calls are not part of the turn and are not counted.
+	if len(call.Tools) == 0 {
+		return func(yield func(fantasy.StreamPart) bool) {
+			yield(fantasy.StreamPart{Type: fantasy.StreamPartTypeTextDelta, Delta: "truncated probe test"})
+			yield(fantasy.StreamPart{Type: fantasy.StreamPartTypeFinish, FinishReason: fantasy.FinishReasonStop})
+		}, nil
+	}
 	n := m.calls.Add(1)
 	if n == 1 {
 		return func(yield func(fantasy.StreamPart) bool) {
