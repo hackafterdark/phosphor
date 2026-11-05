@@ -274,6 +274,27 @@ func (q *Queries) UpdateSession(ctx context.Context, arg UpdateSessionParams) (S
 	return i, err
 }
 
+const updateSessionTodos = `-- name: UpdateSessionTodos :exec
+UPDATE sessions
+SET
+    todos = ?,
+    updated_at = strftime('%s', 'now')
+WHERE id = ?
+`
+
+type UpdateSessionTodosParams struct {
+	Todos sql.NullString `json:"todos"`
+	ID    string         `json:"id"`
+}
+
+func (q *Queries) UpdateSessionTodos(ctx context.Context, arg UpdateSessionTodosParams) error {
+	_, err := q.exec(ctx, q.updateSessionTodosStmt, updateSessionTodos,
+		arg.Todos,
+		arg.ID,
+	)
+	return err
+}
+
 const updateSessionTitleAndUsage = `-- name: UpdateSessionTitleAndUsage :exec
 UPDATE sessions
 SET

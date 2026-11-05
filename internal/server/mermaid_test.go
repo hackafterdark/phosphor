@@ -190,6 +190,10 @@ func (m *mockQuerier) UpdateSession(ctx context.Context, arg db.UpdateSessionPar
 	return db.Session{}, nil
 }
 
+func (m *mockQuerier) UpdateSessionTodos(ctx context.Context, arg db.UpdateSessionTodosParams) error {
+	return nil
+}
+
 func (m *mockQuerier) UpdateSessionTitleAndUsage(ctx context.Context, arg db.UpdateSessionTitleAndUsageParams) error {
 	return nil
 }

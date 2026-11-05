@@ -49,11 +49,22 @@ func newPublishingWorkspace(t *testing.T) (*Backend, *Workspace, <-chan pubsub.E
 
 	b := New(context.Background(), nil, func() {})
 	b.SetCreateGrace(2 * time.Second)
-	t.Cleanup(func() { drainBackend(t, b) })
 
 	cid := uuid.New().String()
 	ws, _, err := b.CreateWorkspace(protoWS(cwd, dataDir, cid))
 	require.NoError(t, err)
+	// Hold the workspace open for the whole test: without an attached
+	// stream the create-grace timer tears the workspace down after
+	// createGrace elapses, closing the event channel under any test
+	// slower than the grace window.
+	require.NoError(t, b.AttachClient(ws.ID, cid))
+	t.Cleanup(func() {
+		// Drop the test's stream claim first so drainBackend's
+		// release can tear the workspace down (and close its DB)
+		// before t.TempDir cleanup runs.
+		b.DetachClient(ws.ID, cid)
+		drainBackend(t, b)
+	})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)

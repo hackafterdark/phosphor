@@ -53,6 +53,7 @@ type Querier interface {
 	UpdateGoalStatus(ctx context.Context, arg UpdateGoalStatusParams) (Goal, error)
 	UpdateMessage(ctx context.Context, arg UpdateMessageParams) error
 	UpdateSession(ctx context.Context, arg UpdateSessionParams) (Session, error)
+	UpdateSessionTodos(ctx context.Context, arg UpdateSessionTodosParams) error
 	UpdateSessionTitleAndUsage(ctx context.Context, arg UpdateSessionTitleAndUsageParams) error
 	UpdateStatelessSession(ctx context.Context, arg UpdateStatelessSessionParams) error
 	UpdatePinned(ctx context.Context, arg UpdatePinnedParams) error

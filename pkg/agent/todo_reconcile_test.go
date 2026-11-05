@@ -33,6 +33,34 @@ func TestReconcileStaleTodosDemotesInProgress(t *testing.T) {
 	require.Equal(t, session.TodoStatusPending, got.Todos[2].Status)
 }
 
+// TestReconcileStaleTodosPreservesConcurrentTitle verifies the
+// reconciliation write cannot clobber a title/usage update that lands
+// between its read and write (GenerateTitle runs concurrently with the
+// terminal defer).
+func TestReconcileStaleTodosPreservesConcurrentTitle(t *testing.T) {
+	t.Parallel()
+	env := testEnv(t)
+	sess, err := env.sessions.Create(t.Context(), "reconcile-title")
+	require.NoError(t, err)
+	sess.Todos = []session.Todo{
+		{Content: "Stuck thing", Status: session.TodoStatusInProgress, ActiveForm: "Stucking it"},
+	}
+	_, err = env.sessions.Save(t.Context(), sess)
+	require.NoError(t, err)
+
+	sa := testSessionAgent(env, nil, nil, "system").(*sessionAgent)
+	// Interleave: the title update commits after the reconcile's read
+	// point (a fresh Get here yields the same pre-title snapshot).
+	require.NoError(t, env.sessions.UpdateTitleAndUsage(t.Context(), sess.ID, "Generated Title", 10, 5, 0.42))
+	sa.reconcileStaleTodos(t.Context(), sess.ID)
+
+	got, err := env.sessions.Get(t.Context(), sess.ID)
+	require.NoError(t, err)
+	require.Equal(t, session.TodoStatusPending, got.Todos[0].Status)
+	require.Equal(t, "Generated Title", got.Title)
+	require.Equal(t, int64(10), got.PromptTokens)
+}
+
 // TestReconcileStaleTodosLeavesCleanListAlone verifies a session with no
 // in_progress todos is not modified or rewritten.
 func TestReconcileStaleTodosLeavesCleanListAlone(t *testing.T) {

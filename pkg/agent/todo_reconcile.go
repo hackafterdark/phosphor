@@ -47,9 +47,11 @@ func (a *sessionAgent) reconcileStaleTodos(ctx context.Context, sessionID string
 		return
 	}
 
-	// Save publishes the session UpdatedEvent itself, so the UI refreshes
-	// without an extra publish here.
-	if _, err := a.sessions.Save(ctx, currentSession); err != nil {
+	// Targeted todos-only write: it preserves concurrent title, usage,
+	// and summary updates (GenerateTitle runs in a goroutine that can
+	// land between this read and write) and publishes the session
+	// UpdatedEvent itself, so the UI refreshes without an extra publish.
+	if err := a.sessions.UpdateTodos(ctx, sessionID, currentSession.Todos); err != nil {
 		slog.Warn("Failed to reconcile stale todos", "error", err, "session_id", sessionID)
 	}
 }
