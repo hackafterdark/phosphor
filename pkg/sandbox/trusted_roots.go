@@ -70,7 +70,13 @@ func sensitiveEnvDirs() []string {
 func RootTooBroad(dir, workspaceRoot string) (bool, string) {
 	home, homeErr := os.UserHomeDir()
 	temp := filepath.Clean(os.TempDir())
-	ws := filepath.Clean(workspaceRoot)
+	// Clean("") yields ".", which would then match a "." candidate as
+	// "the workspace itself". Preserve the empty value so the workspace
+	// rule is skipped exactly as documented.
+	ws := workspaceRoot
+	if ws != "" {
+		ws = filepath.Clean(ws)
+	}
 
 	return RootTooBroadFor(dir, home, homeErr, temp, ws)
 }
@@ -86,46 +92,59 @@ func RootTooBroadFor(dir, home string, homeErr error, temp, workspaceRoot string
 	if isVolumeRoot(clean) {
 		return true, "it is a filesystem or drive root and would trust the entire filesystem"
 	}
-	// macOS (and any host whose sensitive directories sit behind symlink
-	// aliases, e.g. /etc -> /private/etc) can name a sensitive root through
-	// its canonical target; check the resolved form of the candidate too.
-	forms := []string{clean}
-	if resolved, err := filepath.EvalSymlinks(clean); err == nil && resolved != clean {
-		forms = append(forms, filepath.Clean(resolved))
+	// Reference paths are canonicalized once: on macOS t.TempDir-style
+	// references name /var/... while canonical resolution yields
+	// /private/var/..., and comparisons must see through the alias on
+	// the reference side. The candidate itself is *not* canonicalized
+	// here — symlink laundering is surfaced by the caller's explicit
+	// resolution pass (ValidateTrustedExtraRoots) so the refusal names
+	// the resolved target, rather than silently rewriting the entry.
+	if workspaceRoot != "" {
+		if resolved, err := filepath.EvalSymlinks(workspaceRoot); err == nil {
+			workspaceRoot = filepath.Clean(resolved)
+		}
 	}
-	for _, form := range forms {
-		for _, sensitive := range sensitiveRoots {
-			if samePath(form, sensitive) {
-				return true, fmt.Sprintf("it is the well-known system directory %q", form)
-			}
+	if home != "" {
+		if resolved, err := filepath.EvalSymlinks(home); err == nil {
+			home = filepath.Clean(resolved)
 		}
-		for _, sensitive := range sensitiveEnvDirs() {
-			if samePath(form, sensitive) {
-				return true, fmt.Sprintf("it is the host system directory %q", form)
-			}
+	}
+	if temp != "" {
+		if resolved, err := filepath.EvalSymlinks(temp); err == nil {
+			temp = filepath.Clean(resolved)
 		}
-		if homeErr == nil && home != "" && samePath(form, filepath.Clean(home)) {
-			return true, "it is the user home directory, which contains the credential deny-list (SSH keys, cloud tokens, git credentials)"
+	}
+	for _, sensitive := range canonicalVariants(sensitiveRoots) {
+		if samePath(clean, sensitive) {
+			return true, fmt.Sprintf("it is the well-known system directory %q", clean)
 		}
-		if temp != "" && samePath(form, temp) {
-			return true, "it is the OS temporary directory, which is already trusted by default"
+	}
+	for _, sensitive := range canonicalVariants(sensitiveEnvDirs()) {
+		if samePath(clean, sensitive) {
+			return true, fmt.Sprintf("it is the host system directory %q", clean)
 		}
-		if workspaceRoot != "" {
-			if samePath(form, workspaceRoot) {
-				return true, "it is the workspace itself, which is already trusted by default"
-			}
-			if insidePath(workspaceRoot, form) {
-				return true, fmt.Sprintf("it is an ancestor of the workspace (%q), which disables the workspace confinement", workspaceRoot)
-			}
+	}
+	if homeErr == nil && home != "" && samePath(clean, filepath.Clean(home)) {
+		return true, "it is the user home directory, which contains the credential deny-list (SSH keys, cloud tokens, git credentials)"
+	}
+	if temp != "" && samePath(clean, temp) {
+		return true, "it is the OS temporary directory, which is already trusted by default"
+	}
+	if workspaceRoot != "" {
+		if samePath(clean, workspaceRoot) {
+			return true, "it is the workspace itself, which is already trusted by default"
 		}
-		for _, deny := range CredentialDenyPaths() {
-			deny = filepath.Clean(deny)
-			if insidePath(deny, form) {
-				return true, fmt.Sprintf("it contains credential deny-list path %q, which this backend cannot enforce inside an allowed root", deny)
-			}
-			if insidePath(form, deny) {
-				return true, fmt.Sprintf("it is inside credential deny-list path %q, which is unreadable in the sandbox", deny)
-			}
+		if insidePath(workspaceRoot, clean) {
+			return true, fmt.Sprintf("it is an ancestor of the workspace (%q), which disables the workspace confinement", workspaceRoot)
+		}
+	}
+	for _, deny := range CredentialDenyPaths() {
+		deny = filepath.Clean(deny)
+		if insidePath(deny, clean) {
+			return true, fmt.Sprintf("it contains credential deny-list path %q, which this backend cannot enforce inside an allowed root", deny)
+		}
+		if insidePath(clean, deny) {
+			return true, fmt.Sprintf("it is inside credential deny-list path %q, which is unreadable in the sandbox", deny)
 		}
 	}
 	return false, ""
@@ -159,11 +178,46 @@ func isVolumeRoot(cleanPath string) bool {
 	if driveRootRe.MatchString(cleanPath) {
 		return true
 	}
+	// UNC share roots are recognized on every platform, mirroring the
+	// drive-letter rule: filepath.VolumeName only parses them on Windows,
+	// and the refusal must hold wherever the config is read.
+	if strings.HasPrefix(cleanPath, `\\`) {
+		return true
+	}
 	if vol := filepath.VolumeName(cleanPath); vol != "" {
 		rest := cleanPath[len(vol):]
 		return rest == "" || rest == `\` || rest == "/"
 	}
 	return cleanPath == "/" || cleanPath == `\`
+}
+
+// IsVolumeRootSpelling reports whether dir is *spelled* as a filesystem,
+// drive, or UNC root, checked lexically on every platform. filepath.Abs
+// uses the host's path semantics, so on POSIX it resolves "C:\" relative to
+// the working directory instead of recognizing it as a volume root; callers
+// validating raw config entries must check the spelling before resolving.
+func IsVolumeRootSpelling(dir string) bool {
+	if dir == "" {
+		return false
+	}
+	return isVolumeRoot(filepath.Clean(normalizeRoot(dir)))
+}
+
+// canonicalVariants returns the lexical spellings plus canonical targets
+// of the given policy paths, so hosts that alias sensitive directories
+// (macOS /etc -> /private/etc) refuse both spellings. Paths that do not
+// exist on this host resolve to themselves and are compared lexically.
+func canonicalVariants(dirs []string) []string {
+	out := make([]string, 0, len(dirs))
+	for _, dir := range dirs {
+		out = append(out, dir)
+		if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+			if resolved = filepath.Clean(resolved); resolved != dir {
+				out = append(out, resolved)
+			}
+		}
+	}
+	return out
 }
 
 // samePath compares two cleaned paths, case-insensitively on Windows where

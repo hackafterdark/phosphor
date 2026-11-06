@@ -8,13 +8,14 @@ import (
 )
 
 // ValidateTrustedExtraRoots enforces the path guardrail on
-// tools.bash.trusted_extra_roots: every entry must resolve to an absolute
-// directory that is neither a filesystem/drive root, a known sensitive
-// directory (system directories, the user home, the OS temp dir), an
-// ancestor of the workspace, nor in any overlap with the credential
-// deny-list. Relative entries are resolved against the working directory
-// before the check, and a symlinked entry is checked against its canonical
-// target so a link cannot launder a refused root past validation.
+// tools.bash.trusted_extra_roots: every entry must be an absolute directory
+// that is neither a filesystem/drive root, a known sensitive directory
+// (system directories, the user home, the OS temp dir), an ancestor of the
+// workspace, nor in any overlap with the credential deny-list. The runtime
+// consumes the entries verbatim, so relative spellings are refused here
+// rather than resolved against whichever directory the process happens to
+// run in; a symlinked entry is checked against its canonical target so a
+// link cannot launder a refused root past validation.
 //
 // The check runs at config load on every platform. Landlock fails closed at
 // exec time when a deny path sits inside an allowed root
@@ -25,12 +26,23 @@ func (c *Config) ValidateTrustedExtraRoots(workingDir string) error {
 		if root == "" {
 			return fmt.Errorf("empty path in tools.bash.trusted_extra_roots")
 		}
-		abs, err := filepath.Abs(root)
-		if err != nil {
-			return fmt.Errorf("invalid path %q in tools.bash.trusted_extra_roots: %w", root, err)
+		// Lexical pre-check on the raw entry: filepath.Abs is platform
+		// semantics, and on POSIX it resolves Windows drive and UNC
+		// spellings relative to the working directory instead of
+		// recognizing them as volume roots. The refusal is lexical, so
+		// the raw spelling is checked before any resolution.
+		if sandbox.IsVolumeRootSpelling(root) {
+			return fmt.Errorf("path %q in tools.bash.trusted_extra_roots is not allowed: it is a filesystem or drive root and would trust the entire filesystem", root)
 		}
-		// Lexical check first so drive roots are refused even when they
-		// don't exist (or can't be resolved) on this host.
+		// filepath.Abs resolves relative spellings against the process
+		// directory, which is not necessarily the workspace (daemon and
+		// ACP hosts differ). The runtime uses entries verbatim, so demand
+		// the documented absolute spelling instead of validating a
+		// host-dependent resolution.
+		if !filepath.IsAbs(root) {
+			return fmt.Errorf("path %q in tools.bash.trusted_extra_roots is not allowed: entries must be absolute", root)
+		}
+		abs := filepath.Clean(root)
 		if broad, reason := sandbox.RootTooBroad(abs, workingDir); broad {
 			return fmt.Errorf("path %q in tools.bash.trusted_extra_roots is not allowed: %s", root, reason)
 		}

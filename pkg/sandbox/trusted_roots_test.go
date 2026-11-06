@@ -97,6 +97,11 @@ func TestRootTooBroad_WorkspaceAncestor(t *testing.T) {
 	// A sibling directory is a legitimate extra root.
 	broad, _ = RootTooBroadFor(filepath.Join(filepath.Dir(ws), "other"), "", homeErr, "", ws)
 	require.False(t, broad)
+
+	// An empty workspace root skips the workspace rule; the candidate's
+	// own "." spelling must not be matched against it.
+	broad, _ = RootTooBroad(".", "")
+	require.False(t, broad, "empty workspace root must not match the candidate")
 }
 
 func TestRootTooBroad_CredentialDenyListOverlap(t *testing.T) {

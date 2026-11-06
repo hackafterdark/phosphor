@@ -18,7 +18,7 @@ func TestValidateTrustedExtraRoots(t *testing.T) {
 	c.Tools.Bash.TrustedExtraRoots = []string{legit}
 	require.NoError(t, c.ValidateTrustedExtraRoots(workspace))
 
-	for _, bad := range []string{"/", `C:\`, workspace, wsRoot, ""} {
+	for _, bad := range []string{"/", `C:\`, workspace, wsRoot, "", ".config", "relative/dir"} {
 		c.Tools.Bash.TrustedExtraRoots = []string{bad}
 		err := c.ValidateTrustedExtraRoots(workspace)
 		require.Error(t, err, "refused root %q must fail validation", bad)
