@@ -131,6 +131,16 @@ func Load(workingDir, dataDir string, debug bool) (*ConfigStore, error) {
 		}
 	}
 
+	// Validate the bash trusted-path allow-list after merging so neither a
+	// workspace nor the operator config can grant the agent access to
+	// filesystem roots or known sensitive directories. Enforcing here on
+	// every platform keeps the policy uniform: the kernel tiers cannot all
+	// enforce the credential deny-list inside a broad allow root, so a
+	// `/` or `C:\` entry would silently degrade per-backend at exec time.
+	if err := cfg.ValidateTrustedExtraRoots(workingDir); err != nil {
+		return nil, fmt.Errorf("invalid trusted path configuration: %w", err)
+	}
+
 	if !isInsideWorktree() {
 		const depth = 2
 		const items = 100

@@ -664,7 +664,11 @@ and `~/.gradle/gradle.properties` stay outside the trusted set. Default false;
 a workspace config cannot enable it if the operator floor leaves it off.
 Security-relevant home paths (`~/.ssh`, `~/.aws`, browser profiles) stay
 outside the writable set either way; extra readable/writable roots can be
-added with `tools.bash.trusted_extra_roots`.
+added with `tools.bash.trusted_extra_roots`. That list is guard-railed at
+config load: filesystem and drive roots (`/`, `C:\`), known sensitive
+directories (`/etc`, `C:\Windows`, `C:\Users`, ...), the user home, the OS
+temp dir, the workspace itself, and any workspace ancestor are refused — the
+agent can never be configured to reach the whole filesystem.
 
 ---
 

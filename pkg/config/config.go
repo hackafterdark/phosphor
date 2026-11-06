@@ -929,9 +929,15 @@ type ToolBash struct {
 	AllowInlineExecution bool `json:"allow_inline_execution,omitempty" jsonschema:"description=Allow interpreters and shells to be invoked with inline code execution flags (-c, -e, -r). Default false (blocked)."`
 
 	// TrustedExtraRoots are additional absolute directories that the bash
-	// tool's post-expansion path confinement may access alongside the
-	// workspace. The OS temporary directory is trusted by default.
-	TrustedExtraRoots []string `json:"trusted_extra_roots,omitempty" jsonschema:"description=Additional absolute directories that bash may access alongside the workspace. The OS temporary directory is trusted by default."`
+	// tool may access alongside the workspace. The OS temporary directory
+	// is trusted by default.
+	//
+	// Guardrail: an entry may never be a filesystem or drive root, a known
+	// sensitive directory (system directories, the user home, the OS temp
+	// dir), an ancestor of the workspace, or overlap the credential
+	// deny-list. The rules are enforced at config load (see
+	// ValidateTrustedExtraRoots) so no backend can silently degrade them.
+	TrustedExtraRoots []string `json:"trusted_extra_roots,omitempty" jsonschema:"description=Additional absolute directories that bash may access alongside the workspace. The OS temporary directory is trusted by default. Filesystem and drive roots\\, system directories\\, the user home\\, and the OS temp dir are refused at config load."`
 
 	Network *ToolBashNetwork `json:"network,omitempty" jsonschema:"description=Optional opt-in network egress policy for bash commands."`
 

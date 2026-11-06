@@ -837,6 +837,13 @@ func (s *ConfigStore) reloadFromDiskLocked(ctx context.Context) error {
 		return fmt.Errorf("invalid memory configuration on reload: %w", err)
 	}
 
+	// Validate the bash trusted-path allow-list on reload so a runtime edit
+	// cannot publish a prohibited root past the load-time guardrail
+	// (mirrors Load).
+	if err := cfg.ValidateTrustedExtraRoots(s.workingDir); err != nil {
+		return fmt.Errorf("invalid trusted path configuration on reload: %w", err)
+	}
+
 	// Preserve runtime overrides
 	overrides := s.overrides
 
