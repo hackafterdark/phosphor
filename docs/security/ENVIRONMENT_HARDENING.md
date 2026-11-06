@@ -327,16 +327,19 @@ description: >
   Home-directory and filesystem-root arguments remain rejected.
 
   Guardrail: an entry is refused at config load if it is a filesystem or drive
-  root ('/', 'C:\', UNC share roots), a known sensitive directory ('/etc',
-  '/var', 'C:\Windows', 'C:\Program Files', 'C:\ProgramData', 'C:\Users', and
-  the host's own '%WINDIR%'/'%ProgramFiles%' on any volume), the user home
-  directory, the OS temp directory, the workspace itself, or any ancestor of
-  the workspace (which would disable the workspace confinement). Entries may
-  also not overlap the credential deny-list — a root that contains '~/.ssh'
-  cannot have its deny rule enforced inside an allowed root by every backend,
-  and a root inside a deny path would be unreadable anyway. Legitimate
-  sub-directories of sensitive roots (for example 'C:\Tools\llvm\bin') stay
-  listable.
+  root (any drive letter on any platform, POSIX root, and UNC share roots,
+  including Windows extended-length '\\?\' spellings), a known sensitive
+  directory ('/etc', '/var', 'C:\Windows', 'C:\Program Files',
+  'C:\ProgramData', 'C:\Users', and the host's own '%WINDIR%'/'%ProgramFiles%'
+  on any volume), the user home directory, the OS temp directory, the
+  workspace itself, or any ancestor of the workspace (which would disable the
+  workspace confinement). Sensitive-root aliases resolved through symlinks
+  (for example macOS '/private/etc' naming '/etc') are refused too. Entries
+  may also not overlap the credential deny-list — a root that contains
+  '~/.ssh' cannot have its deny rule enforced inside an allowed root by every
+  backend, and a root inside a deny path would be unreadable anyway.
+  Legitimate sub-directories of sensitive roots (for example
+  'C:\Tools\llvm\bin') stay listable.
 
   On shared or multi-tenant hosts, temporary directories may contain files
   written by other users or processes. Trusted temp roots permit reads and

@@ -1698,7 +1698,7 @@
             "type": "string"
           },
           "type": "array",
-          "description": "Additional absolute directories that bash may access alongside the workspace. The OS temporary directory is trusted by default. Filesystem and drive roots"
+          "description": "Additional absolute directories that bash may access alongside the workspace. The OS temporary directory is trusted by default. Filesystem and drive roots, system directories, the user home, and the OS temp dir are refused at config load."
         },
         "network": {
           "$ref": "#/$defs/ToolBashNetwork",

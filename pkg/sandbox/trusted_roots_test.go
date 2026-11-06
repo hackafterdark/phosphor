@@ -13,10 +13,20 @@ import (
 func TestRootTooBroad_FilesystemAndDriveRoots(t *testing.T) {
 	t.Parallel()
 	homeErr := errors.New("no home")
-	for _, root := range []string{"/", `C:\`, `D:\`, `C:/`, `\\server\share`} {
+	for _, root := range []string{"/", `C:\`, `D:\`, `F:\`, `C:/`, `\\server\share`} {
 		broad, reason := RootTooBroadFor(root, "", homeErr, "", "")
 		require.True(t, broad, "%s must be refused", root)
 		require.Contains(t, reason, "filesystem or drive root")
+	}
+	// Windows extended-length spellings match their normal forms.
+	for _, root := range []string{`\\?\C:\`, `\\?\C:\Windows`, `\\?\UNC\server\share`} {
+		broad, reason := RootTooBroadFor(root, "", homeErr, "", "")
+		require.True(t, broad, "%s must be refused", root)
+		if root == `\\?\C:\Windows` {
+			require.Contains(t, reason, "system directory")
+		} else {
+			require.Contains(t, reason, "filesystem or drive root")
+		}
 	}
 }
 

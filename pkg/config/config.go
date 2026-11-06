@@ -937,7 +937,7 @@ type ToolBash struct {
 	// dir), an ancestor of the workspace, or overlap the credential
 	// deny-list. The rules are enforced at config load (see
 	// ValidateTrustedExtraRoots) so no backend can silently degrade them.
-	TrustedExtraRoots []string `json:"trusted_extra_roots,omitempty" jsonschema:"description=Additional absolute directories that bash may access alongside the workspace. The OS temporary directory is trusted by default. Filesystem and drive roots, system directories, the user home, and the OS temp dir are refused at config load."`
+	TrustedExtraRoots []string `json:"trusted_extra_roots,omitempty" jsonschema:"description=Additional absolute directories that bash may access alongside the workspace. The OS temporary directory is trusted by default. Filesystem and drive roots\\, system directories\\, the user home\\, and the OS temp dir are refused at config load."`
 
 	Network *ToolBashNetwork `json:"network,omitempty" jsonschema:"description=Optional opt-in network egress policy for bash commands."`
 
