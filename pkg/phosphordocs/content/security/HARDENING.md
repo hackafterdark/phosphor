@@ -105,6 +105,32 @@ Notes:
 - Session grants stay argument-agnostic by design; prefer explicit
   `allow_commands` entries in shared or CI environments.
 
+## What the Kernel Boundary Does Not Cover
+
+The kernel sandbox (Landlock on Linux, seatbelt on macOS, AppContainer on
+Windows) is a path- and capability-based boundary. Three classes of access
+sit outside what it can express, and closing them is a host-layer job:
+
+- **`/proc/<pid>/environ` of same-UID processes.** The seccomp denylist
+  blocks `ptrace` and cross-process memory reads, but reading a process's
+  `environ` file is governed by ptrace/Yama host policy, not Landlock.
+  Hosts should set `ptrace_scope=1` (or stricter).
+- **Raw-socket egress to cloud metadata (IMDS).** The egress broker
+  covers the network commands it parses; Landlock's TCP rules are
+  port-granular and cannot express an IP-address deny. On macOS the
+  seatbelt profile denies `169.254.169.254` outright. On Linux, use
+  `network.enabled: false` or the proxy-only posture for the exposed
+  workload, or block link-local at the host firewall.
+- **Windows registry access.** Registry keys are governed by registry
+  ACLs, not file-path rules; the file-based credential stores
+  (Credential Manager blobs, gcloud, docker config) are denied, but
+  registry credential access is an OS-governed surface.
+
+The ssh-agent socket is the one agent-accessible credential surface the
+sandbox closes in code: `SSH_AUTH_SOCK` and `SSH_AGENT_PID` are stripped
+from every confined child's environment, so `ssh` falls back to the
+on-disk identity files, which the credential deny list already covers.
+
 ## Verifying the Controls
 
 The security controls are pinned by tests across the shell, sandbox,
