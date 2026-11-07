@@ -915,6 +915,7 @@ patterns are:
 .env  .env.*  *.env  .npmrc  .netrc  _netrc  .git-credentials  .envrc
 credentials*.json  *service-account*.json  secrets.*
 id_rsa  id_dsa  id_ecdsa  id_ed25519  *.pem  *.p12  *.pfx
+*/kubernetes.io/serviceaccount/token
 ```
 
 ### Known-Value Registry (always on)
