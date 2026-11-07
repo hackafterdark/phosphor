@@ -59,7 +59,15 @@ func seatbeltNetworkRules(spec Spec) string {
 		b.WriteString("(allow network-bind (local ip \"*:*\"))\n\n")
 		return b.String()
 	default:
-		return "(allow network*)\n\n"
+		// The default posture keeps raw egress open, but cloud
+		// instance-metadata endpoints are always denied: they
+		// vend host-level credentials (IMDSv2 tokens, Azure/GCP
+		// equivalents) that a confined dev-tool command has no
+		// business reading. Landlock is port-granular and cannot
+		// express this on Linux; there the egress-proxy tier is
+		// the answer (ProxyOnly routes everything through the
+		// broker, which enforces hostname policy).
+		return "(allow network*)\n(deny network-outbound (remote ip \"169.254.169.254:*\"))\n\n"
 	}
 }
 

@@ -225,6 +225,13 @@ func TestCredentialDenyPathsInSpec(t *testing.T) {
 	// The read grant for git/npm registry auth must never land in the
 	// deny set, or workspace-confined registry flows would break.
 	require.NotContains(t, spec.DenyRead, filepath.Join(home, ".npmrc"))
+	// System identity and cluster-credential paths carry the denial to
+	// the macOS layer (global reads) and the pathguard; on Linux the
+	// Landlock default-deny already covers them.
+	require.Contains(t, spec.DenyRead, "/etc/passwd")
+	require.Contains(t, spec.DenyRead, "/etc/shadow")
+	require.Contains(t, spec.DenyRead, "/run/secrets")
+	require.Contains(t, spec.DenyRead, "/var/run/secrets/kubernetes.io/serviceaccount")
 }
 
 func TestDefaultReadOnlyDirsExcludeEtc(t *testing.T) {

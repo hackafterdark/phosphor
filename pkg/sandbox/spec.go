@@ -237,6 +237,23 @@ func CredentialDenyPaths() []string {
 			filepath.Join(home, ".docker", "config.json"),
 		)
 	}
+	// System-wide credential and identity paths. On Linux the Landlock
+	// default-deny already covers these; the entries carry the denial to
+	// the macOS seatbelt layer (which allows global reads by design) and
+	// the in-process pathguard, and document intent. The Kubernetes
+	// service-account token and the /run/secrets mount point are here
+	// because a confined child must never hold cluster credentials even
+	// if future policy widens /var or /run access.
+	paths = append(paths,
+		"/etc/passwd",
+		"/etc/shadow",
+		"/etc/group",
+		"/etc/sudoers",
+		"/etc/sudoers.d",
+		"/etc/ssh",
+		"/run/secrets",
+		"/var/run/secrets/kubernetes.io/serviceaccount",
+	)
 	return paths
 }
 

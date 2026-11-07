@@ -126,6 +126,22 @@ func TestSeatbeltProfileAllowNetworkByDefault(t *testing.T) {
 	require.NotContains(t, profile, "(deny network*)")
 }
 
+func TestSeatbeltProfileDeniesInstanceMetadata(t *testing.T) {
+	t.Parallel()
+
+	// Cloud metadata endpoints vend host-level credentials; raw egress
+	// stays open by default but the link-local metadata address is
+	// always denied.
+	profile := seatbeltProfile(seatbeltTestSpec())
+	require.Contains(t, profile, `(deny network-outbound (remote ip "169.254.169.254:*"))`)
+
+	// The stricter postures deny raw egress entirely, so the metadata
+	// endpoint is unreachable under them too.
+	spec := seatbeltTestSpec()
+	spec.Network = NetworkDeny
+	require.Contains(t, seatbeltProfile(spec), "(deny network*)")
+}
+
 func TestSeatbeltProfileProxyOnlyNetwork(t *testing.T) {
 	t.Parallel()
 

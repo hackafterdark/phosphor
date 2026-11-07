@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -113,10 +114,16 @@ func TestRootTooBroad_CredentialDenyListOverlap(t *testing.T) {
 	// of a home-relative deny root is the home directory itself, which the
 	// home rule refuses first; the deny-list parents that are not the home
 	// directory itself (e.g. ~/.config on POSIX) are exercised here.
+	// Absolute system-level deny paths (e.g. /etc/passwd) are skipped:
+	// their parents are well-known system directories, which the
+	// sensitive-root rule refuses before the overlap check is reached.
 	overlapped := false
 	for _, deny := range CredentialDenyPaths() {
 		parent := filepath.Dir(filepath.Clean(deny))
 		if samePath(parent, home) {
+			continue
+		}
+		if !strings.HasPrefix(filepath.Clean(deny), home+string(filepath.Separator)) {
 			continue
 		}
 		broad, reason := RootTooBroadFor(parent, home, nil, "", "")
