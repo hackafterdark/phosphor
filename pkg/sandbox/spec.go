@@ -306,6 +306,32 @@ func CredentialDenyPaths() []string {
 	return paths
 }
 
+// confinedAgentSocketVars are environment variables that hand a confined
+// child a live path to the user's ssh-agent. The socket itself usually
+// lives in /tmp (a writable root) or /run/user/<uid>, so the kernel
+// boundary alone cannot stop a confined child from asking the agent to
+// sign with keys the sandbox can't read. Stripping the variables removes
+// the pointer; ssh falls back to the on-disk identity files, which
+// CredentialDenyPaths already denies, so this is strictly no weaker.
+var confinedAgentSocketVars = map[string]struct{}{
+	"SSH_AUTH_SOCK": {},
+	"SSH_AGENT_PID": {},
+}
+
+// ConfinedEnv returns env with the ssh-agent socket variables removed.
+// The result is a fresh slice; env is never modified.
+func ConfinedEnv(env []string) []string {
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		key, _, _ := strings.Cut(kv, "=")
+		if _, deny := confinedAgentSocketVars[key]; deny {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return out
+}
+
 // SpecFor builds the workspace-mode sandbox policy. The workspace root is
 // always writable; ExtraTrustedRoots (pathguard's trusted additions) join
 // the writable set; well-known read-only roots are filtered to paths that

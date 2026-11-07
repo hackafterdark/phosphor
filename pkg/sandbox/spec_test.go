@@ -315,3 +315,23 @@ func TestDefaultSpecPassesDenyReadValidation(t *testing.T) {
 	spec := SpecFor(t.TempDir(), nil)
 	require.NoError(t, spec.ValidateDenyRead())
 }
+
+func TestConfinedEnvStripsAgentSocketVars(t *testing.T) {
+	t.Parallel()
+	env := []string{
+		"PATH=/usr/bin",
+		"SSH_AUTH_SOCK=/run/user/1000/vscode-ssh-auth-sock-1",
+		"SSH_AGENT_PID=4242",
+		"HOME=/home/dev",
+	}
+	got := ConfinedEnv(env)
+	require.Equal(t, []string{"PATH=/usr/bin", "HOME=/home/dev"}, got)
+	// The input must never be modified in place.
+	require.Len(t, env, 4)
+}
+
+func TestConfinedEnvPassesThroughBenignVars(t *testing.T) {
+	t.Parallel()
+	env := []string{"SSH_ASKPASS=/bin/true", "SSH_AUTH_SOCK_PREFIX=x"}
+	require.Equal(t, env, ConfinedEnv(env))
+}

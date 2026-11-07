@@ -200,7 +200,7 @@ func RunRLimitExec(args []string) error {
 	if err := applyRLimits(rl); err != nil {
 		return err
 	}
-	return syscall.Exec(payload[0], payload, os.Environ())
+	return syscall.Exec(payload[0], payload, ConfinedEnv(os.Environ()))
 }
 
 func (seatbeltIsolator) Available() (bool, string) {
