@@ -211,7 +211,17 @@ func CredentialDenyPaths() []string {
 		filepath.Join(home, ".kube"),
 		filepath.Join(home, ".config", "gcloud"),
 		filepath.Join(home, ".config", "gh"),
+		// Podman's registry credentials (auth.json) live under
+		// ~/.config/containers, the podman analogue of the denied
+		// ~/.docker/config.json.
+		filepath.Join(home, ".config", "containers"),
 		filepath.Join(home, ".docker", "config.json"),
+		// Maven and Gradle credential files: LanguageCacheDirs scopes
+		// its grants to cache content and documents these files as the
+		// excluded credential/config layer; the deny entry carries that
+		// exclusion to the macOS global-read layer and the pathguard.
+		filepath.Join(home, ".m2", "settings.xml"),
+		filepath.Join(home, ".gradle", "gradle.properties"),
 	}
 	// Cargo credentials live directly in CARGO_HOME, the parent of the
 	// registry/ and git/ cache roots LanguageCacheDirs grants. The scoped

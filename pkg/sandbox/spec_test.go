@@ -222,6 +222,11 @@ func TestCredentialDenyPathsInSpec(t *testing.T) {
 	// the scoped cache roots already leave them untrusted.
 	require.Contains(t, spec.DenyRead, filepath.Join(home, ".cargo", "credentials.toml"))
 	require.Contains(t, spec.DenyRead, filepath.Join(home, ".cargo", "credentials"))
+	// Podman registry credentials and the Maven/Gradle credential files
+	// are the toolchain analogues of the denied registry auth files.
+	require.Contains(t, spec.DenyRead, filepath.Join(home, ".config", "containers"))
+	require.Contains(t, spec.DenyRead, filepath.Join(home, ".m2", "settings.xml"))
+	require.Contains(t, spec.DenyRead, filepath.Join(home, ".gradle", "gradle.properties"))
 	// The read grant for git/npm registry auth must never land in the
 	// deny set, or workspace-confined registry flows would break.
 	require.NotContains(t, spec.DenyRead, filepath.Join(home, ".npmrc"))
