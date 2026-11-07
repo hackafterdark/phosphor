@@ -217,9 +217,44 @@ func TestCredentialDenyPathsInSpec(t *testing.T) {
 	spec := SpecFor(t.TempDir(), nil)
 	require.Contains(t, spec.DenyRead, filepath.Join(home, ".ssh"))
 	require.Contains(t, spec.DenyRead, filepath.Join(home, ".aws"))
+	// Cargo credentials sit in CARGO_HOME, the parent of the trusted
+	// registry/ and git/ cache roots; they must stay denied even though
+	// the scoped cache roots already leave them untrusted.
+	require.Contains(t, spec.DenyRead, filepath.Join(home, ".cargo", "credentials.toml"))
+	require.Contains(t, spec.DenyRead, filepath.Join(home, ".cargo", "credentials"))
 	// The read grant for git/npm registry auth must never land in the
 	// deny set, or workspace-confined registry flows would break.
 	require.NotContains(t, spec.DenyRead, filepath.Join(home, ".npmrc"))
+}
+
+func TestDefaultReadOnlyDirsExcludeEtc(t *testing.T) {
+	t.Parallel()
+
+	// /etc must not be granted as a directory: it holds world-readable
+	// sensitive files (/etc/passwd, shadow, host credential material).
+	// Only the toolchain-critical per-file rules are granted.
+	require.NotContains(t, DefaultReadOnlyDirs, "/etc")
+
+	spec := SpecFor(t.TempDir(), nil)
+	for _, f := range ToolchainEtcFiles() {
+		if _, err := os.Stat(f); err != nil {
+			continue
+		}
+		require.Contains(t, spec.ReadOnlyRoots, f,
+			"toolchain-critical /etc file %q must stay readable", f)
+	}
+}
+
+func TestCredentialDenyPathsHonorCargoHomeOverride(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	cargo := t.TempDir()
+	t.Setenv("CARGO_HOME", cargo)
+
+	spec := SpecFor(t.TempDir(), nil)
+	require.Contains(t, spec.DenyRead, filepath.Join(cargo, "credentials.toml"),
+		"CARGO_HOME override must win over the home fallback")
 }
 
 func TestValidateDenyRead(t *testing.T) {

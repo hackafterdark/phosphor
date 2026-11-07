@@ -61,3 +61,4 @@ completions/phosphor.*sh
 
 # Local planning/scratch artifacts (temporary working docs, never committed)
 /_scratch/
+.gocache/

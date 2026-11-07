@@ -3,6 +3,8 @@
 package sandbox
 
 import (
+	"os"
+	"os/exec"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -93,4 +95,73 @@ func TestSeccompProgramKillsForeignArch(t *testing.T) {
 
 	got := evalSeccompProg(t, prog, unix.AUDIT_ARCH_I386, unix.SYS_READ)
 	require.Equal(t, uint32(unix.SECCOMP_RET_KILL_PROCESS), got)
+}
+
+// confineShStrict applies the full kernel policy to a shell command and
+// returns its combined output and exit code.
+func confineShStrict(t *testing.T, workspace, script string) (int, string) {
+	t.Helper()
+	cmd := exec.Command("/bin/sh", "-c", script)
+	cmd.Dir = workspace
+	cmd.Env = []string{"PATH=/usr/bin:/bin"}
+	degraded, err := Confine(cmd, "strict", SpecFor(workspace, nil))
+	require.NoError(t, err)
+	require.False(t, degraded)
+	out, _ := cmd.CombinedOutput()
+	return cmd.ProcessState.ExitCode(), string(out)
+}
+
+// TestKernelDeniesSensitiveEtcFiles pins the narrowing of /etc: the
+// account databases and other world-readable sensitive files must not be
+// readable from confined children, even when code is invoked through a
+// shell script body (the shebang escape the argv policy cannot see).
+func TestKernelDeniesSensitiveEtcFiles(t *testing.T) {
+	if ok, _ := (landlockIsolator{}).Available(); !ok {
+		t.Skip("landlock unavailable on this kernel")
+	}
+	workspace := t.TempDir()
+
+	for _, path := range []string{"/etc/passwd", "/etc/shadow", "/etc/group"} {
+		code, out := confineShStrict(t, workspace, "cat "+path)
+		require.NotEqual(t, 0, code, "%s must not be readable: %s", path, out)
+		require.Contains(t, out, "Permission denied", "%s denial must be EACCES", path)
+	}
+}
+
+// TestKernelAllowsToolchainEtcFiles pins the counterpart: the
+// toolchain-critical /etc files stay readable under the same policy, so
+// the denial above is scoping, not a broken ruleset.
+func TestKernelAllowsToolchainEtcFiles(t *testing.T) {
+	if ok, _ := (landlockIsolator{}).Available(); !ok {
+		t.Skip("landlock unavailable on this kernel")
+	}
+	workspace := t.TempDir()
+
+	code, out := confineShStrict(t, workspace, "cat /etc/hosts >/dev/null && echo hosts_ok")
+	require.Equal(t, 0, code, "/etc/hosts must stay readable: %s", out)
+
+	// DNS resolution exercises resolv.conf, nsswitch.conf, hosts, and
+	// gai.conf through the narrowed file rules.
+	code, out = confineShStrict(t, workspace, "getent hosts localhost && echo dns_ok")
+	require.Equal(t, 0, code, "name resolution must work under narrowed /etc rules: %s", out)
+}
+
+// TestKernelDeniesRuntimeSecrets pins the /run denial: the whole runtime
+// dir is unreadable, which covers both /run/secrets (container canonical)
+// and the rootless docker/podman sockets under /run/user/<uid> — a socket
+// connect there is a host escape and unix sockets are not landlock-gated.
+func TestKernelDeniesRuntimeSecrets(t *testing.T) {
+	if ok, _ := (landlockIsolator{}).Available(); !ok {
+		t.Skip("landlock unavailable on this kernel")
+	}
+	workspace := t.TempDir()
+
+	code, out := confineShStrict(t, workspace, "ls /run >/dev/null")
+	require.NotEqual(t, 0, code, "/run itself must not be listable: %s", out)
+	require.Contains(t, out, "Permission denied", "/run denial must be EACCES")
+
+	if _, err := os.Stat("/run/user"); err == nil {
+		code, out = confineShStrict(t, workspace, "ls /run/user >/dev/null")
+		require.NotEqual(t, 0, code, "/run/user runtime sockets must not be reachable: %s", out)
+	}
 }

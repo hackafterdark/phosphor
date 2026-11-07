@@ -12,17 +12,28 @@ import (
 // DefaultReadOnlyDirs are the well-known roots a development toolchain must
 // read and execute inside the sandbox. Missing paths are dropped silently
 // (they differ per distro/platform); the spec stays honest either way.
+//
+// /etc is deliberately absent: the directory holds sensitive world-readable
+// files (/etc/passwd, /etc/shadow, host credential material) that a dev
+// toolchain never needs. ToolchainEtcFiles grants the narrow per-file set
+// they actually read instead.
 var DefaultReadOnlyDirs = []string{
 	"/usr",
 	"/bin",
 	"/sbin",
 	"/lib",
 	"/lib64",
-	"/etc",
 	"/dev",
 	"/proc",
 	"/sys",
-	"/run",
+	// /run is fully denied: it holds the container canonical secret
+	// mounts (/run/secrets, K8s service-account tokens) and the
+	// rootless docker/podman sockets under /run/user/<uid> — a socket
+	// connect there is a host escape. Unix-socket connect is not
+	// landlock-gated, so the directory grant is the only lever.
+	// Operators needing specific runtime sockets can list them
+	// explicitly via trusted_extra_roots (sub-directories stay
+	// listable there).
 	"/opt",
 	"/nix",
 	"/home/linuxbrew/.linuxbrew",
@@ -32,6 +43,44 @@ var DefaultReadOnlyDirs = []string{
 	"/usr/local",
 	"/private",
 	"/Volumes",
+}
+
+// ToolchainEtcFiles are the per-file /etc rules that replace the broad
+// directory grant: CA bundles and TLS trust, name resolution, the dynamic
+// loader, the Debian/Ubuntu alternatives symlink farm, time zone data, and
+// git's global config. Everything else under /etc — account databases,
+// shadow files, ssh host keys, sudoers — stays unreadable to confined
+// children. Missing paths are dropped (they differ per distro).
+func ToolchainEtcFiles() []string {
+	return []string{
+		// TLS trust (per-distro layouts; existing() drops absent ones).
+		"/etc/ssl",
+		"/etc/ssl/certs",
+		"/etc/ssl/openssl.cnf",
+		"/etc/pki",
+		"/etc/ca-certificates",
+		// Name resolution.
+		"/etc/resolv.conf",
+		"/etc/hosts",
+		"/etc/nsswitch.conf",
+		"/etc/host.conf",
+		"/etc/gai.conf",
+		"/etc/protocols",
+		"/etc/services",
+		// Time zone data.
+		"/etc/localtime",
+		"/etc/timezone",
+		// Dynamic loader and Debian/Ubuntu symlink farm.
+		"/etc/ld.so.cache",
+		"/etc/ld.so.conf",
+		"/etc/ld.so.conf.d",
+		"/etc/alternatives",
+		// OS identity and toolchain configuration.
+		"/etc/os-release",
+		"/etc/machine-id",
+		"/etc/krb5.conf",
+		"/etc/gitconfig",
+	}
 }
 
 // userReadOnlyFiles returns single-file exceptions tools must read. git
@@ -159,10 +208,21 @@ func CredentialDenyPaths() []string {
 		filepath.Join(home, ".gnupg"),
 		filepath.Join(home, ".git-credentials"),
 		filepath.Join(home, ".netrc"),
+		filepath.Join(home, ".kube"),
 		filepath.Join(home, ".config", "gcloud"),
 		filepath.Join(home, ".config", "gh"),
 		filepath.Join(home, ".docker", "config.json"),
 	}
+	// Cargo credentials live directly in CARGO_HOME, the parent of the
+	// registry/ and git/ cache roots LanguageCacheDirs grants. The scoped
+	// cache roots keep them untrusted, but a deny entry makes the intent
+	// explicit and blocks any future widening (trusted_extra_roots or a
+	// mis-set CARGO_HOME) from silently exposing them.
+	cargoHome := firstNonEmpty(os.Getenv("CARGO_HOME"), filepath.Join(home, ".cargo"))
+	paths = append(paths,
+		filepath.Join(cargoHome, "credentials.toml"),
+		filepath.Join(cargoHome, "credentials"),
+	)
 	switch runtime.GOOS {
 	case "darwin":
 		paths = append(paths,
@@ -193,7 +253,7 @@ func SpecFor(workspace string, extraTrustedRoots []string) Spec {
 func SpecForLimits(workspace string, extraTrustedRoots []string, limits ResourceLimits) Spec {
 	return Spec{
 		WorkspaceRoot:  workspace,
-		ReadOnlyRoots:  existing(DefaultReadOnlyDirs),
+		ReadOnlyRoots:  existing(append(append([]string{}, DefaultReadOnlyDirs...), ToolchainEtcFiles()...)),
 		ReadWriteRoots: append(append([]string{}, DefaultReadWriteDirs()...), extraTrustedRoots...),
 		ReadOnlyFiles:  userReadOnlyFiles(),
 		ReadWriteFiles: []string{"/dev/null"},
