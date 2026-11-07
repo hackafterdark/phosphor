@@ -222,6 +222,12 @@ func CredentialDenyPaths() []string {
 		// exclusion to the macOS global-read layer and the pathguard.
 		filepath.Join(home, ".m2", "settings.xml"),
 		filepath.Join(home, ".gradle", "gradle.properties"),
+		// Token-bearing config dirs for IaC and cloud-native CLIs;
+		// same posture as the registry auth files above.
+		filepath.Join(home, ".terraform.d"),
+		filepath.Join(home, ".oci"),
+		filepath.Join(home, ".fly"),
+		filepath.Join(home, ".config", "supabase"),
 	}
 	// Cargo credentials live directly in CARGO_HOME, the parent of the
 	// registry/ and git/ cache roots LanguageCacheDirs grants. The scoped
@@ -238,13 +244,46 @@ func CredentialDenyPaths() []string {
 		paths = append(paths,
 			filepath.Join(home, "Library", "Keychains"),
 			filepath.Join(home, ".config", "huggingface"),
+			// macOS app-data stores. Seatbelt allows global reads by
+			// design, so the deny list is the entire defense for
+			// browser sessions, chat apps, and the TCC database.
+			// Curated per-app rather than a blanket Application
+			// Support deny: dev tooling legitimately stores config
+			// there (and the workspace's own tooling must keep
+			// working); the listed apps hold session tokens and
+			// personal data a dev-tool child has no business
+			// reading.
+			filepath.Join(home, "Library", "Application Support", "Google", "Chrome"),
+			filepath.Join(home, "Library", "Application Support", "Microsoft Edge"),
+			filepath.Join(home, "Library", "Application Support", "Firefox"),
+			filepath.Join(home, "Library", "Safari"),
+			filepath.Join(home, "Library", "Cookies"),
+			filepath.Join(home, "Library", "Messages"),
+			filepath.Join(home, "Library", "Application Support", "Slack"),
+			filepath.Join(home, "Library", "Application Support", "Signal"),
+			filepath.Join(home, "Library", "Application Support", "WhatsApp"),
+			// VS Code session storage holds OAuth session tokens for
+			// GitHub/Microsoft accounts.
+			filepath.Join(home, "Library", "Application Support", "Code"),
+			// TCC (privacy/permissions database).
+			filepath.Join(home, "Library", "Application Support", "com.apple.TCC"),
 		)
 	case "windows":
 		appdata := filepath.Join(home, "AppData", "Roaming")
+		local := filepath.Join(home, "AppData", "Local")
 		paths = append(paths,
 			filepath.Join(appdata, "gcloud"),
 			filepath.Join(appdata, "docker", "config.json"),
 			filepath.Join(home, ".docker", "config.json"),
+			// Windows Credential Manager DPAPI blobs. AppContainer
+			// default-denies them (ungranted paths are unreadable),
+			// so this is pathguard-level defense-in-depth plus
+			// documented intent. Registry credential access is
+			// registry-ACL-governed and not expressible with path
+			// rules; see [SpawnConfined] on what the kernel boundary
+			// does and does not cover.
+			filepath.Join(local, "Microsoft", "Credentials"),
+			filepath.Join(appdata, "Microsoft", "Credentials"),
 		)
 	}
 	// System-wide credential and identity paths. On Linux the Landlock
