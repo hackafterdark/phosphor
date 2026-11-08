@@ -59,15 +59,16 @@ func seatbeltNetworkRules(spec Spec) string {
 		b.WriteString("(allow network-bind (local ip \"*:*\"))\n\n")
 		return b.String()
 	default:
-		// The default posture keeps raw egress open, but cloud
-		// instance-metadata endpoints are always denied: they
-		// vend host-level credentials (IMDSv2 tokens, Azure/GCP
-		// equivalents) that a confined dev-tool command has no
-		// business reading. Landlock is port-granular and cannot
-		// express this on Linux; there the egress-proxy tier is
-		// the answer (ProxyOnly routes everything through the
-		// broker, which enforces hostname policy).
-		return "(allow network*)\n(deny network-outbound (remote ip \"169.254.169.254:*\"))\n\n"
+		// The default posture keeps raw egress open. Cloud
+		// instance-metadata (169.254.169.254) cannot be denied here:
+		// the seatbelt SBPL host grammar accepts only "*" or
+		// "localhost" (sandbox-exec rejects a numeric host with
+		// "host must be * or localhost in network address"), and
+		// "localhost" maps to loopback, not link-local. Neither
+		// Landlock (port-granular TCP rules) nor SBPL can express an
+		// IP-address deny; the ProxyOnly tier or a host firewall
+		// rule is the enforcement path for IMDS.
+		return "(allow network*)\n\n"
 	}
 }
 

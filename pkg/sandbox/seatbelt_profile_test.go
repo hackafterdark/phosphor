@@ -126,14 +126,17 @@ func TestSeatbeltProfileAllowNetworkByDefault(t *testing.T) {
 	require.NotContains(t, profile, "(deny network*)")
 }
 
-func TestSeatbeltProfileDeniesInstanceMetadata(t *testing.T) {
+func TestSeatbeltProfileNetworkGrammarLimits(t *testing.T) {
 	t.Parallel()
 
-	// Cloud metadata endpoints vend host-level credentials; raw egress
-	// stays open by default but the link-local metadata address is
-	// always denied.
+	// The default posture keeps raw egress open: the SBPL host grammar
+	// accepts only `*` or `localhost` in a remote-ip rule, so an
+	// instance-metadata deny cannot be expressed. sandbox-exec rejects
+	// numeric hosts outright ("host must be * or localhost in network
+	// address"), which would invalidate the whole profile.
 	profile := seatbeltProfile(seatbeltTestSpec())
-	require.Contains(t, profile, `(deny network-outbound (remote ip "169.254.169.254:*"))`)
+	require.Contains(t, profile, "(allow network*)")
+	require.NotContains(t, profile, "169.254.169.254")
 
 	// The stricter postures deny raw egress entirely, so the metadata
 	// endpoint is unreachable under them too.

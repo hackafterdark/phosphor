@@ -131,8 +131,10 @@ sit outside what it can express, and closing them is a host-layer job:
   reads inside the sandbox remain host-governed.
 - **Raw-socket egress to cloud metadata (IMDS).** The egress broker
   covers the network commands it parses; Landlock's TCP rules are
-  port-granular and cannot express an IP-address deny. On macOS the
-  seatbelt profile denies `169.254.169.254` outright. On Linux, use
+  port-granular and cannot express an IP-address deny, and the macOS
+  seatbelt grammar accepts only `*` or `localhost` as network hosts
+  (a numeric IP in a `remote ip` rule is rejected by `sandbox-exec`).
+  Neither kernel sandbox can deny `169.254.169.254` directly. Use
   `network.enabled: false` or the proxy-only posture for the exposed
   workload, or block link-local at the host firewall.
 - **Windows registry access.** Registry keys are governed by registry
