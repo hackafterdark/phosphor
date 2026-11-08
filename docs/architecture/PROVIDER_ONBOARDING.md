@@ -88,6 +88,12 @@ context window → attachments) directly on top of the onboarding screen:
   (`setupProvider` → `SetConfigField(ScopeGlobal, …)`), then closes the
   wizard and refreshes the provider list so the new provider's models
   appear immediately.
+- The config store's `autoReload` after the write re-runs
+  `SetupAgents()` (see `reloadFromDiskLocked` in `pkg/config/store.go`),
+  so `currentModelSupportsImages()` — which reads
+  `cfg.Agents[AgentSystem]` — sees a valid agent as soon as the first
+  provider lands. The wizard used to call `SetupAgents()` directly; that
+  call was redundant and was removed.
 - The user then picks one of those models; `handleSelectModel` sees the
   provider is configured, skips authentication, sets large/small model
   preferences (custom providers fall back to the large model as the

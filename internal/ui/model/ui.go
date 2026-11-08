@@ -2609,7 +2609,9 @@ func (m *UI) handleSelectModel(msg dialog.ActionSelectModel) tea.Cmd {
 
 	if isOnboarding {
 		m.setState(uiLanding, uiFocusEditor)
-		m.com.Config().SetupAgents()
+		// SetupAgents is run by the config store's auto-reload once the
+		// first provider makes the config usable, so it is not needed
+		// here.
 		if err := m.com.Workspace.InitSystemAgent(context.TODO()); err != nil {
 			cmds = append(cmds, util.ReportError(err))
 		}
