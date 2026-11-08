@@ -320,6 +320,10 @@ func (m *ProviderWizard) advance() Action {
 				return nil
 			}
 			m.contextW = contextW
+		} else {
+			// Navigating back and clearing the field must clear the
+			// stored value too, otherwise setup keeps the old window.
+			m.contextW = 0
 		}
 		m.step = providerWizardStepAttach
 		m.focusStep()

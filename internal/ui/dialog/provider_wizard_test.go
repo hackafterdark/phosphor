@@ -164,11 +164,14 @@ func TestProviderWizardCapabilities(t *testing.T) {
 	assert.Equal(t, providerWizardStepContext, w.step)
 	assert.NotEmpty(t, w.errText)
 
-	// Empty input skips the value entirely.
+	// Empty input skips the value entirely, and clears any value
+	// entered on a previous pass through the step.
 	w.errText = ""
+	w.contextW = 32768
 	w.contextWInput.SetValue("")
 	require.Nil(t, w.advance())
 	assert.Equal(t, providerWizardStepAttach, w.step)
+	assert.Zero(t, w.contextW)
 	assert.Zero(t, w.attach)
 }
 
