@@ -38,8 +38,9 @@ Input is captured at two layers:
 Selecting a provider/model chains into the credential dialogs
 (`openAuthenticationDialog` → `NewOAuthHyper` / `NewOAuthCopilot` /
 `NewAPIKeyInput`). Completing the flow calls `handleSelectModel`, which
-flips the state to `uiLanding`, runs `SetupAgents()`, and initializes
-the system agent.
+flips the state to `uiLanding`, and initializes the system agent (the
+config store's `autoReload` runs `SetupAgents()` as soon as the first
+provider makes the config usable).
 
 ## The chicken-and-egg problem
 
@@ -88,12 +89,13 @@ context window → attachments) directly on top of the onboarding screen:
   (`setupProvider` → `SetConfigField(ScopeGlobal, …)`), then closes the
   wizard and refreshes the provider list so the new provider's models
   appear immediately.
-- The config store's `autoReload` after the write re-runs
-  `SetupAgents()` (see `reloadFromDiskLocked` in `pkg/config/store.go`),
-  so `currentModelSupportsImages()` — which reads
-  `cfg.Agents[AgentSystem]` — sees a valid agent as soon as the first
-  provider lands. The wizard used to call `SetupAgents()` directly; that
-  call was redundant and was removed.
+- Finishing the wizard auto-selects the first configured model as the
+  large model (mirroring the API-key dialog, which selects the model
+  the user was on). `handleSelectModel` then records `models.large` in
+  the workspace config, defaults the small model to the same one,
+  initializes the system agent, and leaves onboarding — so image paste
+  (`currentModelSupportsImages`, which resolves through the agent's
+  large model) works immediately after setup.
 - The user then picks one of those models; `handleSelectModel` sees the
   provider is configured, skips authentication, sets large/small model
   preferences (custom providers fall back to the large model as the

@@ -4914,8 +4914,37 @@ func (m *UI) setupProvider(msg dialog.ActionSetupProvider) tea.Cmd {
 
 	m.dialog.CloseDialog(dialog.ProviderWizardID)
 	if m.state == uiOnboarding {
-		// Refresh the onboarding provider list so the new provider and
-		// its models appear immediately for the user to pick from.
+		// The user just added this provider to set up their endpoint;
+		// pick its first model directly so onboarding completes instead
+		// of bouncing back to the provider list. This mirrors the
+		// API-key dialog, which selects the model the user was on. The
+		// small model defaults to the same one via GetDefaultSmallModel.
+		// handleSelectModel is called directly rather than emitted as an
+		// action: by the time an action would round-trip through
+		// handleDialogMsg, setupProvider has already flipped the state
+		// to landing and the onboarding branch would no longer run.
+		if len(msg.Models) > 0 {
+			m.dialog.CloseDialog(dialog.ModelsID)
+			if cmd := m.handleSelectModel(dialog.ActionSelectModel{
+				Provider: catwalk.Provider{
+					ID:   catwalk.InferenceProvider(msg.ProviderID),
+					Name: msg.ProviderID,
+				},
+				Model: config.SelectedModel{
+					Provider: msg.ProviderID,
+					Model:    msg.Models[0],
+				},
+				ModelType: config.SelectedModelTypeLarge,
+			}); cmd != nil {
+				return cmd
+			}
+			return util.ReportInfo(fmt.Sprintf(
+				"Provider %q added. %s is ready — Ctrl+L to switch models.",
+				msg.ProviderID, msg.Models[0],
+			))
+		}
+		// No models collected (older/invalid flow): refresh the list so
+		// the provider appears for manual selection.
 		m.dialog.CloseDialog(dialog.ModelsID)
 		if cmd := m.openModelsDialog(); cmd != nil {
 			return cmd
