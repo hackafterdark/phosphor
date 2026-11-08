@@ -57,15 +57,24 @@ first authenticate a cloud provider, or hand-edit
 The onboarding provider list now starts with a synthetic
 *Set up a custom provider* entry. Selecting it emits
 `ActionOpenDialog{DialogID: ProviderWizardID}`, which opens the
-existing 5-step wizard (name → base URL → API key → model IDs →
-capabilities) directly on top of the onboarding screen. The
-capabilities step is optional: it collects `context_window` (written to
-every model so compaction knows the budget) and
-`supports_attachments` (written to every model only when explicitly
-answered). Leaving it empty writes neither field — see
-`shouldSummarize` in `pkg/agent/agent.go`, which skips summarization
-when the window is zero, so an unset window silently disables context
-compaction:
+existing 6-step wizard (name → base URL → API key → model IDs →
+context window → attachments) directly on top of the onboarding screen:
+
+- The dialog is a framed, centered box with fixed dimensions: the
+  summary panel lists every field (provider, url, api key, models,
+  context, attachments) on every step, so collected values appear as
+  the user progresses and the box never resizes.
+- The context-window step takes a positive token count and is skippable
+  (empty input).
+- The attachments step is a yes/no radio selector (arrows move, enter
+  confirms), so the stored value is always a valid boolean.
+- The same fields are editable later via *Manage Custom Providers*
+  (`context_window` and `supports_attachments` rows on each model).
+  `pkg/config/custom_provider_capabilities_test.go` pins that both
+  fields survive the config load pipeline.
+- An unset `context_window` (0) silently disables context compaction —
+  `shouldSummarize` in `pkg/agent/agent.go` skips summarization when
+  the window is zero — so the value is worth filling in.
 
 - The wizard always renders as a framed, centered dialog — even during
   onboarding — so it stays visually distinct from the provider picker
