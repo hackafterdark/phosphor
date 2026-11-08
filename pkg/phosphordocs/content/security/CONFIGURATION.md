@@ -916,6 +916,7 @@ patterns are:
 credentials*.json  *service-account*.json  secrets.*
 id_rsa  id_dsa  id_ecdsa  id_ed25519  *.pem  *.p12  *.pfx
 */kubernetes.io/serviceaccount/token
+/proc/*/environ  /proc/*/task/*/environ
 ```
 
 ### Known-Value Registry (always on)

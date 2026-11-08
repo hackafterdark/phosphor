@@ -40,6 +40,11 @@ func TestClassifySensitiveFile(t *testing.T) {
 		{"pem-opaque", "certs/server.pem", tierSensitive, shapeOpaque},
 		{"id-rsa-opaque", "~/.ssh/id_rsa", tierSensitive, shapeOpaque},
 		{"template-exempt", "docs/.env.example", tierTemplate, shapeNone},
+		{"proc-environ", "/proc/1/environ", tierSensitive, shapeDotenv},
+		{"proc-environ-deep", "/proc/123/task/456/environ", tierSensitive, shapeDotenv},
+		{"environ-basename-not-matched", "environ", tierNone, shapeNone},
+		{"environ-other-dir-not-matched", "/var/tmp/environ", tierNone, shapeNone},
+		{"k8s-token-absolute", "/var/run/secrets/kubernetes.io/serviceaccount/token", tierSensitive, shapeDotenv},
 		{"ordinary-source", "internal/app/app.go", tierNone, shapeNone},
 		{"ordinary-json", "pkg/api/response.json", tierNone, shapeNone},
 	}

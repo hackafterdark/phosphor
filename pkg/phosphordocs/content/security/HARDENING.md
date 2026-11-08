@@ -114,7 +114,10 @@ sit outside what it can express, and closing them is a host-layer job:
 - **`/proc/<pid>/environ` of same-UID processes.** The seccomp denylist
   blocks `ptrace` and cross-process memory reads, but reading a process's
   `environ` file is governed by ptrace/Yama host policy, not Landlock.
-  Hosts should set `ptrace_scope=1` (or stricter).
+  Hosts should set `ptrace_scope=1` (or stricter). Phosphor's own read
+  path redacts every `/proc/*/environ` file it reads, so agent-tool
+  reads of process environments come back redacted regardless of host
+  policy; raw shell reads inside the sandbox remain host-governed.
 - **Raw-socket egress to cloud metadata (IMDS).** The egress broker
   covers the network commands it parses; Landlock's TCP rules are
   port-granular and cannot express an IP-address deny. On macOS the
