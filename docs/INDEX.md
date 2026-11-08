@@ -102,6 +102,7 @@ searchable through the `phosphor_docs` tool or by viewing any
 | --- | --- |
 | [architecture/OVERVIEW.md](architecture/OVERVIEW.md) | Module layout and the transport/backend split. |
 | [architecture/SESSIONS.md](architecture/SESSIONS.md) | The two-tier session model backed by SQLite. |
+| [architecture/PROVIDER_ONBOARDING.md](architecture/PROVIDER_ONBOARDING.md) | The first-run provider onboarding flow and the custom (local) provider path. |
 
 ### Architecture Decision Records
 

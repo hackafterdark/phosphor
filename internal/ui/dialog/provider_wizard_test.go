@@ -97,7 +97,7 @@ func TestProviderWizardAdvanceFlow(t *testing.T) {
 	assert.Equal(t, providerWizardStepModels, w.step)
 
 	// Step 4: enter with no models errors; typing + enter accumulates;
-	// enter on empty input emits the save action.
+	// enter on empty input moves to the context-window screen.
 	w.modelInput.SetValue("")
 	require.Nil(t, w.advance())
 	assert.NotEmpty(t, w.errText)
@@ -110,6 +110,24 @@ func TestProviderWizardAdvanceFlow(t *testing.T) {
 	require.Nil(t, w.advance())
 	assert.Equal(t, []string{"qwen3-32b", "llama-3.1-70b"}, w.models)
 
+	// HandleMsg routes the empty-input enter to the context-window screen.
+	w.errText = ""
+	require.Nil(t, w.HandleMsg(tea.KeyPressMsg{Code: tea.KeyEnter}))
+	assert.Equal(t, providerWizardStepContext, w.step)
+
+	// Invalid context windows stay on the step.
+	w.contextWInput.SetValue("abc")
+	require.Nil(t, w.advance())
+	assert.Equal(t, providerWizardStepContext, w.step)
+	assert.NotEmpty(t, w.errText)
+
+	// Empty context window skips the value and moves to attachments.
+	w.contextWInput.SetValue("")
+	w.errText = ""
+	require.Nil(t, w.advance())
+	assert.Equal(t, providerWizardStepAttach, w.step)
+
+	// Enter on the boolean screen finishes with an explicit answer.
 	action := w.advance()
 	save, ok := action.(ActionSetupProvider)
 	require.True(t, ok, "expected ActionSetupProvider, got %T", action)
@@ -117,6 +135,69 @@ func TestProviderWizardAdvanceFlow(t *testing.T) {
 	assert.Equal(t, "http://192.168.1.10:8000/v1", save.BaseURL)
 	assert.Empty(t, save.APIKey)
 	assert.Equal(t, []string{"qwen3-32b", "llama-3.1-70b"}, save.Models)
+	assert.Zero(t, save.ContextW)
+	require.NotNil(t, save.Attachments)
+	assert.True(t, *save.Attachments)
+}
+
+func TestProviderWizardCapabilities(t *testing.T) {
+	t.Parallel()
+
+	w := newTestWizard(t)
+	w.step = providerWizardStepContext
+	w.models = []string{"qwen3-32b"}
+
+	w.contextWInput.SetValue("32768")
+	require.Nil(t, w.advance())
+	assert.Equal(t, providerWizardStepAttach, w.step)
+	assert.Equal(t, int64(32768), w.contextW)
+
+	// Invalid numbers stay on the step.
+	w.step = providerWizardStepContext
+	w.contextWInput.SetValue("32768 maybe")
+	require.Nil(t, w.advance())
+	assert.Equal(t, providerWizardStepContext, w.step)
+	assert.NotEmpty(t, w.errText)
+
+	w.contextWInput.SetValue("0")
+	require.Nil(t, w.advance())
+	assert.Equal(t, providerWizardStepContext, w.step)
+	assert.NotEmpty(t, w.errText)
+
+	// Empty input skips the value entirely, and clears any value
+	// entered on a previous pass through the step.
+	w.errText = ""
+	w.contextW = 32768
+	w.contextWInput.SetValue("")
+	require.Nil(t, w.advance())
+	assert.Equal(t, providerWizardStepAttach, w.step)
+	assert.Zero(t, w.contextW)
+	assert.Zero(t, w.attach)
+}
+
+func TestProviderWizardAttachmentToggle(t *testing.T) {
+	t.Parallel()
+
+	w := newTestWizard(t)
+	w.step = providerWizardStepAttach
+	w.models = []string{"qwen3-32b"}
+
+	// The selector defaults to yes; arrows set an explicit boolean.
+	require.Nil(t, w.HandleMsg(tea.KeyPressMsg{Code: tea.KeyRight}))
+	assert.Equal(t, boolOptionNo, w.attachSel)
+	require.Nil(t, w.HandleMsg(tea.KeyPressMsg{Code: tea.KeyLeft}))
+	assert.Equal(t, boolOptionYes, w.attachSel)
+
+	action := w.advance()
+	save, ok := action.(ActionSetupProvider)
+	require.True(t, ok, "expected ActionSetupProvider, got %T", action)
+	require.NotNil(t, save.Attachments)
+	assert.True(t, *save.Attachments)
+
+	// Free-form typing on the boolean screen is ignored entirely.
+	w.HandleMsg(tea.KeyPressMsg{Code: 'x', Text: "x"})
+	assert.Equal(t, boolOptionYes, w.attachSel)
+	assert.Equal(t, providerWizardStepAttach, w.step)
 }
 
 func TestProviderWizardKeys(t *testing.T) {
@@ -139,16 +220,21 @@ func TestProviderWizardKeys(t *testing.T) {
 	require.Nil(t, w.HandleMsg(tea.KeyPressMsg{Code: tea.KeyEnter}))
 	assert.NotEmpty(t, w.errText)
 
-	// Re-adding a model and pressing enter on empty input finishes.
+	// Re-adding a model and pressing enter on empty input moves to the
+	// capabilities screens; enter on the context-window screen (empty)
+	// skips it, and enter on the boolean screen finishes the wizard.
 	w.modelInput.SetValue("qwen3-32b")
 	require.Nil(t, w.HandleMsg(tea.KeyPressMsg{Code: tea.KeyEnter}))
+	require.Nil(t, w.HandleMsg(tea.KeyPressMsg{Code: tea.KeyEnter}))
+	assert.Equal(t, providerWizardStepContext, w.step)
+	require.Nil(t, w.HandleMsg(tea.KeyPressMsg{Code: tea.KeyEnter}))
+	assert.Equal(t, providerWizardStepAttach, w.step)
 	_, ok := w.HandleMsg(tea.KeyPressMsg{Code: tea.KeyEnter}).(ActionSetupProvider)
 	require.True(t, ok, "expected ActionSetupProvider on finish")
 
-	// Backspace on the empty model input steps back to the key step.
-	w.modelInput.SetValue("")
+	// Backspace on the boolean screen steps back to the context step.
 	require.Nil(t, w.HandleMsg(tea.KeyPressMsg{Code: tea.KeyBackspace}))
-	assert.Equal(t, providerWizardStepKey, w.step)
+	assert.Equal(t, providerWizardStepContext, w.step)
 
 	// Escape closes the wizard.
 	assert.Equal(t, ActionClose{}, w.HandleMsg(tea.KeyPressMsg{Code: tea.KeyEscape}))

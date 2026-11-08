@@ -1858,7 +1858,12 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 	// Generic dialog messages
 	case dialog.ActionClose:
 		if isOnboarding && m.dialog.ContainsDialog(dialog.ModelsID) {
-			break
+			// The provider picker itself is inescapable during
+			// onboarding, but esc on any dialog opened on top of it
+			// (e.g. the custom provider wizard) returns to the picker.
+			if front := m.dialog.DialogLast(); front != nil && front.ID() == dialog.ModelsID {
+				break
+			}
 		}
 
 		if m.dialog.ContainsDialog(dialog.FilePickerID) {
@@ -2604,7 +2609,9 @@ func (m *UI) handleSelectModel(msg dialog.ActionSelectModel) tea.Cmd {
 
 	if isOnboarding {
 		m.setState(uiLanding, uiFocusEditor)
-		m.com.Config().SetupAgents()
+		// SetupAgents is run by the config store's auto-reload once the
+		// first provider makes the config usable, so it is not needed
+		// here.
 		if err := m.com.Workspace.InitSystemAgent(context.TODO()); err != nil {
 			cmds = append(cmds, util.ReportError(err))
 		}
@@ -4873,7 +4880,14 @@ func (m *UI) setupProvider(msg dialog.ActionSetupProvider) tea.Cmd {
 
 	models := make([]map[string]any, 0, len(msg.Models))
 	for _, id := range msg.Models {
-		models = append(models, map[string]any{"id": id, "name": id})
+		model := map[string]any{"id": id, "name": id}
+		if msg.ContextW > 0 {
+			model["context_window"] = msg.ContextW
+		}
+		if msg.Attachments != nil {
+			model["supports_attachments"] = *msg.Attachments
+		}
+		models = append(models, model)
 	}
 
 	type configField struct {
@@ -4899,6 +4913,57 @@ func (m *UI) setupProvider(msg dialog.ActionSetupProvider) tea.Cmd {
 	}
 
 	m.dialog.CloseDialog(dialog.ProviderWizardID)
+	if m.state == uiOnboarding {
+		// handleSelectModel bails out (and closes nothing) when the
+		// agent is busy — another client can start the shared agent
+		// during onboarding in client/server mode. Check before closing
+		// the wizard and picker so the user can retry after the agent
+		// finishes instead of landing in a dialog-less dead end. The
+		// OAuth carve-out mirrors handleSelectModel.
+		if m.isAgentBusy() && !m.dialog.ContainsDialog(dialog.OAuthID) {
+			m.dialog.CloseDialog(dialog.ProviderWizardID)
+			return util.ReportWarn("Agent is busy, please wait...")
+		}
+		// The user just added this provider to set up their endpoint;
+		// pick its first model directly so onboarding completes instead
+		// of bouncing back to the provider list. This mirrors the
+		// API-key dialog, which selects the model the user was on. The
+		// small model defaults to the same one via GetDefaultSmallModel.
+		// handleSelectModel is called directly rather than emitted as an
+		// action: by the time an action would round-trip through
+		// handleDialogMsg, setupProvider has already flipped the state
+		// to landing and the onboarding branch would no longer run.
+		if len(msg.Models) > 0 {
+			m.dialog.CloseDialog(dialog.ModelsID)
+			if cmd := m.handleSelectModel(dialog.ActionSelectModel{
+				Provider: catwalk.Provider{
+					ID:   catwalk.InferenceProvider(msg.ProviderID),
+					Name: msg.ProviderID,
+				},
+				Model: config.SelectedModel{
+					Provider: msg.ProviderID,
+					Model:    msg.Models[0],
+				},
+				ModelType: config.SelectedModelTypeLarge,
+			}); cmd != nil {
+				return cmd
+			}
+			return util.ReportInfo(fmt.Sprintf(
+				"Provider %q added. %s is ready — Ctrl+L to switch models.",
+				msg.ProviderID, msg.Models[0],
+			))
+		}
+		// No models collected (older/invalid flow): refresh the list so
+		// the provider appears for manual selection.
+		m.dialog.CloseDialog(dialog.ModelsID)
+		if cmd := m.openModelsDialog(); cmd != nil {
+			return cmd
+		}
+		return util.ReportInfo(fmt.Sprintf(
+			"Provider %q added. Pick one of its models to continue.",
+			msg.ProviderID,
+		))
+	}
 	return util.ReportInfo(fmt.Sprintf(
 		"Provider %q (%s) added to the global config. Press Ctrl+L to switch models.",
 		msg.ProviderID, msg.BaseURL,
