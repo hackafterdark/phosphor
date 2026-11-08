@@ -113,22 +113,19 @@ sit outside what it can express, and closing them is a host-layer job:
 
 - **`/proc/<pid>/environ` of same-UID processes.** The seccomp denylist
   blocks `ptrace` and cross-process memory reads, but reading a process's
-  `environ` file is governed by ptrace/Yama host policy, not Landlock.
-  Set `kernel.yama.ptrace_scope=1` on the host
-  (`/etc/sysctl.d/99-ptrace.conf`): a process reading an *unrelated*
-  process's environ is exactly the harvesting attack this restriction
-  blocks, while reading your own env, a parent reading its child's, and
-  debuggers that launch their target (`gdb`/`strace`/`perf`) are all
-  unaffected. Legitimate tooling that attaches to *existing* processes
-  (`jcmd`, `py-spy`, crash reporters) carries `CAP_SYS_PTRACE` instead
-  — the per-container equivalent of relaxing the host value, which is
-  not namespaced. Ubuntu, Arch, openSUSE, RHEL/CentOS, and Amazon Linux
-  already default to `1`; Debian, Fedora ≤ 44, and Alpine default to `0`
-  and need the sysctl (Fedora restricts by default in F46+). macOS and
-  Windows are not affected. Phosphor's own read path redacts every
-  `/proc/*/environ` file it reads, so agent-tool reads of process
-  environments come back redacted regardless of host policy; raw shell
-  reads inside the sandbox remain host-governed.
+  `environ` file goes through `ptrace_may_access(PTRACE_MODE_READ_FSCREDS)`
+  — a mode Yama's `ptrace_scope` does **not** restrict (Yama gates only
+  `PTRACE_MODE_ATTACH`), so `ptrace_scope=1` will not stop it either. For
+  a dumpable process (the default) an unrelated same-UID process can
+  read the initial environment purely under DAC checks. Closing this is
+  host policy outside the sandbox: run agents and their tooling under
+  separate UIDs, apply LSM policy that scopes read access, or use
+  kernels with hardened ptrace-read semantics (e.g. NixOS's
+  READ-restricting patch). macOS and Windows are not affected.
+  Phosphor's own read path redacts every `/proc/*/environ` file it
+  reads, so agent-tool reads of process environments come back redacted
+  regardless of host policy; raw shell reads inside the sandbox remain
+  host-governed.
 - **Raw-socket egress to cloud metadata (IMDS).** The egress broker
   covers the network commands it parses; Landlock's TCP rules are
   port-granular and cannot express an IP-address deny, and the macOS

@@ -454,14 +454,14 @@ echoing them reveals nothing.
 Cross-process environment reads are *not* a shell-layer control. The
 confined shell's own `/proc/PID/environ` contains only filtered variables
 (anything readable there is, by construction, allowed), but other host
-processes' environ files — phosphor's own among them — are readable when
-host ptrace policy allows it. The host-side control is
-`kernel.yama.ptrace_scope=1`, which blocks a process from reading an
-unrelated process's environ while leaving self, parent-of-child, and
-launched-target debugging untouched; legitimate tools that attach to
-existing processes carry `CAP_SYS_PTRACE` instead. See
-[HARDENING.md](HARDENING.md) for default values per distribution and the
-container exception.
+processes' environ files — phosphor's own among them — are readable
+under ordinary DAC checks for dumpable processes. `ptrace_scope` does
+not close this: Yama restricts only `PTRACE_MODE_ATTACH`, while the
+environ open uses `PTRACE_MODE_READ_FSCREDS`. The host-side options are
+separate UIDs for agent and target processes, LSM policy that scopes
+read access, or hardened kernels (e.g. NixOS's READ-restricting ptrace
+patch). See [HARDENING.md](HARDENING.md) for the residual-limits
+overview.
 
 ## Testing
 
