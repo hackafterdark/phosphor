@@ -53,11 +53,16 @@ var DefaultReadOnlyDirs = []string{
 // children. Missing paths are dropped (they differ per distro).
 func ToolchainEtcFiles() []string {
 	return []string{
-		// TLS trust (per-distro layouts; existing() drops absent ones).
-		"/etc/ssl",
+		// TLS trust, scoped to the certificate stores and trust
+		// configuration — never the enclosing /etc/ssl or /etc/pki
+		// roots, which also hold private-key directories
+		// (/etc/ssl/private, /etc/pki/tls/private). Recursive trust
+		// grants must not include key material a service account
+		// can read.
 		"/etc/ssl/certs",
 		"/etc/ssl/openssl.cnf",
-		"/etc/pki",
+		"/etc/pki/tls/certs",
+		"/etc/pki/ca-trust",
 		"/etc/ca-certificates",
 		// Name resolution.
 		"/etc/resolv.conf",
@@ -319,12 +324,20 @@ var confinedAgentSocketVars = map[string]struct{}{
 }
 
 // ConfinedEnv returns env with the ssh-agent socket variables removed.
-// The result is a fresh slice; env is never modified.
+// The result is a fresh slice; env is never modified. Windows environment
+// names are case-insensitive, so a `Ssh_Auth_Sock` variant is the same
+// variable there and is stripped case-insensitively; POSIX envs are
+// case-sensitive and match exactly.
 func ConfinedEnv(env []string) []string {
+	fold := runtime.GOOS == "windows"
 	out := make([]string, 0, len(env))
 	for _, kv := range env {
 		key, _, _ := strings.Cut(kv, "=")
-		if _, deny := confinedAgentSocketVars[key]; deny {
+		_, deny := confinedAgentSocketVars[key]
+		if !deny && fold {
+			_, deny = confinedAgentSocketVars[strings.ToUpper(key)]
+		}
+		if deny {
 			continue
 		}
 		out = append(out, kv)

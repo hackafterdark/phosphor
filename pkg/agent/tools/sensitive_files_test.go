@@ -40,11 +40,11 @@ func TestClassifySensitiveFile(t *testing.T) {
 		{"pem-opaque", "certs/server.pem", tierSensitive, shapeOpaque},
 		{"id-rsa-opaque", "~/.ssh/id_rsa", tierSensitive, shapeOpaque},
 		{"template-exempt", "docs/.env.example", tierTemplate, shapeNone},
-		{"proc-environ", "/proc/1/environ", tierSensitive, shapeDotenv},
-		{"proc-environ-deep", "/proc/123/task/456/environ", tierSensitive, shapeDotenv},
+		{"proc-environ", "/proc/1/environ", tierSensitive, shapeEnviron},
+		{"proc-environ-deep", "/proc/123/task/456/environ", tierSensitive, shapeEnviron},
 		{"environ-basename-not-matched", "environ", tierNone, shapeNone},
 		{"environ-other-dir-not-matched", "/var/tmp/environ", tierNone, shapeNone},
-		{"k8s-token-absolute", "/var/run/secrets/kubernetes.io/serviceaccount/token", tierSensitive, shapeDotenv},
+		{"k8s-token-absolute", "/var/run/secrets/kubernetes.io/serviceaccount/token", tierSensitive, shapeOpaque},
 		{"ordinary-source", "internal/app/app.go", tierNone, shapeNone},
 		{"ordinary-json", "pkg/api/response.json", tierNone, shapeNone},
 	}
@@ -121,6 +121,33 @@ func TestRedactSensitiveContentByPath_Opaque(t *testing.T) {
 	out := redactSensitiveContentByPath(in, "~/.ssh/id_rsa", pol)
 	require.Equal(t, opaqueSentinel+"\n", out)
 	require.NotContains(t, out, "MIIEvGtleBase64Blob")
+}
+
+func TestRedactSensitiveContentByPath_EnvironKeepsKeys(t *testing.T) {
+	pol := usePolicy(t, true, nil)
+
+	// /proc environ blocks are NUL-delimited and values may contain
+	// any bytes except NUL, including newlines.
+	in := "PATH=/usr/bin\x00HOME=/home/dev\x00API_TOKEN=abc\nmulti-line-secret\n\x00EMPTY=\x00"
+	out := redactSensitiveContentByPath(in, "/proc/1/environ", pol)
+
+	require.Contains(t, out, "PATH="+valueSentinel)
+	require.Contains(t, out, "HOME="+valueSentinel)
+	require.Contains(t, out, "API_TOKEN="+valueSentinel)
+	require.NotContains(t, out, "multi-line-secret")
+	// Segment structure survives; even an empty value gets the
+	// sentinel so segment boundaries stay uniform.
+	require.Contains(t, out, "EMPTY="+valueSentinel)
+}
+
+func TestRedactSensitiveContentByPath_K8sTokenOpaque(t *testing.T) {
+	pol := usePolicy(t, true, nil)
+
+	token := "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJrOHMifQ.signature"
+	out := redactSensitiveContentByPath(token,
+		"/var/run/secrets/kubernetes.io/serviceaccount/token", pol)
+	require.Equal(t, opaqueSentinel+"\n", out)
+	require.NotContains(t, out, "eyJhbGciOiJSUzI1NiJ9")
 }
 
 func TestRedactSensitive_MixedAllowlist(t *testing.T) {
