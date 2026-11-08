@@ -4914,6 +4914,16 @@ func (m *UI) setupProvider(msg dialog.ActionSetupProvider) tea.Cmd {
 
 	m.dialog.CloseDialog(dialog.ProviderWizardID)
 	if m.state == uiOnboarding {
+		// handleSelectModel bails out (and closes nothing) when the
+		// agent is busy — another client can start the shared agent
+		// during onboarding in client/server mode. Check before closing
+		// the wizard and picker so the user can retry after the agent
+		// finishes instead of landing in a dialog-less dead end. The
+		// OAuth carve-out mirrors handleSelectModel.
+		if m.isAgentBusy() && !m.dialog.ContainsDialog(dialog.OAuthID) {
+			m.dialog.CloseDialog(dialog.ProviderWizardID)
+			return util.ReportWarn("Agent is busy, please wait...")
+		}
 		// The user just added this provider to set up their endpoint;
 		// pick its first model directly so onboarding completes instead
 		// of bouncing back to the provider list. This mirrors the
