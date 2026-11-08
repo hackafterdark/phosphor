@@ -74,6 +74,7 @@ const (
 	shapeDotenv
 	shapeJSON
 	shapeOpaque
+	shapeEnviron
 )
 
 // templateBasenames are the committed "shape" files that are ok to read in full
@@ -131,6 +132,12 @@ func classifySensitiveFile(path string, pol *Policy) (sensitiveTier, sensitiveSh
 		return tierNone, shapeNone
 	}
 	full := strings.ToLower(filepath.ToSlash(filepath.Clean(filepath.FromSlash(path))))
+	// Sensitive files reached through a symlink (e.g. /proc/PID/cwd/.env)
+	// must classify exactly like the resolved path; the redaction layer
+	// sees the alias, the reader sees the target"s content.
+	if resolved, err := filepath.EvalSymlinks(path); err == nil && resolved != path {
+		full = strings.ToLower(filepath.ToSlash(filepath.Clean(filepath.FromSlash(resolved))))
+	}
 	base := full
 	if i := strings.LastIndexByte(full, '/'); i >= 0 {
 		base = full[i+1:]
@@ -142,17 +149,24 @@ func classifySensitiveFile(path string, pol *Policy) (sensitiveTier, sensitiveSh
 		return tierMixed, shapeDotenv
 	}
 	if matchesSensitiveAny(pol.orDefault().sensitivePatterns, base, full) {
-		return tierSensitive, inferShape(base)
+		return tierSensitive, inferShape(base, full)
 	}
 	return tierNone, shapeNone
 }
 
-// inferShape maps a sensitive base name onto the structural parser to run.
-func inferShape(base string) sensitiveShape {
+// inferShape maps a sensitive path onto the structural parser to run.
+func inferShape(base, full string) sensitiveShape {
 	switch {
 	case strings.HasSuffix(base, ".pem"), strings.HasSuffix(base, ".p12"), strings.HasSuffix(base, ".pfx"),
 		base == "id_rsa", base == "id_dsa", base == "id_ecdsa", base == "id_ed25519":
 		return shapeOpaque
+	// The projected service-account token is a raw JWT: no KEY=value
+	// structure for the dotenv parser to match, so it must be treated
+	// as opaque whole-content.
+	case strings.HasSuffix(full, "/kubernetes.io/serviceaccount/token"):
+		return shapeOpaque
+	case base == "environ" && strings.HasPrefix(full, "/proc/"):
+		return shapeEnviron
 	case strings.HasSuffix(base, ".json") &&
 		(strings.Contains(base, "credential") || strings.Contains(base, "service-account")),
 		strings.HasPrefix(base, "secrets."):
@@ -232,9 +246,40 @@ func applySensitiveShape(content string, tier sensitiveTier, shape sensitiveShap
 		return jsonValueRe.ReplaceAllStringFunc(content, redactJSONValue)
 	case shapeDotenv:
 		return redactDotenvValues(content, tier == tierMixed, pol)
+	case shapeEnviron:
+		return redactEnvironValues(content, tier == tierMixed, pol)
 	default:
 		return content
 	}
+}
+
+// environValueRe matches a KEY= boundary at the start of a NUL-delimited
+// environment value, capturing the key and the separator.
+var environValueRe = regexp.MustCompile(`(?s)^([A-Za-z_][A-Za-z0-9_]*)(=)`)
+
+// redactEnvironValues redacts a NUL-delimited process environment block.
+// Unlike dotenv files, values may contain any bytes except NUL —
+// including newlines — so the unit of redaction is the whole segment
+// after the `=`, never a single line.
+func redactEnvironValues(content string, keepHarmless bool, pol *Policy) string {
+	tokenize := pol.orDefault().tokenizationEnabled
+	segments := strings.Split(content, "\x00")
+	for i, seg := range segments {
+		m := environValueRe.FindStringSubmatchIndex(seg)
+		if m == nil {
+			continue
+		}
+		key := seg[m[2]:m[3]]
+		value := seg[m[4]:]
+		if strings.Contains(value, valueSentinel) || tokenPatternRe.MatchString(value) {
+			continue
+		}
+		if keepHarmless && harmlessEnvKeys[key] {
+			continue
+		}
+		segments[i] = key + "=" + dotenvPlaceholder(value, tokenize, pol)
+	}
+	return strings.Join(segments, "\x00")
 }
 
 // redactDotenvValues rewrites every KEY=value line to KEY=<placeholder>, keeping
@@ -352,7 +397,7 @@ func shapeForCommandReference(command string, pol *Policy) (sensitiveShape, bool
 		}
 		full := strings.ToLower(filepath.ToSlash(filepath.FromSlash(tok)))
 		if matchesSensitiveAny(pol.orDefault().sensitivePatterns, norm, full) {
-			return inferShape(norm), true
+			return inferShape(norm, full), true
 		}
 	}
 	return shapeNone, false

@@ -105,6 +105,45 @@ Notes:
 - Session grants stay argument-agnostic by design; prefer explicit
   `allow_commands` entries in shared or CI environments.
 
+## What the Kernel Boundary Does Not Cover
+
+The kernel sandbox (Landlock on Linux, seatbelt on macOS, AppContainer on
+Windows) is a path- and capability-based boundary. Three classes of access
+sit outside what it can express, and closing them is a host-layer job:
+
+- **`/proc/<pid>/environ` of same-UID processes.** The seccomp denylist
+  blocks `ptrace` and cross-process memory reads, but reading a process's
+  `environ` file goes through `ptrace_may_access(PTRACE_MODE_READ_FSCREDS)`
+  — a mode Yama's `ptrace_scope` does **not** restrict (Yama gates only
+  `PTRACE_MODE_ATTACH`), so `ptrace_scope=1` will not stop it either. For
+  a dumpable process (the default) an unrelated same-UID process can
+  read the initial environment purely under DAC checks. Closing this is
+  host policy outside the sandbox: run agents and their tooling under
+  separate UIDs, apply LSM policy that scopes read access, or use
+  kernels with hardened ptrace-read semantics (e.g. NixOS's
+  READ-restricting patch). macOS and Windows are not affected.
+  Phosphor's own read path redacts every `/proc/*/environ` file it
+  reads, so agent-tool reads of process environments come back redacted
+  regardless of host policy; raw shell reads inside the sandbox remain
+  host-governed.
+- **Raw-socket egress to cloud metadata (IMDS).** The egress broker
+  covers the network commands it parses; Landlock's TCP rules are
+  port-granular and cannot express an IP-address deny, and the macOS
+  seatbelt grammar accepts only `*` or `localhost` as network hosts
+  (a numeric IP in a `remote ip` rule is rejected by `sandbox-exec`).
+  Neither kernel sandbox can deny `169.254.169.254` directly. Use
+  `network.enabled: false` or the proxy-only posture for the exposed
+  workload, or block link-local at the host firewall.
+- **Windows registry access.** Registry keys are governed by registry
+  ACLs, not file-path rules; the file-based credential stores
+  (Credential Manager blobs, gcloud, docker config) are denied, but
+  registry credential access is an OS-governed surface.
+
+The ssh-agent socket is the one agent-accessible credential surface the
+sandbox closes in code: `SSH_AUTH_SOCK` and `SSH_AGENT_PID` are stripped
+from every confined child's environment, so `ssh` falls back to the
+on-disk identity files, which the credential deny list already covers.
+
 ## Verifying the Controls
 
 The security controls are pinned by tests across the shell, sandbox,

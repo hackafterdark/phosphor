@@ -12,17 +12,28 @@ import (
 // DefaultReadOnlyDirs are the well-known roots a development toolchain must
 // read and execute inside the sandbox. Missing paths are dropped silently
 // (they differ per distro/platform); the spec stays honest either way.
+//
+// /etc is deliberately absent: the directory holds sensitive world-readable
+// files (/etc/passwd, /etc/shadow, host credential material) that a dev
+// toolchain never needs. ToolchainEtcFiles grants the narrow per-file set
+// they actually read instead.
 var DefaultReadOnlyDirs = []string{
 	"/usr",
 	"/bin",
 	"/sbin",
 	"/lib",
 	"/lib64",
-	"/etc",
 	"/dev",
 	"/proc",
 	"/sys",
-	"/run",
+	// /run is fully denied: it holds the container canonical secret
+	// mounts (/run/secrets, K8s service-account tokens) and the
+	// rootless docker/podman sockets under /run/user/<uid> — a socket
+	// connect there is a host escape. Unix-socket connect is not
+	// landlock-gated, so the directory grant is the only lever.
+	// Operators needing specific runtime sockets can list them
+	// explicitly via trusted_extra_roots (sub-directories stay
+	// listable there).
 	"/opt",
 	"/nix",
 	"/home/linuxbrew/.linuxbrew",
@@ -32,6 +43,49 @@ var DefaultReadOnlyDirs = []string{
 	"/usr/local",
 	"/private",
 	"/Volumes",
+}
+
+// ToolchainEtcFiles are the per-file /etc rules that replace the broad
+// directory grant: CA bundles and TLS trust, name resolution, the dynamic
+// loader, the Debian/Ubuntu alternatives symlink farm, time zone data, and
+// git's global config. Everything else under /etc — account databases,
+// shadow files, ssh host keys, sudoers — stays unreadable to confined
+// children. Missing paths are dropped (they differ per distro).
+func ToolchainEtcFiles() []string {
+	return []string{
+		// TLS trust, scoped to the certificate stores and trust
+		// configuration — never the enclosing /etc/ssl or /etc/pki
+		// roots, which also hold private-key directories
+		// (/etc/ssl/private, /etc/pki/tls/private). Recursive trust
+		// grants must not include key material a service account
+		// can read.
+		"/etc/ssl/certs",
+		"/etc/ssl/openssl.cnf",
+		"/etc/pki/tls/certs",
+		"/etc/pki/ca-trust",
+		"/etc/ca-certificates",
+		// Name resolution.
+		"/etc/resolv.conf",
+		"/etc/hosts",
+		"/etc/nsswitch.conf",
+		"/etc/host.conf",
+		"/etc/gai.conf",
+		"/etc/protocols",
+		"/etc/services",
+		// Time zone data.
+		"/etc/localtime",
+		"/etc/timezone",
+		// Dynamic loader and Debian/Ubuntu symlink farm.
+		"/etc/ld.so.cache",
+		"/etc/ld.so.conf",
+		"/etc/ld.so.conf.d",
+		"/etc/alternatives",
+		// OS identity and toolchain configuration.
+		"/etc/os-release",
+		"/etc/machine-id",
+		"/etc/krb5.conf",
+		"/etc/gitconfig",
+	}
 }
 
 // userReadOnlyFiles returns single-file exceptions tools must read. git
@@ -159,25 +213,136 @@ func CredentialDenyPaths() []string {
 		filepath.Join(home, ".gnupg"),
 		filepath.Join(home, ".git-credentials"),
 		filepath.Join(home, ".netrc"),
+		filepath.Join(home, ".kube"),
 		filepath.Join(home, ".config", "gcloud"),
 		filepath.Join(home, ".config", "gh"),
+		// Podman's registry credentials (auth.json) live under
+		// ~/.config/containers, the podman analogue of the denied
+		// ~/.docker/config.json.
+		filepath.Join(home, ".config", "containers"),
 		filepath.Join(home, ".docker", "config.json"),
+		// Maven and Gradle credential files: LanguageCacheDirs scopes
+		// its grants to cache content and documents these files as the
+		// excluded credential/config layer; the deny entry carries that
+		// exclusion to the macOS global-read layer and the pathguard.
+		filepath.Join(home, ".m2", "settings.xml"),
+		filepath.Join(home, ".gradle", "gradle.properties"),
+		// Token-bearing config dirs for IaC and cloud-native CLIs;
+		// same posture as the registry auth files above.
+		filepath.Join(home, ".terraform.d"),
+		filepath.Join(home, ".oci"),
+		filepath.Join(home, ".fly"),
+		filepath.Join(home, ".config", "supabase"),
 	}
+	// Cargo credentials live directly in CARGO_HOME, the parent of the
+	// registry/ and git/ cache roots LanguageCacheDirs grants. The scoped
+	// cache roots keep them untrusted, but a deny entry makes the intent
+	// explicit and blocks any future widening (trusted_extra_roots or a
+	// mis-set CARGO_HOME) from silently exposing them.
+	cargoHome := firstNonEmpty(os.Getenv("CARGO_HOME"), filepath.Join(home, ".cargo"))
+	paths = append(paths,
+		filepath.Join(cargoHome, "credentials.toml"),
+		filepath.Join(cargoHome, "credentials"),
+	)
 	switch runtime.GOOS {
 	case "darwin":
 		paths = append(paths,
 			filepath.Join(home, "Library", "Keychains"),
 			filepath.Join(home, ".config", "huggingface"),
+			// macOS app-data stores. Seatbelt allows global reads by
+			// design, so the deny list is the entire defense for
+			// browser sessions, chat apps, and the TCC database.
+			// Curated per-app rather than a blanket Application
+			// Support deny: dev tooling legitimately stores config
+			// there (and the workspace's own tooling must keep
+			// working); the listed apps hold session tokens and
+			// personal data a dev-tool child has no business
+			// reading.
+			filepath.Join(home, "Library", "Application Support", "Google", "Chrome"),
+			filepath.Join(home, "Library", "Application Support", "Microsoft Edge"),
+			filepath.Join(home, "Library", "Application Support", "Firefox"),
+			filepath.Join(home, "Library", "Safari"),
+			filepath.Join(home, "Library", "Cookies"),
+			filepath.Join(home, "Library", "Messages"),
+			filepath.Join(home, "Library", "Application Support", "Slack"),
+			filepath.Join(home, "Library", "Application Support", "Signal"),
+			filepath.Join(home, "Library", "Application Support", "WhatsApp"),
+			// VS Code session storage holds OAuth session tokens for
+			// GitHub/Microsoft accounts.
+			filepath.Join(home, "Library", "Application Support", "Code"),
+			// TCC (privacy/permissions database).
+			filepath.Join(home, "Library", "Application Support", "com.apple.TCC"),
 		)
 	case "windows":
 		appdata := filepath.Join(home, "AppData", "Roaming")
+		local := filepath.Join(home, "AppData", "Local")
 		paths = append(paths,
 			filepath.Join(appdata, "gcloud"),
 			filepath.Join(appdata, "docker", "config.json"),
 			filepath.Join(home, ".docker", "config.json"),
+			// Windows Credential Manager DPAPI blobs. AppContainer
+			// default-denies them (ungranted paths are unreadable),
+			// so this is pathguard-level defense-in-depth plus
+			// documented intent. Registry credential access is
+			// registry-ACL-governed and not expressible with path
+			// rules; see [SpawnConfined] on what the kernel boundary
+			// does and does not cover.
+			filepath.Join(local, "Microsoft", "Credentials"),
+			filepath.Join(appdata, "Microsoft", "Credentials"),
 		)
 	}
+	// System-wide credential and identity paths. On Linux the Landlock
+	// default-deny already covers these; the entries carry the denial to
+	// the macOS seatbelt layer (which allows global reads by design) and
+	// the in-process pathguard, and document intent. The Kubernetes
+	// service-account token and the /run/secrets mount point are here
+	// because a confined child must never hold cluster credentials even
+	// if future policy widens /var or /run access.
+	paths = append(paths,
+		"/etc/passwd",
+		"/etc/shadow",
+		"/etc/group",
+		"/etc/sudoers",
+		"/etc/sudoers.d",
+		"/etc/ssh",
+		"/run/secrets",
+		"/var/run/secrets/kubernetes.io/serviceaccount",
+	)
 	return paths
+}
+
+// confinedAgentSocketVars are environment variables that hand a confined
+// child a live path to the user's ssh-agent. The socket itself usually
+// lives in /tmp (a writable root) or /run/user/<uid>, so the kernel
+// boundary alone cannot stop a confined child from asking the agent to
+// sign with keys the sandbox can't read. Stripping the variables removes
+// the pointer; ssh falls back to the on-disk identity files, which
+// CredentialDenyPaths already denies, so this is strictly no weaker.
+var confinedAgentSocketVars = map[string]struct{}{
+	"SSH_AUTH_SOCK": {},
+	"SSH_AGENT_PID": {},
+}
+
+// ConfinedEnv returns env with the ssh-agent socket variables removed.
+// The result is a fresh slice; env is never modified. Windows environment
+// names are case-insensitive, so a `Ssh_Auth_Sock` variant is the same
+// variable there and is stripped case-insensitively; POSIX envs are
+// case-sensitive and match exactly.
+func ConfinedEnv(env []string) []string {
+	fold := runtime.GOOS == "windows"
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		key, _, _ := strings.Cut(kv, "=")
+		_, deny := confinedAgentSocketVars[key]
+		if !deny && fold {
+			_, deny = confinedAgentSocketVars[strings.ToUpper(key)]
+		}
+		if deny {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return out
 }
 
 // SpecFor builds the workspace-mode sandbox policy. The workspace root is
@@ -193,7 +358,7 @@ func SpecFor(workspace string, extraTrustedRoots []string) Spec {
 func SpecForLimits(workspace string, extraTrustedRoots []string, limits ResourceLimits) Spec {
 	return Spec{
 		WorkspaceRoot:  workspace,
-		ReadOnlyRoots:  existing(DefaultReadOnlyDirs),
+		ReadOnlyRoots:  existing(append(append([]string{}, DefaultReadOnlyDirs...), ToolchainEtcFiles()...)),
 		ReadWriteRoots: append(append([]string{}, DefaultReadWriteDirs()...), extraTrustedRoots...),
 		ReadOnlyFiles:  userReadOnlyFiles(),
 		ReadWriteFiles: []string{"/dev/null"},

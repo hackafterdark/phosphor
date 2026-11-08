@@ -217,9 +217,56 @@ func TestCredentialDenyPathsInSpec(t *testing.T) {
 	spec := SpecFor(t.TempDir(), nil)
 	require.Contains(t, spec.DenyRead, filepath.Join(home, ".ssh"))
 	require.Contains(t, spec.DenyRead, filepath.Join(home, ".aws"))
+	// Cargo credentials sit in CARGO_HOME, the parent of the trusted
+	// registry/ and git/ cache roots; they must stay denied even though
+	// the scoped cache roots already leave them untrusted.
+	require.Contains(t, spec.DenyRead, filepath.Join(home, ".cargo", "credentials.toml"))
+	require.Contains(t, spec.DenyRead, filepath.Join(home, ".cargo", "credentials"))
+	// Podman registry credentials and the Maven/Gradle credential files
+	// are the toolchain analogues of the denied registry auth files.
+	require.Contains(t, spec.DenyRead, filepath.Join(home, ".config", "containers"))
+	require.Contains(t, spec.DenyRead, filepath.Join(home, ".m2", "settings.xml"))
+	require.Contains(t, spec.DenyRead, filepath.Join(home, ".gradle", "gradle.properties"))
 	// The read grant for git/npm registry auth must never land in the
 	// deny set, or workspace-confined registry flows would break.
 	require.NotContains(t, spec.DenyRead, filepath.Join(home, ".npmrc"))
+	// System identity and cluster-credential paths carry the denial to
+	// the macOS layer (global reads) and the pathguard; on Linux the
+	// Landlock default-deny already covers them.
+	require.Contains(t, spec.DenyRead, "/etc/passwd")
+	require.Contains(t, spec.DenyRead, "/etc/shadow")
+	require.Contains(t, spec.DenyRead, "/run/secrets")
+	require.Contains(t, spec.DenyRead, "/var/run/secrets/kubernetes.io/serviceaccount")
+}
+
+func TestDefaultReadOnlyDirsExcludeEtc(t *testing.T) {
+	t.Parallel()
+
+	// /etc must not be granted as a directory: it holds world-readable
+	// sensitive files (/etc/passwd, shadow, host credential material).
+	// Only the toolchain-critical per-file rules are granted.
+	require.NotContains(t, DefaultReadOnlyDirs, "/etc")
+
+	spec := SpecFor(t.TempDir(), nil)
+	for _, f := range ToolchainEtcFiles() {
+		if _, err := os.Stat(f); err != nil {
+			continue
+		}
+		require.Contains(t, spec.ReadOnlyRoots, f,
+			"toolchain-critical /etc file %q must stay readable", f)
+	}
+}
+
+func TestCredentialDenyPathsHonorCargoHomeOverride(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	cargo := t.TempDir()
+	t.Setenv("CARGO_HOME", cargo)
+
+	spec := SpecFor(t.TempDir(), nil)
+	require.Contains(t, spec.DenyRead, filepath.Join(cargo, "credentials.toml"),
+		"CARGO_HOME override must win over the home fallback")
 }
 
 func TestValidateDenyRead(t *testing.T) {
@@ -267,4 +314,24 @@ func TestDefaultSpecPassesDenyReadValidation(t *testing.T) {
 	// would refuse every exec.
 	spec := SpecFor(t.TempDir(), nil)
 	require.NoError(t, spec.ValidateDenyRead())
+}
+
+func TestConfinedEnvStripsAgentSocketVars(t *testing.T) {
+	t.Parallel()
+	env := []string{
+		"PATH=/usr/bin",
+		"SSH_AUTH_SOCK=/run/user/1000/vscode-ssh-auth-sock-1",
+		"SSH_AGENT_PID=4242",
+		"HOME=/home/dev",
+	}
+	got := ConfinedEnv(env)
+	require.Equal(t, []string{"PATH=/usr/bin", "HOME=/home/dev"}, got)
+	// The input must never be modified in place.
+	require.Len(t, env, 4)
+}
+
+func TestConfinedEnvPassesThroughBenignVars(t *testing.T) {
+	t.Parallel()
+	env := []string{"SSH_ASKPASS=/bin/true", "SSH_AUTH_SOCK_PREFIX=x"}
+	require.Equal(t, env, ConfinedEnv(env))
 }

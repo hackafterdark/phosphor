@@ -1361,6 +1361,18 @@ var DefaultSensitiveFilePatterns = []string{
 	".envrc",
 	// credential JSON (GCP service accounts, ADC-style files).
 	"credentials*.json", "*service-account*.json", "secrets.*",
+	// Kubernetes service-account token (projected SA token volume); the
+	// mount directory is standard on every cluster. Base name alone is
+	// too generic, so this is anchored on the canonical path. The
+	// absolute variant is required for real cluster mounts, which the
+	// slash-glob cannot match at the volume root.
+	"*/kubernetes.io/serviceaccount/token",
+	"/var/run/secrets/kubernetes.io/serviceaccount/token",
+	// Process environment blocks readable through /proc on hosts with
+	// permissive ptrace policy; anchored on /proc so the basename
+	// alone does not trigger. Covers both the PID and per-thread
+	// (task/TID) forms.
+	"/proc/*/environ", "/proc/*/task/*/environ",
 	// opaque private-key material (whole content is the secret).
 	"id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", "*.pem", "*.p12", "*.pfx",
 }

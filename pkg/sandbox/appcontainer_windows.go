@@ -610,7 +610,7 @@ func SpawnConfined(argv []string, env []string, dir string, spec Spec, stdin io.
 		true, // inherit stdio handles
 		windows.EXTENDED_STARTUPINFO_PRESENT|windows.CREATE_UNICODE_ENVIRONMENT|
 			createSuspended|windows.CREATE_NO_WINDOW,
-		envBlock(env), dirPtr, &si.StartupInfo, &pi,
+		envBlock(ConfinedEnv(env)), dirPtr, &si.StartupInfo, &pi,
 	); err != nil {
 		return nil, fmt.Errorf("create process in appcontainer: %w", err)
 	}

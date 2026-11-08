@@ -59,6 +59,15 @@ func seatbeltNetworkRules(spec Spec) string {
 		b.WriteString("(allow network-bind (local ip \"*:*\"))\n\n")
 		return b.String()
 	default:
+		// The default posture keeps raw egress open. Cloud
+		// instance-metadata (169.254.169.254) cannot be denied here:
+		// the seatbelt SBPL host grammar accepts only "*" or
+		// "localhost" (sandbox-exec rejects a numeric host with
+		// "host must be * or localhost in network address"), and
+		// "localhost" maps to loopback, not link-local. Neither
+		// Landlock (port-granular TCP rules) nor SBPL can express an
+		// IP-address deny; the ProxyOnly tier or a host firewall
+		// rule is the enforcement path for IMDS.
 		return "(allow network*)\n\n"
 	}
 }

@@ -451,6 +451,18 @@ Shell state manipulation via `stty` or `set -x` (which would echo variables)
 is also mitigated by the filtered environment — the variables are absent, so
 echoing them reveals nothing.
 
+Cross-process environment reads are *not* a shell-layer control. The
+confined shell's own `/proc/PID/environ` contains only filtered variables
+(anything readable there is, by construction, allowed), but other host
+processes' environ files — phosphor's own among them — are readable
+under ordinary DAC checks for dumpable processes. `ptrace_scope` does
+not close this: Yama restricts only `PTRACE_MODE_ATTACH`, while the
+environ open uses `PTRACE_MODE_READ_FSCREDS`. The host-side options are
+separate UIDs for agent and target processes, LSM policy that scopes
+read access, or hardened kernels (e.g. NixOS's READ-restricting ptrace
+patch). See [HARDENING.md](HARDENING.md) for the residual-limits
+overview.
+
 ## Testing
 
 Comprehensive tests are in `pkg/shell/env_test.go` and

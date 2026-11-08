@@ -223,7 +223,7 @@ func EnforceAndExec(execPath string, ro, rw []string, net netPolicy, argv []stri
 	if err := enforceLandlock(ro, rw, net); err != nil {
 		return err
 	}
-	return syscallExec(execPath, argv, os.Environ())
+	return syscallExec(execPath, argv, ConfinedEnv(os.Environ()))
 }
 
 // String renders the policy for diagnostics (no secrets: paths only).
