@@ -114,10 +114,21 @@ sit outside what it can express, and closing them is a host-layer job:
 - **`/proc/<pid>/environ` of same-UID processes.** The seccomp denylist
   blocks `ptrace` and cross-process memory reads, but reading a process's
   `environ` file is governed by ptrace/Yama host policy, not Landlock.
-  Hosts should set `ptrace_scope=1` (or stricter). Phosphor's own read
-  path redacts every `/proc/*/environ` file it reads, so agent-tool
-  reads of process environments come back redacted regardless of host
-  policy; raw shell reads inside the sandbox remain host-governed.
+  Set `kernel.yama.ptrace_scope=1` on the host
+  (`/etc/sysctl.d/99-ptrace.conf`): a process reading an *unrelated*
+  process's environ is exactly the harvesting attack this restriction
+  blocks, while reading your own env, a parent reading its child's, and
+  debuggers that launch their target (`gdb`/`strace`/`perf`) are all
+  unaffected. Legitimate tooling that attaches to *existing* processes
+  (`jcmd`, `py-spy`, crash reporters) carries `CAP_SYS_PTRACE` instead
+  — the per-container equivalent of relaxing the host value, which is
+  not namespaced. Ubuntu, Arch, openSUSE, RHEL/CentOS, and Amazon Linux
+  already default to `1`; Debian, Fedora ≤ 44, and Alpine default to `0`
+  and need the sysctl (Fedora restricts by default in F46+). macOS and
+  Windows are not affected. Phosphor's own read path redacts every
+  `/proc/*/environ` file it reads, so agent-tool reads of process
+  environments come back redacted regardless of host policy; raw shell
+  reads inside the sandbox remain host-governed.
 - **Raw-socket egress to cloud metadata (IMDS).** The egress broker
   covers the network commands it parses; Landlock's TCP rules are
   port-granular and cannot express an IP-address deny. On macOS the

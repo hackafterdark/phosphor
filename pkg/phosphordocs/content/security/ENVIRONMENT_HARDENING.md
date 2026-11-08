@@ -451,6 +451,18 @@ Shell state manipulation via `stty` or `set -x` (which would echo variables)
 is also mitigated by the filtered environment — the variables are absent, so
 echoing them reveals nothing.
 
+Cross-process environment reads are *not* a shell-layer control. The
+confined shell's own `/proc/PID/environ` contains only filtered variables
+(anything readable there is, by construction, allowed), but other host
+processes' environ files — phosphor's own among them — are readable when
+host ptrace policy allows it. The host-side control is
+`kernel.yama.ptrace_scope=1`, which blocks a process from reading an
+unrelated process's environ while leaving self, parent-of-child, and
+launched-target debugging untouched; legitimate tools that attach to
+existing processes carry `CAP_SYS_PTRACE` instead. See
+[HARDENING.md](HARDENING.md) for default values per distribution and the
+container exception.
+
 ## Testing
 
 Comprehensive tests are in `pkg/shell/env_test.go` and
