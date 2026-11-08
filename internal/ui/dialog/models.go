@@ -67,6 +67,15 @@ const (
 	smallModelInputPlaceholder      = "Choose a model for small, simple tasks"
 )
 
+// customProviderItemID is the sentinel provider id used by the synthetic
+// "set up a custom provider" entry shown during onboarding. Colons are
+// excluded from user-authored provider ids (see providerIDPattern in
+// provider_wizard.go), so this id can never collide with a real provider.
+const customProviderItemID = catwalk.InferenceProvider("phosphor:custom-provider")
+
+// customProviderItemName is the label of the synthetic onboarding entry.
+const customProviderItemName = "Set up a custom provider (local or self-hosted endpoint)"
+
 // ModelsID is the identifier for the model selection dialog.
 const ModelsID = "models"
 
@@ -193,6 +202,10 @@ func (m *Models) HandleMsg(msg tea.Msg) Action {
 			modelItem, ok := selectedItem.(*ModelItem)
 			if !ok {
 				break
+			}
+
+			if modelItem.prov.ID == customProviderItemID {
+				return ActionOpenDialog{DialogID: ProviderWizardID}
 			}
 
 			isEdit := key.Matches(msg, m.keyMap.Edit)
@@ -378,6 +391,24 @@ func (m *Models) setProviderItems() error {
 	// itemsMap contains the keys of added model items.
 	itemsMap := make(map[string]*ModelItem)
 	groups := []ModelGroup{}
+
+	// During onboarding, offer the custom provider wizard at the top of
+	// the list so local-model users can point the app at their own
+	// endpoint without first authenticating a cloud provider.
+	if m.isOnboarding {
+		customProvider := catwalk.Provider{
+			ID:   customProviderItemID,
+			Name: "Custom Provider",
+		}
+		customItem := NewModelItem(
+			t,
+			customProvider,
+			catwalk.Model{ID: customProviderItemName, Name: customProviderItemName},
+			m.modelType,
+			false,
+		)
+		groups = append(groups, NewModelGroup(t, "Custom Provider", false, customItem))
+	}
 	for id, p := range cfg.Providers.Seq2() {
 		if p.Disable {
 			continue
@@ -489,7 +520,13 @@ func (m *Models) setProviderItems() error {
 		}
 
 		if len(recentGroup.Items) > 0 {
-			groups = append([]ModelGroup{recentGroup}, groups...)
+			customIdx := 0
+			if m.isOnboarding {
+				// Keep the custom provider entry above recently used
+				// models, which belong to previously configured providers.
+				customIdx = 1
+			}
+			groups = append([]ModelGroup{recentGroup}, groups[customIdx:]...)
 		}
 	}
 

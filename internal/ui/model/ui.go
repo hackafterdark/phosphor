@@ -1858,7 +1858,12 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 	// Generic dialog messages
 	case dialog.ActionClose:
 		if isOnboarding && m.dialog.ContainsDialog(dialog.ModelsID) {
-			break
+			// The provider picker itself is inescapable during
+			// onboarding, but esc on any dialog opened on top of it
+			// (e.g. the custom provider wizard) returns to the picker.
+			if front := m.dialog.DialogLast(); front != nil && front.ID() == dialog.ModelsID {
+				break
+			}
 		}
 
 		if m.dialog.ContainsDialog(dialog.FilePickerID) {
@@ -4857,7 +4862,7 @@ func (m *UI) openProviderWizardDialog() tea.Cmd {
 		return nil
 	}
 
-	m.dialog.OpenDialog(dialog.NewProviderWizard(m.com))
+	m.dialog.OpenDialog(dialog.NewProviderWizard(m.com, m.state == uiOnboarding))
 
 	return nil
 }
@@ -4899,6 +4904,18 @@ func (m *UI) setupProvider(msg dialog.ActionSetupProvider) tea.Cmd {
 	}
 
 	m.dialog.CloseDialog(dialog.ProviderWizardID)
+	if m.state == uiOnboarding {
+		// Refresh the onboarding provider list so the new provider and
+		// its models appear immediately for the user to pick from.
+		m.dialog.CloseDialog(dialog.ModelsID)
+		if cmd := m.openModelsDialog(); cmd != nil {
+			return cmd
+		}
+		return util.ReportInfo(fmt.Sprintf(
+			"Provider %q added. Pick one of its models to continue.",
+			msg.ProviderID,
+		))
+	}
 	return util.ReportInfo(fmt.Sprintf(
 		"Provider %q (%s) added to the global config. Press Ctrl+L to switch models.",
 		msg.ProviderID, msg.BaseURL,
