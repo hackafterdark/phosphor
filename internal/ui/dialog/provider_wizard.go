@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"charm.land/bubbles/v2/help"
@@ -27,7 +28,12 @@ const (
 	providerWizardStepURL
 	providerWizardStepKey
 	providerWizardStepModels
+	providerWizardStepCaps
 )
+
+// providerWizardStepCount is the total number of wizard screens, used in
+// the "Step X of N" footer.
+const providerWizardStepCount = int(providerWizardStepCaps) + 1
 
 // providerIDPattern is the accepted character set for a provider id. Dots
 // are deliberately excluded because config writes use dotted key paths
@@ -38,10 +44,12 @@ var providerIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 // the flow. The caller is responsible for persisting the provider to the
 // global config and closing the dialog.
 type ActionSetupProvider struct {
-	ProviderID string
-	BaseURL    string
-	APIKey     string
-	Models     []string
+	ProviderID  string
+	BaseURL     string
+	APIKey      string
+	Models      []string
+	ContextW    int64
+	Attachments *bool
 }
 
 // ProviderWizard is a small linear wizard that collects an
@@ -58,6 +66,8 @@ type ProviderWizard struct {
 	baseURL    string
 	apiKey     string
 	models     []string
+	contextW   int64
+	attach     *bool
 
 	errText string
 
@@ -65,6 +75,7 @@ type ProviderWizard struct {
 	urlInput   textinput.Model
 	keyInput   textinput.Model
 	modelInput textinput.Model
+	capInput   textinput.Model
 
 	help   help.Model
 	keyMap struct {
@@ -91,6 +102,7 @@ func NewProviderWizard(com *common.Common, isOnboarding bool) *ProviderWizard {
 	m.urlInput = newWizardInput(com, innerWidth, "http://localhost:11434/v1")
 	m.keyInput = newWizardInput(com, innerWidth, "leave empty if the server doesn't need one")
 	m.modelInput = newWizardInput(com, innerWidth, "e.g. qwen3-32b")
+	m.capInput = newWizardInput(com, innerWidth, "e.g. 32768 y (leave empty to skip)")
 	m.nameInput.Focus()
 
 	m.help = help.New()
@@ -137,6 +149,19 @@ func (m *ProviderWizard) HandleMsg(msg tea.Msg) Action {
 			}
 			return nil
 		case key.Matches(msg, m.keyMap.Submit):
+			if m.step == providerWizardStepCaps {
+				return m.advance()
+			}
+			// On the model-ID screen an empty input means "done adding
+			// models": move to the capabilities screen. With no models
+			// collected yet, fall through to advance() so the required
+			// list error surfaces instead of silently skipping.
+			if m.step == providerWizardStepModels && strings.TrimSpace(m.modelInput.Value()) == "" && len(m.models) > 0 {
+				m.step = providerWizardStepCaps
+				m.errText = ""
+				m.focusStep()
+				return nil
+			}
 			return m.advance()
 		default:
 			// Backspace on an empty input steps back a screen.
@@ -173,8 +198,10 @@ func (m *ProviderWizard) currentInput() *textinput.Model {
 		return &m.urlInput
 	case providerWizardStepKey:
 		return &m.keyInput
-	default:
+	case providerWizardStepModels:
 		return &m.modelInput
+	default:
+		return &m.capInput
 	}
 }
 
@@ -183,6 +210,7 @@ func (m *ProviderWizard) focusStep() {
 	m.urlInput.Blur()
 	m.keyInput.Blur()
 	m.modelInput.Blur()
+	m.capInput.Blur()
 	m.currentInput().Focus()
 }
 
@@ -233,14 +261,55 @@ func (m *ProviderWizard) advance() Action {
 			m.errText = "Add at least one model id (press enter after typing it)."
 			return nil
 		}
-		return ActionSetupProvider{
+		m.step = providerWizardStepCaps
+		m.focusStep()
+	case providerWizardStepCaps:
+		action := ActionSetupProvider{
 			ProviderID: m.providerID,
 			BaseURL:    m.baseURL,
 			APIKey:     m.apiKey,
 			Models:     slices.Clone(m.models),
 		}
+		if raw := strings.TrimSpace(m.capInput.Value()); raw != "" {
+			contextW, attach, err := parseCapabilities(raw)
+			if err != nil {
+				m.errText = err.Error()
+				return nil
+			}
+			action.ContextW = contextW
+			action.Attachments = attach
+			m.contextW = contextW
+			m.attach = attach
+		}
+		return action
 	}
 	return nil
+}
+
+// parseCapabilities parses the optional capabilities line
+// "<context_window> [supports_attachments]". The context window is
+// written on every model so compaction knows the budget; attachments is
+// only written when explicitly answered.
+func parseCapabilities(raw string) (int64, *bool, error) {
+	fields := strings.Fields(raw)
+	contextW, err := strconv.ParseInt(fields[0], 10, 64)
+	if err != nil || contextW <= 0 {
+		return 0, nil, fmt.Errorf("context window must be a positive number of tokens (e.g. 32768)")
+	}
+	var attach *bool
+	if len(fields) > 1 {
+		switch strings.ToLower(fields[1]) {
+		case "y", "yes", "true":
+			value := true
+			attach = &value
+		case "n", "no", "false":
+			value := false
+			attach = &value
+		default:
+			return 0, nil, fmt.Errorf("supports_attachments must be y or n")
+		}
+	}
+	return contextW, attach, nil
 }
 
 // providerExists reports whether a provider with this id is already
@@ -297,7 +366,7 @@ func (m *ProviderWizard) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 	}
 	lines = append(lines, m.stepLines()...)
 	lines = append(lines,
-		textStyle.Render(fmt.Sprintf("Step %d of 4 · written to %s", m.step+1, config.GlobalConfigData())),
+		textStyle.Render(fmt.Sprintf("Step %d of %d · written to %s", m.step+1, providerWizardStepCount, config.GlobalConfigData())),
 		"",
 		helpStyle.Render(m.help.View(m)),
 	)
@@ -325,11 +394,19 @@ func (m *ProviderWizard) stepLines() []string {
 	if m.baseURL != "" {
 		lines = append(lines, t.Dialog.SecondaryText.Render("url:      "+m.baseURL))
 	}
-	if m.step == providerWizardStepModels {
+	if m.step == providerWizardStepModels || m.step == providerWizardStepCaps {
 		if len(m.models) == 0 {
 			lines = append(lines, t.Dialog.SecondaryText.Render("models:   (none yet)"))
 		} else {
 			lines = append(lines, t.Dialog.SecondaryText.Render("models:   "+strings.Join(m.models, ", ")))
+		}
+	}
+	if m.step == providerWizardStepCaps {
+		if m.contextW > 0 {
+			lines = append(lines, t.Dialog.SecondaryText.Render(fmt.Sprintf("context:  %d", m.contextW)))
+		}
+		if m.attach != nil {
+			lines = append(lines, t.Dialog.SecondaryText.Render(fmt.Sprintf("attach:   %t", *m.attach)))
 		}
 	}
 	return lines
@@ -352,6 +429,8 @@ func (m *ProviderWizard) headerView() string {
 		title = textStyle.Render("Enter the ") + accentStyle.Render("API Key") + textStyle.Render(" (optional).")
 	case providerWizardStepModels:
 		title = textStyle.Render("Add ") + accentStyle.Render("Model IDs") + textStyle.Render(".")
+	case providerWizardStepCaps:
+		title = textStyle.Render("Model ") + accentStyle.Render("Capabilities") + textStyle.Render(" (optional).")
 	}
 
 	headerOffset := titleStyle.GetHorizontalFrameSize() + dialogStyle.GetHorizontalFrameSize()
@@ -379,9 +458,11 @@ func (m *ProviderWizard) ShortHelp() []key.Binding {
 	case providerWizardStepModels:
 		submit := key.NewBinding(
 			key.WithKeys("enter"),
-			key.WithHelp("enter", "add model / finish"),
+			key.WithHelp("enter", "add model / continue"),
 		)
 		bindings = append(bindings, submit, m.keyMap.Remove)
+	case providerWizardStepCaps:
+		bindings = append(bindings, m.keyMap.Submit)
 	default:
 		bindings = append(bindings, m.keyMap.Submit)
 	}

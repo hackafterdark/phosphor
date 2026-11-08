@@ -57,8 +57,15 @@ first authenticate a cloud provider, or hand-edit
 The onboarding provider list now starts with a synthetic
 *Set up a custom provider* entry. Selecting it emits
 `ActionOpenDialog{DialogID: ProviderWizardID}`, which opens the
-existing 4-step wizard (name → base URL → API key → model IDs) directly
-on top of the onboarding screen:
+existing 5-step wizard (name → base URL → API key → model IDs →
+capabilities) directly on top of the onboarding screen. The
+capabilities step is optional: it collects `context_window` (written to
+every model so compaction knows the budget) and
+`supports_attachments` (written to every model only when explicitly
+answered). Leaving it empty writes neither field — see
+`shouldSummarize` in `pkg/agent/agent.go`, which skips summarization
+when the window is zero, so an unset window silently disables context
+compaction:
 
 - While the wizard is the front dialog, `esc` closes *it* and returns
   to the provider list (it remains swallowed only for the provider

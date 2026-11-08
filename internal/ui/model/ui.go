@@ -4878,7 +4878,14 @@ func (m *UI) setupProvider(msg dialog.ActionSetupProvider) tea.Cmd {
 
 	models := make([]map[string]any, 0, len(msg.Models))
 	for _, id := range msg.Models {
-		models = append(models, map[string]any{"id": id, "name": id})
+		model := map[string]any{"id": id, "name": id}
+		if msg.ContextW > 0 {
+			model["context_window"] = msg.ContextW
+		}
+		if msg.Attachments != nil {
+			model["supports_attachments"] = *msg.Attachments
+		}
+		models = append(models, model)
 	}
 
 	type configField struct {
