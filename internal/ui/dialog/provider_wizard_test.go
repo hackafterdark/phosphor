@@ -13,7 +13,7 @@ import (
 func newTestWizard(t *testing.T) *ProviderWizard {
 	t.Helper()
 	s := styles.CharmtonePantera()
-	return NewProviderWizard(&common.Common{Styles: &s}, false)
+	return NewProviderWizard(&common.Common{Styles: &s})
 }
 
 func TestNormalizeBaseURL(t *testing.T) {

@@ -57,10 +57,9 @@ type ActionSetupProvider struct {
 // an optional API key, and a list of model ids, then hands everything to
 // the UI model to write to the global config as a custom provider.
 type ProviderWizard struct {
-	com          *common.Common
-	isOnboarding bool
-	width        int
-	step         providerWizardStep
+	com   *common.Common
+	width int
+	step  providerWizardStep
 
 	providerID string
 	baseURL    string
@@ -87,13 +86,12 @@ type ProviderWizard struct {
 
 var _ Dialog = (*ProviderWizard)(nil)
 
-// NewProviderWizard creates a new provider setup wizard dialog. When
-// isOnboarding is true the wizard renders in the bottom-left onboarding
-// style (unframed) instead of as a centered dialog.
-func NewProviderWizard(com *common.Common, isOnboarding bool) *ProviderWizard {
+// NewProviderWizard creates a new provider setup wizard dialog. It always
+// renders as a framed, centered dialog so it stands apart from whatever
+// dialog (e.g. the onboarding provider picker) sits behind it.
+func NewProviderWizard(com *common.Common) *ProviderWizard {
 	m := &ProviderWizard{}
 	m.com = com
-	m.isOnboarding = isOnboarding
 	m.width = 60
 
 	innerWidth := m.width - com.Styles.Dialog.View.GetHorizontalFrameSize() - 2 // (1) cursor padding
@@ -373,13 +371,7 @@ func (m *ProviderWizard) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 
 	view := dialogStyle.Render(strings.Join(lines, "\n"))
 	cur := m.Cursor()
-	if m.isOnboarding {
-		view = strings.Join(lines, "\n")
-		cur = adjustOnboardingInputCursor(t, cur)
-		DrawOnboardingCursor(scr, area, view, cur)
-	} else {
-		DrawCenterCursor(scr, area, view, cur)
-	}
+	DrawCenterCursor(scr, area, view, cur)
 	return cur
 }
 

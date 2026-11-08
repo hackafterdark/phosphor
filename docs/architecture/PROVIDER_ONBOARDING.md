@@ -67,6 +67,9 @@ answered). Leaving it empty writes neither field — see
 when the window is zero, so an unset window silently disables context
 compaction:
 
+- The wizard always renders as a framed, centered dialog — even during
+  onboarding — so it stays visually distinct from the provider picker
+  behind it.
 - While the wizard is the front dialog, `esc` closes *it* and returns
   to the provider list (it remains swallowed only for the provider
   picker itself, so onboarding stays inescapable). This also applies to

@@ -4862,7 +4862,7 @@ func (m *UI) openProviderWizardDialog() tea.Cmd {
 		return nil
 	}
 
-	m.dialog.OpenDialog(dialog.NewProviderWizard(m.com, m.state == uiOnboarding))
+	m.dialog.OpenDialog(dialog.NewProviderWizard(m.com))
 
 	return nil
 }
