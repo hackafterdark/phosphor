@@ -61,5 +61,30 @@ completions/phosphor.*sh
 
 # Local planning/scratch artifacts (temporary working docs, never committed)
 /_scratch/
+/_PLANS/
 .gocache/
 /.tmp/
+
+# Python bytecode and packaging caches (benchmark tooling)
+__pycache__/
+*.py[cod]
+
+# Benchmark scratch: downloaded images/repos, run outputs, caches.
+# Scripts, arms, and subset lists stay tracked so others can run them.
+/benchmarks/swebench/out/
+/benchmarks/deepswe1.1/jobs/
+/benchmarks/deepswe1.1/tasks-open/
+
+# Evaluation result trees (per-run logs, results.json)
+/logs/
+
+# Arm configs carrying literal provider keys or host-specific endpoints.
+# Copy the committed *.example.json instead and fill in your own values.
+benchmarks/swebench/arms/ollama-gpt-oss-120b.json
+benchmarks/swebench/arms/ollama-deepseek-v41-flash.json
+benchmarks/swebench/arms/local.json
+benchmarks/deepswe1.1/arms/deepseek-v41-flash.json
+
+# Personal benchmark notes (reference tables, budgets) — not committed
+/BENCHMARK_OPTIONS.md
+/RUN_BENCHMARK.md

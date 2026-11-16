@@ -1,0 +1,31 @@
+{
+  "providers": {
+    "ollama-cloud": {
+      "name": "Ollama Cloud",
+      "type": "openai-compat",
+      "base_url": "https://ollama.com/v1",
+      "api_key": "${OLLAMA_API_KEY:?OLLAMA_API_KEY is required}",
+      "models": [
+        {
+          "id": "deepseek-v4.1-flash",
+          "name": "deepseek-v4.1-flash",
+          "context_window": 200000
+        }
+      ]
+    }
+  },
+  "models": {
+    "large": {
+      "model": "deepseek-v4.1-flash",
+      "provider": "ollama-cloud",
+      "reasoning_effort": "max",
+      "max_tokens": 65536
+    },
+    "small": {
+      "model": "deepseek-v4.1-flash",
+      "provider": "ollama-cloud",
+      "reasoning_effort": "max",
+      "max_tokens": 65536
+    }
+  }
+}

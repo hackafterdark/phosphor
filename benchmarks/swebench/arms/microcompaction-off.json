@@ -1,0 +1,11 @@
+{
+  "options": {
+    "agent": {
+      "microcompaction": {
+        "enabled": false,
+        "threshold": 0.5,
+        "retention_turns": 8
+      }
+    }
+  }
+}

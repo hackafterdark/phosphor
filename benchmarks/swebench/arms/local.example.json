@@ -1,0 +1,27 @@
+{
+  "providers": {
+    "local": {
+      "name": "Local Server",
+      "type": "openai-compat",
+      "base_url": "http://localhost:11434/v1",
+      "api_key": "not-needed",
+      "models": [
+        {
+          "id": "my-local-model",
+          "name": "my-local-model",
+          "context_window": 262000
+        }
+      ]
+    }
+  },
+  "models": {
+    "large": {
+      "model": "my-local-model",
+      "provider": "local"
+    },
+    "small": {
+      "model": "my-local-model",
+      "provider": "local"
+    }
+  }
+}
