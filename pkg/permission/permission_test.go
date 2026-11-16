@@ -408,6 +408,116 @@ func TestPermissionService_BypassShortcuts(t *testing.T) {
 	}
 }
 
+// TestPermissionService_NonInteractiveFailsClosed pins the headless
+// guard: with SetNonInteractive(true), BypassShortcuts denies
+// immediately (no subscriber can resolve the prompt), while Request
+// still honors its legitimate shortcuts and only fails closed when it
+// would otherwise prompt the user.
+func TestPermissionService_NonInteractiveFailsClosed(t *testing.T) {
+	t.Parallel()
+
+	// BypassShortcuts denies even with skip, allowlists, and
+	// auto-approve armed — the sandbox-escalation invariant holds.
+	t.Run("BypassShortcuts denies without blocking", func(t *testing.T) {
+		t.Parallel()
+		service := NewPermissionService("/tmp", true, []string{"bash"}, nil)
+		service.AutoApproveSession("sess-1")
+		service.SetNonInteractive(true)
+
+		notifications := service.SubscribeNotifications(t.Context())
+
+		done := make(chan bool, 1)
+		go func() {
+			granted, err := service.BypassShortcuts(t.Context(), CreatePermissionRequest{
+				SessionID:  "sess-1",
+				ToolCallID: "call-1",
+				ToolName:   "bash",
+				Action:     "execute",
+				Path:       "/tmp",
+			})
+			require.NoError(t, err)
+			done <- granted
+		}()
+
+		select {
+		case granted := <-done:
+			require.False(t, granted, "escalation is denied in non-interactive mode")
+		case <-time.After(2 * time.Second):
+			t.Fatal("BypassShortcuts blocked instead of failing closed")
+		}
+
+		// The denial is observable to audit/telemetry subscribers.
+		select {
+		case ev := <-notifications:
+			require.True(t, ev.Payload.Denied)
+			require.Equal(t, "call-1", ev.Payload.ToolCallID)
+		case <-time.After(2 * time.Second):
+			t.Fatal("denial notification was not published")
+		}
+	})
+
+	// Request keeps its shortcuts: skip, tool allowlist, and
+	// allow_commands grant without prompting even in non-interactive
+	// mode. Only a genuine prompt fails closed.
+	t.Run("Request honors shortcuts and fails closed on prompts", func(t *testing.T) {
+		t.Parallel()
+
+		skipSvc := NewPermissionService("/tmp", true, nil, nil)
+		skipSvc.SetNonInteractive(true)
+		granted, err := skipSvc.Request(t.Context(), CreatePermissionRequest{
+			SessionID: "sess-1",
+			ToolName:  "bash",
+			Action:    "execute",
+			Path:      "/tmp",
+		})
+		require.NoError(t, err)
+		require.True(t, granted, "skip mode still grants in non-interactive mode")
+
+		allowlistSvc := NewPermissionService("/tmp", false, []string{"bash:execute"}, nil)
+		allowlistSvc.SetNonInteractive(true)
+		granted, err = allowlistSvc.Request(t.Context(), CreatePermissionRequest{
+			SessionID: "sess-1",
+			ToolName:  "bash",
+			Action:    "execute",
+			Path:      "/tmp",
+		})
+		require.NoError(t, err)
+		require.True(t, granted, "allowlisted tools still grant in non-interactive mode")
+
+		// With no shortcut applicable, Request denies instead of
+		// hanging the run.
+		promptSvc := NewPermissionService("/tmp", false, nil, nil)
+		promptSvc.SetNonInteractive(true)
+		granted, err = promptSvc.Request(t.Context(), CreatePermissionRequest{
+			SessionID: "sess-1",
+			ToolName:  "bash",
+			Action:    "execute",
+			Path:      "/tmp",
+		})
+		require.NoError(t, err)
+		require.False(t, granted, "a genuine prompt fails closed in non-interactive mode")
+	})
+
+	// disable_yolo remains the floor: even before the guard existed,
+	// yoloDisabled prevents skip from arming, so non-interactive +
+	// pinned-off yolo denies rather than blanket-grants.
+	t.Run("yolo pin remains authoritative", func(t *testing.T) {
+		t.Parallel()
+		service := NewPermissionService("/tmp", true, nil, nil, WithYoloDisabled())
+		service.SetNonInteractive(true)
+		require.False(t, service.SkipRequests())
+
+		granted, err := service.Request(t.Context(), CreatePermissionRequest{
+			SessionID: "sess-1",
+			ToolName:  "bash",
+			Action:    "execute",
+			Path:      "/tmp",
+		})
+		require.NoError(t, err)
+		require.False(t, granted)
+	})
+}
+
 // TestPermissionService_ResolveIdempotency covers the multi-subscriber
 // resolve guarantees added for client/server mode: exactly one
 // notification per resolution, racing callers see "already resolved",

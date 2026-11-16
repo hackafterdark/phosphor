@@ -100,6 +100,10 @@ type Service interface {
 	AutoApproveSession(sessionID string)
 	SetSkipRequests(skip bool)
 	SkipRequests() bool
+	// SetNonInteractive marks the service as headless: with no UI or
+	// client attached to resolve prompts, request() fails closed
+	// (denies) instead of blocking forever on respCh.
+	SetNonInteractive(nonInteractive bool)
 	SubscribeNotifications(ctx context.Context) <-chan pubsub.Event[PermissionNotification]
 }
 
@@ -121,6 +125,7 @@ type permissionService struct {
 	autoApproveSessions   map[string]bool
 	autoApproveSessionsMu sync.RWMutex
 	skip                  atomic.Bool
+	nonInteractive        atomic.Bool
 	allowedTools          []string
 	allowCmdEntries       map[string][][]string
 	yoloDisabled          bool
@@ -306,6 +311,25 @@ func (s *permissionService) BypassShortcuts(ctx context.Context, opts CreatePerm
 // have already resolved the effective directory; this is the shared tail of
 // Request and BypassShortcuts.
 func (s *permissionService) request(ctx context.Context, opts CreatePermissionRequest, dir string) (bool, error) {
+	// Fail closed in headless mode: no subscriber exists to resolve
+	// respCh, so waiting here would deadlock the agent (e.g. sandbox
+	// escalation prompts during `phosphor run`). Auto-grant shortcuts
+	// (skip, allowlists, hook approvals, session caches) have already
+	// run in Request before we get here; anything that reaches this
+	// point in non-interactive mode is denied rather than prompted.
+	if s.nonInteractive.Load() {
+		s.notificationBroker.Publish(pubsub.CreatedEvent, PermissionNotification{
+			ToolCallID: opts.ToolCallID,
+			Denied:     true,
+		})
+		slog.Warn(
+			"Denying permission prompt in non-interactive mode: no UI subscriber attached",
+			"tool", opts.ToolName,
+			"action", opts.Action,
+		)
+		return false, nil
+	}
+
 	s.requestMu.Lock()
 	defer s.requestMu.Unlock()
 
@@ -369,6 +393,10 @@ func (s *permissionService) SetSkipRequests(skip bool) {
 
 func (s *permissionService) SkipRequests() bool {
 	return s.skip.Load()
+}
+
+func (s *permissionService) SetNonInteractive(nonInteractive bool) {
+	s.nonInteractive.Store(nonInteractive)
 }
 
 func NewPermissionService(workingDir string, skip bool, allowedTools []string, allowCommands []string, opts ...Option) Service {
