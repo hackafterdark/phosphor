@@ -104,6 +104,10 @@ type Service interface {
 	// client attached to resolve prompts, request() fails closed
 	// (denies) instead of blocking forever on respCh.
 	SetNonInteractive(nonInteractive bool)
+	// IsNonInteractive reports whether the service was marked headless.
+	// Callers use it to relax interactive guards (e.g. the retry-loop
+	// budget) when no human can steer the session.
+	IsNonInteractive() bool
 	SubscribeNotifications(ctx context.Context) <-chan pubsub.Event[PermissionNotification]
 }
 
@@ -397,6 +401,10 @@ func (s *permissionService) SkipRequests() bool {
 
 func (s *permissionService) SetNonInteractive(nonInteractive bool) {
 	s.nonInteractive.Store(nonInteractive)
+}
+
+func (s *permissionService) IsNonInteractive() bool {
+	return s.nonInteractive.Load()
 }
 
 func NewPermissionService(workingDir string, skip bool, allowedTools []string, allowCommands []string, opts ...Option) Service {

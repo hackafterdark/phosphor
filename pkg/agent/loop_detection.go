@@ -17,6 +17,12 @@ const (
 	reasoningLoopWindowSize = 5
 	reasoningLoopMaxRepeats = 2
 	toolFailureMaxCount     = 2
+	// headlessToolFailureMaxCount is the consecutive-failure budget for
+	// non-interactive runs. Iterative debugging (build, test, edit,
+	// retry) legitimately fails several times in a row with no human to
+	// steer, so headless sessions get a wider slack than the
+	// interactive default.
+	headlessToolFailureMaxCount = 8
 )
 
 // LoopHaltNotice returns the halt notice recorded on the session's last
@@ -203,9 +209,10 @@ func hasRepeatedThinking(steps []fantasy.StepResult) bool {
 
 // hasConsecutiveToolFailures checks whether the agent is stuck in a loop of
 // consecutive tool failures for the same tool. If a specific tool fails more
-// than toolFailureMaxCount times in a row, this returns true to prevent
-// infinite retry loops.
-func hasConsecutiveToolFailures(steps []fantasy.StepResult) bool {
+// than maxFailures times in a row, this returns true to prevent infinite
+// retry loops. Callers pass toolFailureMaxCount for interactive sessions and
+// headlessToolFailureMaxCount for non-interactive runs.
+func hasConsecutiveToolFailures(steps []fantasy.StepResult, maxFailures int) bool {
 	if len(steps) < loopDetectionWindowSize {
 		return false
 	}
@@ -261,7 +268,7 @@ func hasConsecutiveToolFailures(steps []fantasy.StepResult) bool {
 			for j := range failures {
 				if failures[j].name == tc.ToolName {
 					failures[j].count++
-					if failures[j].count > toolFailureMaxCount {
+					if failures[j].count > maxFailures {
 						return true
 					}
 					found = true

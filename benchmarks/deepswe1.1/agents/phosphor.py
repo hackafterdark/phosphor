@@ -77,6 +77,17 @@ class PhosphorAgent(BaseAgent):
         # workspace. ECR task images ship the toolchain but not the
         # language servers, so install them here — gated on the repo
         # markers so each trial only pays for what it needs.
+        mitm_ca = Path.home() / ".mitmproxy" / "mitmproxy-ca-cert.pem"
+        if mitm_ca.is_file():
+            await environment.upload_file(mitm_ca, "/tmp/mitmproxy-ca-cert.pem")
+            await environment.exec(
+                "mkdir -p /usr/local/share/ca-certificates /etc/ssl/certs"
+                " && cp /tmp/mitmproxy-ca-cert.pem /usr/local/share/ca-certificates/mitmproxy.crt"
+                " && cat /tmp/mitmproxy-ca-cert.pem >> /etc/ssl/certs/ca-certificates.crt"
+                " && (update-ca-certificates 2>/dev/null || update-ca-trust 2>/dev/null || true)",
+                timeout_sec=60,
+            )
+
         await self._install_language_servers(environment)
 
     async def _install_language_servers(
@@ -117,10 +128,32 @@ class PhosphorAgent(BaseAgent):
             "else cargo install rust-analyzer --locked >/dev/null 2>&1; fi; fi; "
             "true"
         )
-        result = await environment.exec(
-            f"sh -c {shlex.quote(script)}", timeout_sec=900
+        lsp_env = {}
+        if (Path.home() / ".mitmproxy" / "mitmproxy-ca-cert.pem").is_file():
+            lsp_env = {
+                "SSL_CERT_FILE": "/etc/ssl/certs/ca-certificates.crt",
+                "REQUESTS_CA_BUNDLE": "/tmp/mitmproxy-ca-cert.pem",
+                "PIP_CERT": "/tmp/mitmproxy-ca-cert.pem",
+                "NODE_EXTRA_CA_CERTS": "/tmp/mitmproxy-ca-cert.pem",
+                "NPM_CONFIG_CAFILE": "/tmp/mitmproxy-ca-cert.pem",
+                # Deno ignores SSL_CERT_FILE; it trusts the platform
+                # store, which holds the proxy CA once installed.
+                "DENO_TLS_CA_STORE": "system",
+            }
+        bounded_script = (
+            "if command -v timeout >/dev/null 2>&1; then "
+            f"timeout 60 sh -c {shlex.quote(script)}; "
+            "else "
+            f"sh -c {shlex.quote(script)}; "
+            "fi"
         )
-        self._lsp_status = (result.return_code, (result.stderr or "")[-500:])
+        try:
+            result = await environment.exec(
+                f"sh -c {shlex.quote(bounded_script)}", env=lsp_env, timeout_sec=90
+            )
+            self._lsp_status = (result.return_code, (result.stderr or "")[-500:])
+        except Exception as exc:
+            self._lsp_status = (-1, f"lsp setup skipped: {exc}")
 
     async def run(
         self,
@@ -136,6 +169,14 @@ class PhosphorAgent(BaseAgent):
             env["PHOSPHOR_GLOBAL_DATA"] = "/tmp/phosphor-data"
             env["PHOSPHOR_CACHE_DIR"] = "/tmp/phosphor-cache"
         env["PHOSPHOR_DISABLE_PROVIDER_AUTO_UPDATE"] = "1"
+        if (Path.home() / ".mitmproxy" / "mitmproxy-ca-cert.pem").is_file():
+            env["SSL_CERT_FILE"] = "/etc/ssl/certs/ca-certificates.crt"
+            env["REQUESTS_CA_BUNDLE"] = "/tmp/mitmproxy-ca-cert.pem"
+            env["NODE_EXTRA_CA_CERTS"] = "/tmp/mitmproxy-ca-cert.pem"
+            env["GIT_SSL_CAINFO"] = "/tmp/mitmproxy-ca-cert.pem"
+            # Deno ignores SSL_CERT_FILE; it trusts the platform
+            # store, which holds the proxy CA once installed.
+            env["DENO_TLS_CA_STORE"] = "system"
         # Pier forwards anything passed via --ae into extra_env; copy the
         # provider credentials the arm config expects (e.g. OLLAMA_API_KEY).
         env.update(getattr(self, "extra_env", None) or {})

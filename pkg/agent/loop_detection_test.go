@@ -290,7 +290,7 @@ func TestIsReasoningOnlyStep(t *testing.T) {
 
 func TestHasConsecutiveToolFailures(t *testing.T) {
 	t.Run("no steps returns false", func(t *testing.T) {
-		result := hasConsecutiveToolFailures(nil)
+		result := hasConsecutiveToolFailures(nil, toolFailureMaxCount)
 		if result {
 			t.Error("expected false for empty steps")
 		}
@@ -304,7 +304,7 @@ func TestHasConsecutiveToolFailures(t *testing.T) {
 				[]fantasy.ToolResultContent{{ToolCallID: "1", ToolName: "grep", Result: fantasy.ToolResultOutputContentError{}}},
 			)
 		}
-		result := hasConsecutiveToolFailures(steps)
+		result := hasConsecutiveToolFailures(steps, toolFailureMaxCount)
 		if result {
 			t.Error("expected false when fewer steps than window")
 		}
@@ -335,7 +335,7 @@ func TestHasConsecutiveToolFailures(t *testing.T) {
 		for i := 5; i < 10; i++ {
 			steps[i] = makeToolStep("read", fmt.Sprintf(`{"i":%d}`, i), fmt.Sprintf("result-%d", i))
 		}
-		result := hasConsecutiveToolFailures(steps)
+		result := hasConsecutiveToolFailures(steps, toolFailureMaxCount)
 		if result {
 			t.Error("expected false: success should reset failure count, only 2 failures after reset")
 		}
@@ -363,7 +363,7 @@ func TestHasConsecutiveToolFailures(t *testing.T) {
 		for i := 5; i < 10; i++ {
 			steps[i] = makeToolStep("read", fmt.Sprintf(`{"i":%d}`, i), fmt.Sprintf("result-%d", i))
 		}
-		result := hasConsecutiveToolFailures(steps)
+		result := hasConsecutiveToolFailures(steps, toolFailureMaxCount)
 		if result {
 			t.Error("expected false: intervening successes mean the failures are not consecutive")
 		}
@@ -398,7 +398,7 @@ func TestHasConsecutiveToolFailures(t *testing.T) {
 			for i := 3; i < 10; i++ {
 				steps[i] = makeToolStep("read", fmt.Sprintf(`{"i":%d}`, i), fmt.Sprintf("result-%d", i))
 			}
-			if hasConsecutiveToolFailures(steps) {
+			if hasConsecutiveToolFailures(steps, toolFailureMaxCount) {
 				t.Errorf("expected false: the mixed step's success is progress regardless of call order (firstIsFailure=%v)", firstIsFailure)
 			}
 		}
@@ -417,7 +417,7 @@ func TestHasConsecutiveToolFailures(t *testing.T) {
 		for i := 3; i < 10; i++ {
 			steps[i] = makeToolStep("read", fmt.Sprintf(`{"i":%d}`, i), fmt.Sprintf("result-%d", i))
 		}
-		if !hasConsecutiveToolFailures(steps) {
+		if !hasConsecutiveToolFailures(steps, toolFailureMaxCount) {
 			t.Error("expected true: 3 consecutive grep failures exceed the threshold")
 		}
 	})
@@ -435,7 +435,7 @@ func TestHasConsecutiveToolFailures(t *testing.T) {
 		for i := 3; i < 10; i++ {
 			steps[i] = makeToolStep("read", fmt.Sprintf(`{"i":%d}`, i), fmt.Sprintf("result-%d", i))
 		}
-		result := hasConsecutiveToolFailures(steps)
+		result := hasConsecutiveToolFailures(steps, toolFailureMaxCount)
 		if !result {
 			t.Error("expected true: 3 consecutive failures exceeds threshold of 2")
 		}
@@ -460,9 +460,56 @@ func TestHasConsecutiveToolFailures(t *testing.T) {
 		for i := 4; i < 10; i++ {
 			steps[i] = makeToolStep("write", fmt.Sprintf(`{"i":%d}`, i), fmt.Sprintf("result-%d", i))
 		}
-		result := hasConsecutiveToolFailures(steps)
+		result := hasConsecutiveToolFailures(steps, toolFailureMaxCount)
 		if result {
 			t.Error("expected false: each tool has exactly 2 failures (at threshold, not exceeding)")
+		}
+	})
+
+	t.Run("headless threshold allows iterative debugging", func(t *testing.T) {
+		// 8 consecutive failures sit exactly at headlessToolFailureMaxCount
+		// and must not halt; 9 exceeds it.
+		cases := []struct {
+			name     string
+			failures int
+			wantHalt bool
+		}{
+			{"8 failures stay open", 8, false},
+			{"9 failures halt", 9, true},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				steps := make([]fantasy.StepResult, 12)
+				for i := range tc.failures {
+					steps[i] = makeStep(
+						[]fantasy.ToolCallContent{{ToolCallID: fmt.Sprintf("fail_%d", i), ToolName: "bash", Input: `{}`}},
+						[]fantasy.ToolResultContent{{ToolCallID: fmt.Sprintf("fail_%d", i), ToolName: "bash", Result: fantasy.ToolResultOutputContentError{}}},
+					)
+				}
+				for i := tc.failures; i < 12; i++ {
+					steps[i] = makeToolStep("read", fmt.Sprintf(`{"i":%d}`, i), fmt.Sprintf("result-%d", i))
+				}
+				if got := hasConsecutiveToolFailures(steps, headlessToolFailureMaxCount); got != tc.wantHalt {
+					t.Errorf("expected %v, got %v", tc.wantHalt, got)
+				}
+			})
+		}
+	})
+
+	t.Run("interactive threshold still halts at the tighter budget", func(t *testing.T) {
+		// The same chain halts immediately for interactive sessions.
+		steps := make([]fantasy.StepResult, 12)
+		for i := range 8 {
+			steps[i] = makeStep(
+				[]fantasy.ToolCallContent{{ToolCallID: fmt.Sprintf("fail_%d", i), ToolName: "bash", Input: `{}`}},
+				[]fantasy.ToolResultContent{{ToolCallID: fmt.Sprintf("fail_%d", i), ToolName: "bash", Result: fantasy.ToolResultOutputContentError{}}},
+			)
+		}
+		for i := 8; i < 12; i++ {
+			steps[i] = makeToolStep("read", fmt.Sprintf(`{"i":%d}`, i), fmt.Sprintf("result-%d", i))
+		}
+		if !hasConsecutiveToolFailures(steps, toolFailureMaxCount) {
+			t.Error("expected true: interactive threshold must halt at 3 consecutive failures")
 		}
 	})
 }

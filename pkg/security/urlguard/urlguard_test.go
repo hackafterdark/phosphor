@@ -103,6 +103,36 @@ func TestCheck_NaturalLanguageQueryPasses(t *testing.T) {
 	}
 }
 
+func TestCheck_SearchQualifierQueryPasses(t *testing.T) {
+	// Regression: GitHub search-filter qualifiers ("repo:owner/name",
+	// "org:...", "is:...") are high-entropy runs with colons but are
+	// search syntax, not credentials. Colon-bearing runs are exempt from
+	// the speculative entropy pass; genuine colon-bearing secrets are
+	// still caught by the registry and gitleaks passes below.
+	safe := []string{
+		"https://github.com/search?q=repo%3Acapricorn86%2Fhappy-dom+AbortError&type=commits",
+		"https://github.com/search?q=org%3Amicrosoft+language%3Ago+is%3Aopen",
+	}
+	for _, raw := range safe {
+		require.NoError(t, Check(raw), "search-qualifier query %q must not be blocked", raw)
+	}
+
+	// The deterministic passes stay authoritative for colon-bearing values:
+	// a registered secret and a gitleaks-format token inside the same
+	// qualifier-shaped query are still refused.
+	prev := HighEntropyDetection()
+	t.Cleanup(func() { SetHighEntropyDetection(prev) })
+	SetHighEntropyDetection(false)
+	awsKey := "AKIA" + string([]byte("J7EEXAMPLEXAMPL3"))
+	require.ErrorContains(t,
+		Check("https://github.com/search?q=repo%3Aowner%2Fname+"+awsKey), ErrMessage,
+		"gitleaks-format credential in a qualifier query must still abort")
+	SetHighEntropyDetection(true)
+	require.ErrorContains(t,
+		Check("https://github.com/search?q=repo%3Aowner%2Fname+"+knownToken), ErrMessage,
+		"registered secret in a qualifier query must still abort")
+}
+
 func TestCheck_GitleaksFormatAbortsEvenWithoutEntropy(t *testing.T) {
 	// The gitleaks aws-access-token format value is assembled at runtime: a
 	// literal AKIA… key in this file would be redacted by the write-path

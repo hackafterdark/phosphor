@@ -238,6 +238,8 @@ func (m *mockViewPermissionService) SkipRequests() bool {
 
 func (m *mockViewPermissionService) SetNonInteractive(nonInteractive bool) {}
 
+func (m *mockViewPermissionService) IsNonInteractive() bool { return false }
+
 func (m *mockViewPermissionService) SubscribeNotifications(ctx context.Context) <-chan pubsub.Event[permission.PermissionNotification] {
 	return make(<-chan pubsub.Event[permission.PermissionNotification])
 }

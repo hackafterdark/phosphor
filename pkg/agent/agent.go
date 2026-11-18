@@ -1784,10 +1784,14 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 				return false
 			},
 			func(steps []fantasy.StepResult) bool {
-				if hasConsecutiveToolFailures(steps) {
+				maxFailures := toolFailureMaxCount
+				if a.permissions != nil && a.permissions.IsNonInteractive() {
+					maxFailures = headlessToolFailureMaxCount
+				}
+				if hasConsecutiveToolFailures(steps, maxFailures) {
 					loopGuardHalt = fmt.Sprintf(
 						"the same tool failed more than %d times in a row with no successful call in between",
-						toolFailureMaxCount,
+						maxFailures,
 					)
 					return true
 				}
