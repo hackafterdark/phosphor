@@ -20,10 +20,28 @@ rm -rf "$DST"
 cp -r "$SRC" "$DST"
 n=0
 while IFS= read -r -d '' f; do
-    if grep -q '^\[agent\]' "$f"; then
-        sed -i '/^\[agent\]/,/^\[/ s/^network_mode = "no-network"/network_mode = "public"/' "$f"
-        n=$((n + 1))
+    # Rewrite via Python: sed -i semantics differ between GNU and BSD sed,
+    # and this keeps the patch portable to macOS hosts.
+    if PY="$(command -v python3 || true)" && [ -n "$PY" ]; then
+        "$PY" - "$f" >/dev/null <<'PYEOF'
+import re
+import sys
+
+path = sys.argv[1]
+text = open(path).read()
+agent = re.search(r"^\[agent\].*?(?=^\[|\Z)", text, re.M | re.S)
+if agent and 'network_mode = "no-network"' in agent.group(0):
+    patched = agent.group(0).replace(
+        'network_mode = "no-network"', 'network_mode = "public"'
+    )
+    open(path, "w").write(text[: agent.start()] + patched + text[agent.end() :])
+    print("patched", path)
+PYEOF
+    else
+        echo "python3 is required to patch task.toml files" >&2
+        exit 1
     fi
 done < <(find "$DST" -name task.toml -print0)
 
-echo "patched $n task.toml files in $DST (agent network_mode -> public)"
+patched=$(find "$DST" -name task.toml | wc -l)
+echo "processed $patched task.toml files in $DST (agent network_mode -> public where set)"

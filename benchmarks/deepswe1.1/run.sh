@@ -62,6 +62,46 @@ cd "$BENCH_DIR"
 # "mkdir /home/<user>/.docker: permission denied". Redirect docker's config
 # dir into the workspace.
 export DOCKER_CONFIG="${DOCKER_CONFIG:-$REPO_ROOT/.tmp/dockerconfig}"
+
+# Anti-cheat egress proxy: when the host exports HTTPS_PROXY / HTTP_PROXY
+# (e.g. a mitmproxy enforcing a reward-seeking blocklist), forward it into
+# the agent container. A host-side loopback address is unreachable from the
+# container, so retarget it at the Docker host gateway; keep every other
+# host:port as given. NO_PROXY is forwarded unchanged (it excludes model
+# endpoints from blocking).
+EXTRA_ARGS=()
+for var in HTTPS_PROXY HTTP_PROXY; do
+    value="${!var:-}"
+    [ -n "$value" ] || continue
+    case "$value" in
+        *://localhost*|*://127.0.0.1*)
+            value="$(printf '%s' "$value" | sed -E 's#(://)(localhost|127\.0\.0\.1)#\1host.docker.internal#')"
+            ;;
+    esac
+    EXTRA_ARGS+=(--ae "$var=$value")
+done
+if [ -n "${NO_PROXY:-}" ]; then
+    EXTRA_ARGS+=(--ae "NO_PROXY=${NO_PROXY}")
+fi
+
+# Pier passes no extra_hosts of its own for Docker environments, so on
+# native Linux Docker Engine host.docker.internal may not resolve inside
+# the agent container. Fail before the first trial instead of mid-run.
+for arg in "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}"; do
+    case "$arg" in
+        *host.docker.internal*)
+            if ! docker run --rm alpine getent hosts host.docker.internal >/dev/null 2>&1; then
+                echo "proxy uses host.docker.internal, but it does not resolve inside containers." >&2
+                echo "On native Linux Docker (>= 20.10) pier does not add a host-gateway mapping;" >&2
+                echo "run the proxy on the host's LAN IP instead, or add host-gateway to the" >&2
+                echo "compose services pier generates (see README, Anti-cheat egress proxy)." >&2
+                exit 1
+            fi
+            break
+            ;;
+    esac
+done
+
 exec env PYTHONPATH="$BENCH_DIR${PYTHONPATH:+:$PYTHONPATH}" \
     "$VENV/bin/pier" run \
     -p "$TASK_PATH" \
@@ -70,6 +110,7 @@ exec env PYTHONPATH="$BENCH_DIR${PYTHONPATH:+:$PYTHONPATH}" \
     --ak "config=$CONFIG" \
     --ak "skip_model_parsing=true" \
     --ae "$API_KEY_ENV=$API_KEY" \
+    "${EXTRA_ARGS[@]}" \
     --n-concurrent "$CONCURRENT" \
     --jobs-dir "$BENCH_DIR/jobs" \
-    "${ARGS[@]}"
+    "${ARGS[@]+"${ARGS[@]}"}"

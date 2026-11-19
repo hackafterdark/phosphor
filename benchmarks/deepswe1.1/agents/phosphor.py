@@ -12,6 +12,8 @@ session database and reported through the Pier AgentContext.
 """
 
 import asyncio
+import os
+import re
 import shlex
 import sqlite3
 import tempfile
@@ -128,18 +130,7 @@ class PhosphorAgent(BaseAgent):
             "else cargo install rust-analyzer --locked >/dev/null 2>&1; fi; fi; "
             "true"
         )
-        lsp_env = {}
-        if (Path.home() / ".mitmproxy" / "mitmproxy-ca-cert.pem").is_file():
-            lsp_env = {
-                "SSL_CERT_FILE": "/etc/ssl/certs/ca-certificates.crt",
-                "REQUESTS_CA_BUNDLE": "/tmp/mitmproxy-ca-cert.pem",
-                "PIP_CERT": "/tmp/mitmproxy-ca-cert.pem",
-                "NODE_EXTRA_CA_CERTS": "/tmp/mitmproxy-ca-cert.pem",
-                "NPM_CONFIG_CAFILE": "/tmp/mitmproxy-ca-cert.pem",
-                # Deno ignores SSL_CERT_FILE; it trusts the platform
-                # store, which holds the proxy CA once installed.
-                "DENO_TLS_CA_STORE": "system",
-            }
+        lsp_env = self._proxy_ca_env()
         bounded_script = (
             "if command -v timeout >/dev/null 2>&1; then "
             f"timeout 60 sh -c {shlex.quote(script)}; "
@@ -155,6 +146,38 @@ class PhosphorAgent(BaseAgent):
         except Exception as exc:
             self._lsp_status = (-1, f"lsp setup skipped: {exc}")
 
+    def _proxy_ca_env(self) -> dict[str, str]:
+        """CA-trust and proxy variables for in-container egress.
+
+        The CA half activates only when the host mitmproxy CA exists
+        (anti-cheat proxy in use). The proxy half mirrors the host's
+        HTTPS_PROXY / HTTP_PROXY / NO_PROXY into the container; a
+        host-side loopback address is retargeted at the Docker host
+        gateway because container loopback is not the host loopback.
+        """
+        env: dict[str, str] = {}
+        if (Path.home() / ".mitmproxy" / "mitmproxy-ca-cert.pem").is_file():
+            env.update(
+                {
+                    "SSL_CERT_FILE": "/etc/ssl/certs/ca-certificates.crt",
+                    "REQUESTS_CA_BUNDLE": "/tmp/mitmproxy-ca-cert.pem",
+                    "PIP_CERT": "/tmp/mitmproxy-ca-cert.pem",
+                    "NODE_EXTRA_CA_CERTS": "/tmp/mitmproxy-ca-cert.pem",
+                    "NPM_CONFIG_CAFILE": "/tmp/mitmproxy-ca-cert.pem",
+                    # Deno ignores SSL_CERT_FILE; it trusts the platform
+                    # store, which holds the proxy CA once installed.
+                    "DENO_TLS_CA_STORE": "system",
+                }
+            )
+        for var in ("HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY"):
+            value = os.environ.get(var) or os.environ.get(var.lower())
+            if value:
+                value = re.sub(
+                    r"(://)(localhost|127\.0\.0\.1)", r"\1host.docker.internal", value
+                )
+                env[var] = value
+        return env
+
     async def run(
         self,
         instruction: str,
@@ -169,14 +192,9 @@ class PhosphorAgent(BaseAgent):
             env["PHOSPHOR_GLOBAL_DATA"] = "/tmp/phosphor-data"
             env["PHOSPHOR_CACHE_DIR"] = "/tmp/phosphor-cache"
         env["PHOSPHOR_DISABLE_PROVIDER_AUTO_UPDATE"] = "1"
+        env.update(self._proxy_ca_env())
         if (Path.home() / ".mitmproxy" / "mitmproxy-ca-cert.pem").is_file():
-            env["SSL_CERT_FILE"] = "/etc/ssl/certs/ca-certificates.crt"
-            env["REQUESTS_CA_BUNDLE"] = "/tmp/mitmproxy-ca-cert.pem"
-            env["NODE_EXTRA_CA_CERTS"] = "/tmp/mitmproxy-ca-cert.pem"
             env["GIT_SSL_CAINFO"] = "/tmp/mitmproxy-ca-cert.pem"
-            # Deno ignores SSL_CERT_FILE; it trusts the platform
-            # store, which holds the proxy CA once installed.
-            env["DENO_TLS_CA_STORE"] = "system"
         # Pier forwards anything passed via --ae into extra_env; copy the
         # provider credentials the arm config expects (e.g. OLLAMA_API_KEY).
         env.update(getattr(self, "extra_env", None) or {})
