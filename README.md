@@ -67,6 +67,19 @@ from within the TUI.
 
 Phosphor is built as a workbench for agentic experimentation. You can read our full mission and architectural approach here: [CORE_PHILOSOPHY](docs/CORE_PHILOSOPHY.md).
 
+## Benchmarks
+
+Phosphor is evaluated on real coding-agent benchmarks with reproducible,
+self-contained kits in [`benchmarks/`](benchmarks/). The flagship result:
+**78.8% on DeepSWE v1.1** (89/113 resolved, zero infrastructure failures)
+with DeepSeek V4.1 Flash — above the 74.2% mini-SWE-agent baseline DeepSeek
+reports for the same model on its
+[model card](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash).
+Setup and anti-cheat egress details live in
+[`benchmarks/deepswe1.1/README.md`](benchmarks/deepswe1.1/README.md);
+[`benchmarks/swebench/`](benchmarks/swebench/) covers the older SWE-bench
+Verified kits.
+
 ## Build Requirements
 
 Phosphor relies on tree-sitter for structural code analysis. Because tree-sitter is a C library, a C compiler is required to build the project.

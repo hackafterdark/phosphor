@@ -28,8 +28,10 @@ func detectLanguageStrict(filePath string) string {
 		return "bash"
 	case ".hcl", ".tf":
 		return "hcl"
-	case ".json":
-		return "json"
+	// .json is deliberately absent: the JSON grammar rejects comments and
+	// other valid JSONC dialects (deno.json, tsconfig.json), so strict AST
+	// validation produced false rejections on legitimate edits. JSON stays
+	// validated by real parsers downstream, not by this gate.
 	case ".html":
 		return "html"
 	case ".css":

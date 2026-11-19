@@ -179,8 +179,16 @@ func Check(rawURL string) error {
 // whitespace-separated prose is judged run by run — a long English query
 // stays open while a credential token padded with encoded whitespace does
 // not slip through.
+//
+// Colon-bearing runs are exempt: the shape is overwhelmingly search-filter
+// qualifier syntax ('repo:owner/name', 'org:acme', 'is:open'), and genuine
+// colon-bearing secrets are already caught deterministically by the registry
+// and gitleaks passes, which run before this heuristic.
 func looksLikeCredential(v string) bool {
 	if len(v) < minTokenLen || !credentialLike(v) {
+		return false
+	}
+	if strings.ContainsRune(v, ':') {
 		return false
 	}
 	distinct := entropy(v)

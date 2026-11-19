@@ -527,6 +527,10 @@ func (app *App) RunNonInteractive(ctx context.Context, output io.Writer, prompt,
 	// Automatically approve all permission requests for this non-interactive
 	// session.
 	app.Permissions.AutoApproveSession(sess.ID)
+	// No UI or client subscribes to permission prompts here, so anything
+	// that bypasses the shortcuts (sandbox escalation) must fail closed
+	// instead of blocking forever on the prompt channel.
+	app.Permissions.SetNonInteractive(true)
 
 	type response struct {
 		result *fantasy.AgentResult

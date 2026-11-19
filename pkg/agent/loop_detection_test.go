@@ -6,8 +6,27 @@ import (
 
 	"charm.land/fantasy"
 
+	"github.com/hackafterdark/phosphor/pkg/config"
 	"github.com/hackafterdark/phosphor/pkg/message"
 )
+
+// progressThenFailures builds a transcript of total steps in which the first
+// total-failures steps are unrelated successes and the final failures steps
+// are failures of tool. Steps are chronological, so the failure chain is the
+// most recent activity — the only shape in which the loop guard may halt.
+func progressThenFailures(tool string, failures, total int) []fantasy.StepResult {
+	steps := make([]fantasy.StepResult, total)
+	for i := range total - failures {
+		steps[i] = makeToolStep("read", fmt.Sprintf(`{"i":%d}`, i), fmt.Sprintf("result-%d", i))
+	}
+	for i := total - failures; i < total; i++ {
+		steps[i] = makeStep(
+			[]fantasy.ToolCallContent{{ToolCallID: fmt.Sprintf("fail_%d", i), ToolName: tool, Input: `{}`}},
+			[]fantasy.ToolResultContent{{ToolCallID: fmt.Sprintf("fail_%d", i), ToolName: tool, Result: fantasy.ToolResultOutputContentError{}}},
+		)
+	}
+	return steps
+}
 
 // makeStep creates a StepResult with the given tool calls and results in its Content.
 func makeStep(calls []fantasy.ToolCallContent, results []fantasy.ToolResultContent) fantasy.StepResult {
@@ -290,7 +309,7 @@ func TestIsReasoningOnlyStep(t *testing.T) {
 
 func TestHasConsecutiveToolFailures(t *testing.T) {
 	t.Run("no steps returns false", func(t *testing.T) {
-		result := hasConsecutiveToolFailures(nil)
+		result := hasConsecutiveToolFailures(nil, toolFailureMaxCount)
 		if result {
 			t.Error("expected false for empty steps")
 		}
@@ -304,7 +323,7 @@ func TestHasConsecutiveToolFailures(t *testing.T) {
 				[]fantasy.ToolResultContent{{ToolCallID: "1", ToolName: "grep", Result: fantasy.ToolResultOutputContentError{}}},
 			)
 		}
-		result := hasConsecutiveToolFailures(steps)
+		result := hasConsecutiveToolFailures(steps, toolFailureMaxCount)
 		if result {
 			t.Error("expected false when fewer steps than window")
 		}
@@ -335,7 +354,7 @@ func TestHasConsecutiveToolFailures(t *testing.T) {
 		for i := 5; i < 10; i++ {
 			steps[i] = makeToolStep("read", fmt.Sprintf(`{"i":%d}`, i), fmt.Sprintf("result-%d", i))
 		}
-		result := hasConsecutiveToolFailures(steps)
+		result := hasConsecutiveToolFailures(steps, toolFailureMaxCount)
 		if result {
 			t.Error("expected false: success should reset failure count, only 2 failures after reset")
 		}
@@ -363,7 +382,7 @@ func TestHasConsecutiveToolFailures(t *testing.T) {
 		for i := 5; i < 10; i++ {
 			steps[i] = makeToolStep("read", fmt.Sprintf(`{"i":%d}`, i), fmt.Sprintf("result-%d", i))
 		}
-		result := hasConsecutiveToolFailures(steps)
+		result := hasConsecutiveToolFailures(steps, toolFailureMaxCount)
 		if result {
 			t.Error("expected false: intervening successes mean the failures are not consecutive")
 		}
@@ -398,44 +417,38 @@ func TestHasConsecutiveToolFailures(t *testing.T) {
 			for i := 3; i < 10; i++ {
 				steps[i] = makeToolStep("read", fmt.Sprintf(`{"i":%d}`, i), fmt.Sprintf("result-%d", i))
 			}
-			if hasConsecutiveToolFailures(steps) {
+			if hasConsecutiveToolFailures(steps, toolFailureMaxCount) {
 				t.Errorf("expected false: the mixed step's success is progress regardless of call order (firstIsFailure=%v)", firstIsFailure)
 			}
 		}
 	})
 
 	t.Run("all-failed step counts every call regardless of order", func(t *testing.T) {
-		// One step with two failing greps: both extend the chain even
-		// though the calls appear in an arbitrary order.
-		steps := make([]fantasy.StepResult, 10)
-		for i := range 3 {
-			steps[i] = makeStep(
-				[]fantasy.ToolCallContent{{ToolCallID: fmt.Sprintf("fail_%d", i), ToolName: "grep", Input: `{}`}},
-				[]fantasy.ToolResultContent{{ToolCallID: fmt.Sprintf("fail_%d", i), ToolName: "grep", Result: fantasy.ToolResultOutputContentError{}}},
-			)
-		}
-		for i := 3; i < 10; i++ {
-			steps[i] = makeToolStep("read", fmt.Sprintf(`{"i":%d}`, i), fmt.Sprintf("result-%d", i))
-		}
-		if !hasConsecutiveToolFailures(steps) {
-			t.Error("expected true: 3 consecutive grep failures exceed the threshold")
+		// One step with three failing greps: each call extends the
+		// chain, and the result must not depend on the order the calls
+		// appear in.
+		steps := progressThenFailures("read", 0, 9)
+		steps = append(steps, makeStep(
+			[]fantasy.ToolCallContent{
+				{ToolCallID: "fail_a", ToolName: "grep", Input: `{}`},
+				{ToolCallID: "fail_b", ToolName: "grep", Input: `{}`},
+				{ToolCallID: "fail_c", ToolName: "grep", Input: `{}`},
+			},
+			[]fantasy.ToolResultContent{
+				{ToolCallID: "fail_c", ToolName: "grep", Result: fantasy.ToolResultOutputContentError{}},
+				{ToolCallID: "fail_a", ToolName: "grep", Result: fantasy.ToolResultOutputContentError{}},
+				{ToolCallID: "fail_b", ToolName: "grep", Result: fantasy.ToolResultOutputContentError{}},
+			},
+		))
+		if !hasConsecutiveToolFailures(steps, toolFailureMaxCount) {
+			t.Error("expected true: a step whose calls all failed extends the chain once per call")
 		}
 	})
 
 	t.Run("exceeds threshold returns true", func(t *testing.T) {
 		// 3 consecutive failures for same tool (exceeds toolFailureMaxCount=2)
-		steps := make([]fantasy.StepResult, 10)
-		for i := range 3 {
-			steps[i] = makeStep(
-				[]fantasy.ToolCallContent{{ToolCallID: fmt.Sprintf("fail_%d", i), ToolName: "grep", Input: `{}`}},
-				[]fantasy.ToolResultContent{{ToolCallID: fmt.Sprintf("fail_%d", i), ToolName: "grep", Result: fantasy.ToolResultOutputContentError{}}},
-			)
-		}
-		// Fill rest with different tools
-		for i := 3; i < 10; i++ {
-			steps[i] = makeToolStep("read", fmt.Sprintf(`{"i":%d}`, i), fmt.Sprintf("result-%d", i))
-		}
-		result := hasConsecutiveToolFailures(steps)
+		steps := progressThenFailures("grep", 3, 10)
+		result := hasConsecutiveToolFailures(steps, toolFailureMaxCount)
 		if !result {
 			t.Error("expected true: 3 consecutive failures exceeds threshold of 2")
 		}
@@ -460,9 +473,131 @@ func TestHasConsecutiveToolFailures(t *testing.T) {
 		for i := 4; i < 10; i++ {
 			steps[i] = makeToolStep("write", fmt.Sprintf(`{"i":%d}`, i), fmt.Sprintf("result-%d", i))
 		}
-		result := hasConsecutiveToolFailures(steps)
+		result := hasConsecutiveToolFailures(steps, toolFailureMaxCount)
 		if result {
 			t.Error("expected false: each tool has exactly 2 failures (at threshold, not exceeding)")
+		}
+	})
+
+	t.Run("headless threshold allows iterative debugging", func(t *testing.T) {
+		// 8 consecutive failures sit exactly at headlessToolFailureMaxCount
+		// and must not halt; 9 exceeds it.
+		cases := []struct {
+			name     string
+			failures int
+			wantHalt bool
+		}{
+			{"8 failures stay open", 8, false},
+			{"9 failures halt", 9, true},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				steps := progressThenFailures("bash", tc.failures, 12)
+				if got := hasConsecutiveToolFailures(steps, headlessToolFailureMaxCount); got != tc.wantHalt {
+					t.Errorf("expected %v, got %v", tc.wantHalt, got)
+				}
+			})
+		}
+	})
+
+	t.Run("interactive threshold still halts at the tighter budget", func(t *testing.T) {
+		// The same chain halts immediately for interactive sessions.
+		steps := progressThenFailures("bash", 8, 12)
+		if !hasConsecutiveToolFailures(steps, toolFailureMaxCount) {
+			t.Error("expected true: interactive threshold must halt well before 8 consecutive failures")
+		}
+	})
+
+	t.Run("newer progress means the run recovered and must not halt", func(t *testing.T) {
+		// The failure chain is old: the agent failed three times, then
+		// made genuine progress. Counting the stale failures anyway
+		// would halt a run that has already recovered.
+		steps := make([]fantasy.StepResult, 10)
+		for i := range 3 {
+			steps[i] = makeStep(
+				[]fantasy.ToolCallContent{{ToolCallID: fmt.Sprintf("fail_%d", i), ToolName: "grep", Input: `{}`}},
+				[]fantasy.ToolResultContent{{ToolCallID: fmt.Sprintf("fail_%d", i), ToolName: "grep", Result: fantasy.ToolResultOutputContentError{}}},
+			)
+		}
+		for i := 3; i < 10; i++ {
+			steps[i] = makeToolStep("read", fmt.Sprintf(`{"i":%d}`, i), fmt.Sprintf("result-%d", i))
+		}
+		if hasConsecutiveToolFailures(steps, toolFailureMaxCount) {
+			t.Error("expected false: seven newer successes mean the failures are stale")
+		}
+	})
+}
+
+func TestEffectiveMaxConsecutiveToolFailures(t *testing.T) {
+	t.Parallel()
+
+	cfgWith := func(agent *config.AgentConfig) *config.Config {
+		cfg := &config.Config{Options: &config.Options{Agent: agent}}
+		return cfg
+	}
+
+	t.Run("nil config falls back to the built-in defaults", func(t *testing.T) {
+		t.Parallel()
+
+		if got := effectiveMaxConsecutiveToolFailures(nil, false); got != toolFailureMaxCount {
+			t.Errorf("interactive default: got %d, want %d", got, toolFailureMaxCount)
+		}
+		if got := effectiveMaxConsecutiveToolFailures(nil, true); got != headlessToolFailureMaxCount {
+			t.Errorf("headless default: got %d, want %d", got, headlessToolFailureMaxCount)
+		}
+	})
+
+	t.Run("zero leaves the default in place", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := cfgWith(&config.AgentConfig{})
+		if got := effectiveMaxConsecutiveToolFailures(cfg, false); got != toolFailureMaxCount {
+			t.Errorf("interactive default: got %d, want %d", got, toolFailureMaxCount)
+		}
+		if got := effectiveMaxConsecutiveToolFailures(cfg, true); got != headlessToolFailureMaxCount {
+			t.Errorf("headless default: got %d, want %d", got, headlessToolFailureMaxCount)
+		}
+	})
+
+	t.Run("configured values override each mode separately", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := cfgWith(&config.AgentConfig{
+			MaxConsecutiveToolFailures:         4,
+			MaxConsecutiveToolFailuresHeadless: 20,
+		})
+		if got := effectiveMaxConsecutiveToolFailures(cfg, false); got != 4 {
+			t.Errorf("interactive: got %d, want 4", got)
+		}
+		if got := effectiveMaxConsecutiveToolFailures(cfg, true); got != 20 {
+			t.Errorf("headless: got %d, want 20", got)
+		}
+	})
+
+	t.Run("a negative value disables the guard", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := cfgWith(&config.AgentConfig{
+			MaxConsecutiveToolFailures:         -1,
+			MaxConsecutiveToolFailuresHeadless: -1,
+		})
+		if got := effectiveMaxConsecutiveToolFailures(cfg, false); got >= 0 {
+			t.Errorf("interactive: got %d, want negative (guard disabled)", got)
+		}
+		if got := effectiveMaxConsecutiveToolFailures(cfg, true); got >= 0 {
+			t.Errorf("headless: got %d, want negative (guard disabled)", got)
+		}
+	})
+
+	t.Run("unset agent config falls back to the defaults", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := cfgWith(nil)
+		if got := effectiveMaxConsecutiveToolFailures(cfg, false); got != toolFailureMaxCount {
+			t.Errorf("interactive default: got %d, want %d", got, toolFailureMaxCount)
+		}
+		if got := effectiveMaxConsecutiveToolFailures(cfg, true); got != headlessToolFailureMaxCount {
+			t.Errorf("headless default: got %d, want %d", got, headlessToolFailureMaxCount)
 		}
 	})
 }

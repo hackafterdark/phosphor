@@ -8,6 +8,7 @@ import (
 
 	"charm.land/fantasy"
 
+	"github.com/hackafterdark/phosphor/pkg/config"
 	"github.com/hackafterdark/phosphor/pkg/message"
 )
 
@@ -17,7 +18,38 @@ const (
 	reasoningLoopWindowSize = 5
 	reasoningLoopMaxRepeats = 2
 	toolFailureMaxCount     = 2
+	// headlessToolFailureMaxCount is the consecutive-failure budget for
+	// non-interactive runs. Iterative debugging (build, test, edit,
+	// retry) legitimately fails several times in a row with no human to
+	// steer, so headless sessions get a wider slack than the
+	// interactive default.
+	headlessToolFailureMaxCount = 8
 )
+
+// effectiveMaxConsecutiveToolFailures resolves the loop-guard budget from
+// user config, falling back to the interactive (2) or headless (8) default
+// when unset. A negative configured value disables the guard: tool
+// failures then never halt the run.
+func effectiveMaxConsecutiveToolFailures(cfg *config.Config, headless bool) int {
+	var agentCfg *config.AgentConfig
+	if cfg != nil && cfg.Options != nil {
+		agentCfg = cfg.Options.Agent
+	}
+	def := toolFailureMaxCount
+	configured := 0
+	if headless {
+		def = headlessToolFailureMaxCount
+		if agentCfg != nil {
+			configured = agentCfg.MaxConsecutiveToolFailuresHeadless
+		}
+	} else if agentCfg != nil {
+		configured = agentCfg.MaxConsecutiveToolFailures
+	}
+	if configured == 0 {
+		return def
+	}
+	return configured
+}
 
 // LoopHaltNotice returns the halt notice recorded on the session's last
 // assistant message when a loop guard stopped the run, or "" when the run
@@ -203,9 +235,10 @@ func hasRepeatedThinking(steps []fantasy.StepResult) bool {
 
 // hasConsecutiveToolFailures checks whether the agent is stuck in a loop of
 // consecutive tool failures for the same tool. If a specific tool fails more
-// than toolFailureMaxCount times in a row, this returns true to prevent
-// infinite retry loops.
-func hasConsecutiveToolFailures(steps []fantasy.StepResult) bool {
+// than maxFailures times in a row, this returns true to prevent infinite
+// retry loops. Callers pass toolFailureMaxCount for interactive sessions and
+// headlessToolFailureMaxCount for non-interactive runs.
+func hasConsecutiveToolFailures(steps []fantasy.StepResult, maxFailures int) bool {
 	if len(steps) < loopDetectionWindowSize {
 		return false
 	}
@@ -237,10 +270,16 @@ func hasConsecutiveToolFailures(steps []fantasy.StepResult) bool {
 		}
 
 		// Evaluate the step as a whole, independent of call order: any
-		// successful call in the step is progress and clears the chains.
-		// Only a step whose calls all failed extends them. Evaluating
-		// call-by-call instead would let the result depend on how the
-		// model happened to emit the calls.
+		// successful call in the step is progress, and only a step whose
+		// calls all failed extends the chains. Evaluating call-by-call
+		// instead would let the result depend on how the model happened
+		// to emit the calls.
+		//
+		// Progress ends the scan: steps are walked newest-first, so a
+		// success here is newer than every failure still to be examined.
+		// Those older failures cannot form a consecutive chain with
+		// anything, and counting them would halt a run that has already
+		// recovered.
 		anySuccess := false
 		for _, tc := range toolCalls {
 			if isErr, ok := resultByID[tc.ToolCallID]; ok && !isErr {
@@ -249,8 +288,7 @@ func hasConsecutiveToolFailures(steps []fantasy.StepResult) bool {
 			}
 		}
 		if anySuccess {
-			failures = failures[:0]
-			continue
+			return false
 		}
 
 		for _, tc := range toolCalls {
@@ -261,7 +299,7 @@ func hasConsecutiveToolFailures(steps []fantasy.StepResult) bool {
 			for j := range failures {
 				if failures[j].name == tc.ToolName {
 					failures[j].count++
-					if failures[j].count > toolFailureMaxCount {
+					if failures[j].count > maxFailures {
 						return true
 					}
 					found = true

@@ -215,7 +215,8 @@ func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { re
 // TestFetchDownloadToolsRouteThroughSecuredClient verifies the fetch and
 // download tools refuse an unapproved host even when the tool permission
 // check passed — the permission gate and the transport trust gate are
-// independent.
+// independent. Refusals degrade to tool errors so one denied host cannot
+// abort the agent stream; the host stays unreachable either way.
 func TestFetchDownloadToolsRouteThroughSecuredClient(t *testing.T) {
 	perm := &mockPermissionService{}
 	workingDir := t.TempDir()
@@ -223,11 +224,12 @@ func TestFetchDownloadToolsRouteThroughSecuredClient(t *testing.T) {
 	fetchTool := NewFetchTool(perm, workingDir, nil, nil)
 	input, err := json.Marshal(FetchParams{URL: "https://trusted.example.com/x", Format: "text"})
 	require.NoError(t, err)
-	_, err = fetchTool.Run(guardSessionCtx(), fantasy.ToolCall{
+	resp, err := fetchTool.Run(guardSessionCtx(), fantasy.ToolCall{
 		ID: "fetch-trust", Name: FetchToolName, Input: string(input),
 	})
-	require.Error(t, err, "fetch must fail closed on an unapproved host")
-	require.Contains(t, err.Error(), "no prompt handler configured")
+	require.NoError(t, err, "fetch must not abort the run on an unapproved host")
+	require.True(t, resp.IsError, "fetch must fail closed on an unapproved host")
+	require.Contains(t, resp.Content, "no prompt handler configured")
 
 	dlTool := NewDownloadTool(perm, workingDir, nil, nil)
 	dlInput, err := json.Marshal(DownloadParams{URL: "https://trusted.example.com/x", FilePath: "x.bin"})

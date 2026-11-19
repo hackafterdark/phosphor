@@ -15,10 +15,13 @@ These flags apply to the root command and are inherited by subcommands.
 | `--host <host>` | `-H` | Connect to a specific Phosphor server host. |
 | `--profile <name>` | | Select an active prompt/governance profile. |
 | `--trust` | `-T` | Trust the workspace and load repo-local tools/MCP configuration. |
-| `--yolo` | `-y` | Automatically accept all permissions. |
-| `--session <id>` | `-s` | Continue a previous session by ID. |
-| `--continue` | `-C` | Continue the most recent session. |
 | `--help` | `-h` | Show help. |
+
+`--cwd`, `--data-dir`, `--debug`, `--host`, `--profile`, and `--trust` are
+persistent: they apply to the root command and to every subcommand.
+
+`--yolo`, `--session`, and `--continue` are accepted by the root command and by
+`phosphor run`.
 
 `--session` and `--continue` are mutually exclusive.
 
@@ -58,6 +61,12 @@ piping input from stdin.
 | `--small-model <model>` | | Small model to use. |
 | `--session <id>` | `-s` | Continue a previous session by ID. |
 | `--continue` | `-C` | Continue the most recent session. |
+| `--yolo` | `-y` | Automatically accept all permissions. |
+
+`phosphor run` has no terminal to answer permission prompts, so a tool call
+that is not covered by `permissions.allowed_tools` or `permissions.allow_commands`
+will block until the process is interrupted. Pass `--yolo` for unattended runs,
+or pre-approve the tools the agent needs.
 
 ## `phosphor server`
 

@@ -138,12 +138,16 @@ func NewFetchTool(permissions permission.Service, workingDir string, cfg *config
 
 			resp, err := client.Do(req)
 			if err != nil {
-				// Security refusals (host trust, urlguard) abort the run: the
-				// model must not loop against a blocked host. Environmental
-				// transport failures (timeout, DNS, reset) are recoverable and
-				// surface as tool errors so the agent can retry or fall back.
+				// A security refusal (host trust, urlguard) is a tool
+				// error, not a fatal run error: the model sees the block
+				// and moves on. Aborting the stream here would discard
+				// the session's whole progress over one denied redirect,
+				// and the retry-loop guard already catches any agent that
+				// insists on hammering a blocked host.
 				if errors.Is(err, ErrHostBlocked) {
-					return fantasy.ToolResponse{}, err
+					return fantasy.NewTextErrorResponse(
+						"Failed to fetch URL: " + err.Error(),
+					), nil
 				}
 				return fantasy.NewTextErrorResponse("Failed to fetch URL: " + err.Error()), nil
 			}

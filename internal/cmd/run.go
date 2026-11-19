@@ -59,6 +59,9 @@ phosphor run --session {session-id} "Follow up on your last response"
 # Continue the most recent session
 phosphor run --continue "Follow up on your last response"
 
+# Unattended run: never wait on a permission prompt
+phosphor run --yolo --quiet "Fix the failing tests"
+
   `,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		var (
@@ -137,6 +140,7 @@ func init() {
 	runCmd.Flags().String("small-model", "", "Small model to use. If not provided, uses the default small model for the provider")
 	runCmd.Flags().StringP("session", "s", "", "Continue a previous session by ID")
 	runCmd.Flags().BoolP("continue", "C", false, "Continue the most recent session")
+	runCmd.Flags().BoolP("yolo", "y", false, "Automatically accept all permissions (dangerous mode)")
 	runCmd.MarkFlagsMutuallyExclusive("session", "continue")
 }
 

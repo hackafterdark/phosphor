@@ -239,3 +239,13 @@ tasks:
     desc: Generate code using SQLC
     cmds:
       - sqlc generate
+
+  swebench:
+    desc: Run Phosphor on SWE-bench instances and emit predictions.jsonl
+    cmds:
+      - python3 benchmarks/swebench/run_swebench.py {{.CLI_ARGS}}
+
+  swebench:preflight:
+    desc: Check this machine is ready to benchmark before spending API budget
+    cmds:
+      - python3 benchmarks/swebench/preflight.py
