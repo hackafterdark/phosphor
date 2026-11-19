@@ -6,6 +6,7 @@ import (
 
 	"charm.land/fantasy"
 
+	"github.com/hackafterdark/phosphor/pkg/config"
 	"github.com/hackafterdark/phosphor/pkg/message"
 )
 
@@ -510,6 +511,80 @@ func TestHasConsecutiveToolFailures(t *testing.T) {
 		}
 		if !hasConsecutiveToolFailures(steps, toolFailureMaxCount) {
 			t.Error("expected true: interactive threshold must halt at 3 consecutive failures")
+		}
+	})
+}
+
+func TestEffectiveMaxConsecutiveToolFailures(t *testing.T) {
+	t.Parallel()
+
+	cfgWith := func(agent *config.AgentConfig) *config.Config {
+		cfg := &config.Config{Options: &config.Options{Agent: agent}}
+		return cfg
+	}
+
+	t.Run("nil config falls back to the built-in defaults", func(t *testing.T) {
+		t.Parallel()
+
+		if got := effectiveMaxConsecutiveToolFailures(nil, false); got != toolFailureMaxCount {
+			t.Errorf("interactive default: got %d, want %d", got, toolFailureMaxCount)
+		}
+		if got := effectiveMaxConsecutiveToolFailures(nil, true); got != headlessToolFailureMaxCount {
+			t.Errorf("headless default: got %d, want %d", got, headlessToolFailureMaxCount)
+		}
+	})
+
+	t.Run("zero leaves the default in place", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := cfgWith(&config.AgentConfig{})
+		if got := effectiveMaxConsecutiveToolFailures(cfg, false); got != toolFailureMaxCount {
+			t.Errorf("interactive default: got %d, want %d", got, toolFailureMaxCount)
+		}
+		if got := effectiveMaxConsecutiveToolFailures(cfg, true); got != headlessToolFailureMaxCount {
+			t.Errorf("headless default: got %d, want %d", got, headlessToolFailureMaxCount)
+		}
+	})
+
+	t.Run("configured values override each mode separately", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := cfgWith(&config.AgentConfig{
+			MaxConsecutiveToolFailures:         4,
+			MaxConsecutiveToolFailuresHeadless: 20,
+		})
+		if got := effectiveMaxConsecutiveToolFailures(cfg, false); got != 4 {
+			t.Errorf("interactive: got %d, want 4", got)
+		}
+		if got := effectiveMaxConsecutiveToolFailures(cfg, true); got != 20 {
+			t.Errorf("headless: got %d, want 20", got)
+		}
+	})
+
+	t.Run("a negative value disables the guard", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := cfgWith(&config.AgentConfig{
+			MaxConsecutiveToolFailures:         -1,
+			MaxConsecutiveToolFailuresHeadless: -1,
+		})
+		if got := effectiveMaxConsecutiveToolFailures(cfg, false); got >= 0 {
+			t.Errorf("interactive: got %d, want negative (guard disabled)", got)
+		}
+		if got := effectiveMaxConsecutiveToolFailures(cfg, true); got >= 0 {
+			t.Errorf("headless: got %d, want negative (guard disabled)", got)
+		}
+	})
+
+	t.Run("unset agent config falls back to the defaults", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := cfgWith(nil)
+		if got := effectiveMaxConsecutiveToolFailures(cfg, false); got != toolFailureMaxCount {
+			t.Errorf("interactive default: got %d, want %d", got, toolFailureMaxCount)
+		}
+		if got := effectiveMaxConsecutiveToolFailures(cfg, true); got != headlessToolFailureMaxCount {
+			t.Errorf("headless default: got %d, want %d", got, headlessToolFailureMaxCount)
 		}
 	})
 }

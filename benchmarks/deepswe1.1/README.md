@@ -18,6 +18,12 @@ typescript-language-server, pyright, rust-analyzer) into the task container
 and runs with microcompaction enabled; reward-seeking egress (GitHub
 lookups) is blocked through the host-side mitmproxy filter documented below.
 
+The arm pins `options.agent.max_consecutive_tool_failures_headless` to 8 so the
+retry budget is fixed in version control rather than inherited from a default
+that can drift. Note the recorded run predates that default: its binary applied
+the interactive cap of 2, and only 6 of 113 trials hit the guard (5 of those 6
+resolved anyway), so the gap is worth at most ~1 task.
+
 - **Benchmark:** Datacurve DeepSWE v1.1 — 113 long-horizon, contamination-free
   tasks across 91 repos in TS/Go/Python/JS/Rust, each graded by a hand-written
   program-based verifier in a separate container (v1.1 revision, 2026-09-22).

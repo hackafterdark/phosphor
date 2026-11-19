@@ -520,6 +520,21 @@ type AgentConfig struct {
 	// errors indefinitely, still bounded by max_continuations).
 	MaxConsecutiveErrors int `json:"max_consecutive_errors,omitempty" jsonschema:"description=Consecutive failed goal continuation turns tolerated before auto-pause (0 = default 5, negative = unlimited),default=0"`
 
+	// MaxConsecutiveToolFailures is how many consecutive failures of the
+	// same tool the loop guard tolerates before stopping the run. A value
+	// of 0 means use the built-in default (2); a negative value disables
+	// the guard (tool failures never halt the run). Interactive sessions
+	// can keep the tight default because a human can steer; headless runs
+	// use MaxConsecutiveToolFailuresHeadless instead.
+	MaxConsecutiveToolFailures int `json:"max_consecutive_tool_failures,omitempty" jsonschema:"description=Consecutive same-tool failures the loop guard tolerates before halting (0 = default 2, negative = unlimited),default=0"`
+
+	// MaxConsecutiveToolFailuresHeadless is the same budget for headless
+	// and unattended runs (`phosphor run`, scheduled jobs): iterative
+	// debugging (build, test, edit, retry) legitimately fails several
+	// times in a row with no human to steer. A value of 0 means use the
+	// built-in default (8); a negative value disables the guard.
+	MaxConsecutiveToolFailuresHeadless int `json:"max_consecutive_tool_failures_headless,omitempty" jsonschema:"description=Consecutive same-tool failures tolerated in headless/unattended runs (0 = default 8, negative = unlimited),default=0"`
+
 	// StructuralSearchLanguages restricts which languages appear in the
 	// structural_search tool description in the system prompt. When empty,
 	// all supported languages are listed. Setting a non-empty list causes

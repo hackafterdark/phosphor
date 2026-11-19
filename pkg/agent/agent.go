@@ -1784,9 +1784,15 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 				return false
 			},
 			func(steps []fantasy.StepResult) bool {
-				maxFailures := toolFailureMaxCount
-				if a.permissions != nil && a.permissions.IsNonInteractive() {
-					maxFailures = headlessToolFailureMaxCount
+				headless := a.permissions != nil && a.permissions.IsNonInteractive()
+				var cfg *config.Config
+				if a.cfg != nil {
+					cfg = a.cfg.Config()
+				}
+				maxFailures := effectiveMaxConsecutiveToolFailures(cfg, headless)
+				if maxFailures < 0 {
+					// Guard explicitly disabled in config.
+					return false
 				}
 				if hasConsecutiveToolFailures(steps, maxFailures) {
 					loopGuardHalt = fmt.Sprintf(

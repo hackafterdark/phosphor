@@ -346,6 +346,8 @@ The catch-all for app behavior. Highlights:
       "enable_reflection": true,
       "max_turns": 60,
       "max_tokens_continuations": 2,
+      "max_consecutive_tool_failures": 2,
+      "max_consecutive_tool_failures_headless": 8,
       "structural_search_languages": ["go", "typescript"],
       "microcompaction": { "enabled": false, "threshold": 0.5, "retention_turns": 8 }
     }
@@ -371,6 +373,15 @@ The catch-all for app behavior. Highlights:
   (e.g. generating one large file) keep truncating, or lower/disable it if
   you rely on a low `max_tokens` for cost control and would rather see the
   truncation than pay for a retry.
+- `agent.max_consecutive_tool_failures` — how many consecutive failures of the
+  same tool the loop guard tolerates before halting the run (`0` = default of 2,
+  negative = never halt). Interactive sessions can keep the tight default
+  because a human can step in and redirect the agent.
+- `agent.max_consecutive_tool_failures_headless` — the same budget for
+  headless runs (`phosphor run`) and scheduled jobs, where no one is watching
+  (`0` = default of 8, negative = never halt). Iterative debugging (build,
+  test, edit, retry) legitimately fails several times in a row, so the
+  headless default is deliberately wider than the interactive one.
 
 `options.tui` handles look-and-feel:
 

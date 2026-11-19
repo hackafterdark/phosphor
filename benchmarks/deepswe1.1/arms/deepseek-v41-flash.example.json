@@ -27,5 +27,16 @@
       "reasoning_effort": "max",
       "max_tokens": 65536
     }
+  },
+  "options": {
+    "auto_lsp": true,
+    "agent": {
+      "max_consecutive_tool_failures_headless": 8,
+      "microcompaction": {
+        "enabled": true,
+        "threshold": 0.5,
+        "retention_turns": 8
+      }
+    }
   }
 }

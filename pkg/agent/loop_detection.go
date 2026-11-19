@@ -8,6 +8,7 @@ import (
 
 	"charm.land/fantasy"
 
+	"github.com/hackafterdark/phosphor/pkg/config"
 	"github.com/hackafterdark/phosphor/pkg/message"
 )
 
@@ -24,6 +25,31 @@ const (
 	// interactive default.
 	headlessToolFailureMaxCount = 8
 )
+
+// effectiveMaxConsecutiveToolFailures resolves the loop-guard budget from
+// user config, falling back to the interactive (2) or headless (8) default
+// when unset. A negative configured value disables the guard: tool
+// failures then never halt the run.
+func effectiveMaxConsecutiveToolFailures(cfg *config.Config, headless bool) int {
+	var agentCfg *config.AgentConfig
+	if cfg != nil && cfg.Options != nil {
+		agentCfg = cfg.Options.Agent
+	}
+	def := toolFailureMaxCount
+	configured := 0
+	if headless {
+		def = headlessToolFailureMaxCount
+		if agentCfg != nil {
+			configured = agentCfg.MaxConsecutiveToolFailuresHeadless
+		}
+	} else if agentCfg != nil {
+		configured = agentCfg.MaxConsecutiveToolFailures
+	}
+	if configured == 0 {
+		return def
+	}
+	return configured
+}
 
 // LoopHaltNotice returns the halt notice recorded on the session's last
 // assistant message when a loop guard stopped the run, or "" when the run
