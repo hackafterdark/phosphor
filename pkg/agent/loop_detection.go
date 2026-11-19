@@ -270,10 +270,16 @@ func hasConsecutiveToolFailures(steps []fantasy.StepResult, maxFailures int) boo
 		}
 
 		// Evaluate the step as a whole, independent of call order: any
-		// successful call in the step is progress and clears the chains.
-		// Only a step whose calls all failed extends them. Evaluating
-		// call-by-call instead would let the result depend on how the
-		// model happened to emit the calls.
+		// successful call in the step is progress, and only a step whose
+		// calls all failed extends the chains. Evaluating call-by-call
+		// instead would let the result depend on how the model happened
+		// to emit the calls.
+		//
+		// Progress ends the scan: steps are walked newest-first, so a
+		// success here is newer than every failure still to be examined.
+		// Those older failures cannot form a consecutive chain with
+		// anything, and counting them would halt a run that has already
+		// recovered.
 		anySuccess := false
 		for _, tc := range toolCalls {
 			if isErr, ok := resultByID[tc.ToolCallID]; ok && !isErr {
@@ -282,8 +288,7 @@ func hasConsecutiveToolFailures(steps []fantasy.StepResult, maxFailures int) boo
 			}
 		}
 		if anySuccess {
-			failures = failures[:0]
-			continue
+			return false
 		}
 
 		for _, tc := range toolCalls {

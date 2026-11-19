@@ -10,6 +10,24 @@ import (
 	"github.com/hackafterdark/phosphor/pkg/message"
 )
 
+// progressThenFailures builds a transcript of total steps in which the first
+// total-failures steps are unrelated successes and the final failures steps
+// are failures of tool. Steps are chronological, so the failure chain is the
+// most recent activity — the only shape in which the loop guard may halt.
+func progressThenFailures(tool string, failures, total int) []fantasy.StepResult {
+	steps := make([]fantasy.StepResult, total)
+	for i := range total - failures {
+		steps[i] = makeToolStep("read", fmt.Sprintf(`{"i":%d}`, i), fmt.Sprintf("result-%d", i))
+	}
+	for i := total - failures; i < total; i++ {
+		steps[i] = makeStep(
+			[]fantasy.ToolCallContent{{ToolCallID: fmt.Sprintf("fail_%d", i), ToolName: tool, Input: `{}`}},
+			[]fantasy.ToolResultContent{{ToolCallID: fmt.Sprintf("fail_%d", i), ToolName: tool, Result: fantasy.ToolResultOutputContentError{}}},
+		)
+	}
+	return steps
+}
+
 // makeStep creates a StepResult with the given tool calls and results in its Content.
 func makeStep(calls []fantasy.ToolCallContent, results []fantasy.ToolResultContent) fantasy.StepResult {
 	var content fantasy.ResponseContent
@@ -406,36 +424,30 @@ func TestHasConsecutiveToolFailures(t *testing.T) {
 	})
 
 	t.Run("all-failed step counts every call regardless of order", func(t *testing.T) {
-		// One step with two failing greps: both extend the chain even
-		// though the calls appear in an arbitrary order.
-		steps := make([]fantasy.StepResult, 10)
-		for i := range 3 {
-			steps[i] = makeStep(
-				[]fantasy.ToolCallContent{{ToolCallID: fmt.Sprintf("fail_%d", i), ToolName: "grep", Input: `{}`}},
-				[]fantasy.ToolResultContent{{ToolCallID: fmt.Sprintf("fail_%d", i), ToolName: "grep", Result: fantasy.ToolResultOutputContentError{}}},
-			)
-		}
-		for i := 3; i < 10; i++ {
-			steps[i] = makeToolStep("read", fmt.Sprintf(`{"i":%d}`, i), fmt.Sprintf("result-%d", i))
-		}
+		// One step with three failing greps: each call extends the
+		// chain, and the result must not depend on the order the calls
+		// appear in.
+		steps := progressThenFailures("read", 0, 9)
+		steps = append(steps, makeStep(
+			[]fantasy.ToolCallContent{
+				{ToolCallID: "fail_a", ToolName: "grep", Input: `{}`},
+				{ToolCallID: "fail_b", ToolName: "grep", Input: `{}`},
+				{ToolCallID: "fail_c", ToolName: "grep", Input: `{}`},
+			},
+			[]fantasy.ToolResultContent{
+				{ToolCallID: "fail_c", ToolName: "grep", Result: fantasy.ToolResultOutputContentError{}},
+				{ToolCallID: "fail_a", ToolName: "grep", Result: fantasy.ToolResultOutputContentError{}},
+				{ToolCallID: "fail_b", ToolName: "grep", Result: fantasy.ToolResultOutputContentError{}},
+			},
+		))
 		if !hasConsecutiveToolFailures(steps, toolFailureMaxCount) {
-			t.Error("expected true: 3 consecutive grep failures exceed the threshold")
+			t.Error("expected true: a step whose calls all failed extends the chain once per call")
 		}
 	})
 
 	t.Run("exceeds threshold returns true", func(t *testing.T) {
 		// 3 consecutive failures for same tool (exceeds toolFailureMaxCount=2)
-		steps := make([]fantasy.StepResult, 10)
-		for i := range 3 {
-			steps[i] = makeStep(
-				[]fantasy.ToolCallContent{{ToolCallID: fmt.Sprintf("fail_%d", i), ToolName: "grep", Input: `{}`}},
-				[]fantasy.ToolResultContent{{ToolCallID: fmt.Sprintf("fail_%d", i), ToolName: "grep", Result: fantasy.ToolResultOutputContentError{}}},
-			)
-		}
-		// Fill rest with different tools
-		for i := 3; i < 10; i++ {
-			steps[i] = makeToolStep("read", fmt.Sprintf(`{"i":%d}`, i), fmt.Sprintf("result-%d", i))
-		}
+		steps := progressThenFailures("grep", 3, 10)
 		result := hasConsecutiveToolFailures(steps, toolFailureMaxCount)
 		if !result {
 			t.Error("expected true: 3 consecutive failures exceeds threshold of 2")
@@ -480,16 +492,7 @@ func TestHasConsecutiveToolFailures(t *testing.T) {
 		}
 		for _, tc := range cases {
 			t.Run(tc.name, func(t *testing.T) {
-				steps := make([]fantasy.StepResult, 12)
-				for i := range tc.failures {
-					steps[i] = makeStep(
-						[]fantasy.ToolCallContent{{ToolCallID: fmt.Sprintf("fail_%d", i), ToolName: "bash", Input: `{}`}},
-						[]fantasy.ToolResultContent{{ToolCallID: fmt.Sprintf("fail_%d", i), ToolName: "bash", Result: fantasy.ToolResultOutputContentError{}}},
-					)
-				}
-				for i := tc.failures; i < 12; i++ {
-					steps[i] = makeToolStep("read", fmt.Sprintf(`{"i":%d}`, i), fmt.Sprintf("result-%d", i))
-				}
+				steps := progressThenFailures("bash", tc.failures, 12)
 				if got := hasConsecutiveToolFailures(steps, headlessToolFailureMaxCount); got != tc.wantHalt {
 					t.Errorf("expected %v, got %v", tc.wantHalt, got)
 				}
@@ -499,18 +502,28 @@ func TestHasConsecutiveToolFailures(t *testing.T) {
 
 	t.Run("interactive threshold still halts at the tighter budget", func(t *testing.T) {
 		// The same chain halts immediately for interactive sessions.
-		steps := make([]fantasy.StepResult, 12)
-		for i := range 8 {
+		steps := progressThenFailures("bash", 8, 12)
+		if !hasConsecutiveToolFailures(steps, toolFailureMaxCount) {
+			t.Error("expected true: interactive threshold must halt well before 8 consecutive failures")
+		}
+	})
+
+	t.Run("newer progress means the run recovered and must not halt", func(t *testing.T) {
+		// The failure chain is old: the agent failed three times, then
+		// made genuine progress. Counting the stale failures anyway
+		// would halt a run that has already recovered.
+		steps := make([]fantasy.StepResult, 10)
+		for i := range 3 {
 			steps[i] = makeStep(
-				[]fantasy.ToolCallContent{{ToolCallID: fmt.Sprintf("fail_%d", i), ToolName: "bash", Input: `{}`}},
-				[]fantasy.ToolResultContent{{ToolCallID: fmt.Sprintf("fail_%d", i), ToolName: "bash", Result: fantasy.ToolResultOutputContentError{}}},
+				[]fantasy.ToolCallContent{{ToolCallID: fmt.Sprintf("fail_%d", i), ToolName: "grep", Input: `{}`}},
+				[]fantasy.ToolResultContent{{ToolCallID: fmt.Sprintf("fail_%d", i), ToolName: "grep", Result: fantasy.ToolResultOutputContentError{}}},
 			)
 		}
-		for i := 8; i < 12; i++ {
+		for i := 3; i < 10; i++ {
 			steps[i] = makeToolStep("read", fmt.Sprintf(`{"i":%d}`, i), fmt.Sprintf("result-%d", i))
 		}
-		if !hasConsecutiveToolFailures(steps, toolFailureMaxCount) {
-			t.Error("expected true: interactive threshold must halt at 3 consecutive failures")
+		if hasConsecutiveToolFailures(steps, toolFailureMaxCount) {
+			t.Error("expected false: seven newer successes mean the failures are stale")
 		}
 	})
 }
