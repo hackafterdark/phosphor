@@ -45,6 +45,11 @@ class PhosphorAgent(BaseAgent):
         if self.config_path is not None and not self.config_path.is_file():
             raise ValueError(f"config kwarg must point at a phosphor.json file: {self.config_path}")
         self._lsp_status: tuple[int, str] | None = None
+        # Pier forwards --ae values as an extra_env keyword. Record it here
+        # rather than relying on the base class to expose it, so provider
+        # credentials reach the container regardless of how the base agent
+        # stores constructor arguments. It is still forwarded untouched.
+        self.extra_env = dict(kwargs.get("extra_env") or {})
         super().__init__(*args, **kwargs)
 
     @staticmethod
@@ -197,13 +202,13 @@ class PhosphorAgent(BaseAgent):
             env["GIT_SSL_CAINFO"] = "/tmp/mitmproxy-ca-cert.pem"
         # Pier forwards anything passed via --ae into extra_env; copy the
         # provider credentials the arm config expects (e.g. OLLAMA_API_KEY).
-        env.update(getattr(self, "extra_env", None) or {})
+        env.update(self.extra_env)
 
         # Feed the instruction through a file + stdin, never argv: markdown
         # rules in the problem statement otherwise arrive as CLI flags.
         with tempfile.TemporaryDirectory() as tmp:
             prompt_file = Path(tmp) / "prompt.txt"
-            prompt_file.write_text(instruction)
+            prompt_file.write_text(instruction, encoding="utf-8")
             await environment.upload_file(prompt_file, _REMOTE_PROMPT)
 
         model_arg = f" --model {self.model_name}" if self.model_name else ""

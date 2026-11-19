@@ -28,13 +28,13 @@ import re
 import sys
 
 path = sys.argv[1]
-text = open(path).read()
+text = open(path, encoding="utf-8").read()
 agent = re.search(r"^\[agent\].*?(?=^\[|\Z)", text, re.M | re.S)
 if agent and 'network_mode = "no-network"' in agent.group(0):
     patched = agent.group(0).replace(
         'network_mode = "no-network"', 'network_mode = "public"'
     )
-    open(path, "w").write(text[: agent.start()] + patched + text[agent.end() :])
+    open(path, "w", encoding="utf-8").write(text[: agent.start()] + patched + text[agent.end() :])
     print("patched", path)
 PYEOF
     else
