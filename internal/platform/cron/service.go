@@ -352,6 +352,17 @@ func (s *Service) runJob(ctx context.Context, jobName string, job *Job) {
 		s.cfg.Overrides().SkipPermissionRequests = wasYolo
 	}()
 
+	// The agent loop uses the same headless marker to relax the
+	// consecutive-tool-failure guard: unattended runs cannot have a human
+	// steer after a failed build/test attempt, so they get the wider
+	// budget. Without this, cron jobs inherit the interactive 2-failure
+	// cap and halt on legitimate iterative debugging.
+	if appInst.Permissions != nil {
+		wasNonInteractive := appInst.Permissions.IsNonInteractive()
+		appInst.Permissions.SetNonInteractive(true)
+		defer appInst.Permissions.SetNonInteractive(wasNonInteractive)
+	}
+
 	// Send the prompt to the agent.
 	var attachments []message.Attachment // TODO: handle attachments if needed
 	_, err = appInst.AgentCoordinator.Run(ctx, sessionID, job.Prompt, attachments...)
