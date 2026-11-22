@@ -15,6 +15,10 @@ func TestCustomProviderCapabilitiesRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("PHOSPHOR_GLOBAL_CONFIG", dir)
 	t.Setenv("PHOSPHOR_GLOBAL_DATA", dir)
+	// Redirect the provider cache out of the host's data dir:
+	// cachePathFor honors XDG_DATA_HOME, and unit tests must never
+	// mutate ~/.local/share/phosphor.
+	t.Setenv("XDG_DATA_HOME", dir)
 
 	configJSON := `{
 		"providers": {
