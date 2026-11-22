@@ -63,6 +63,7 @@ completions/phosphor.*sh
 /_scratch/
 /_PLANS/
 .gocache/
+.gopath/
 /.tmp/
 
 # Python bytecode and packaging caches (benchmark tooling)

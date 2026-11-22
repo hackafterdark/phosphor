@@ -49,9 +49,13 @@ When a strict substring match (`strings.Index`) fails, the tool falls back to a 
 
 To prevent the assistant from committing broken code, a pre-write syntax validation step is executed:
 - **Tree-sitter Integration:** Parses the proposed file content into an Abstract Syntax Tree (AST).
+- **Differential Blocking:** The AST is compared against the pre-edit content. The edit is rejected only if it *adds* parse errors; pre-existing `ERROR`/`MISSING` nodes (e.g., grammar gaps such as C++20 explicit instantiations) never block an otherwise valid edit. For newly created files, any parse error rejects the edit.
 - **AST Error Detection:** Traverses the AST looking for:
   - Explicit `ERROR` nodes.
   - Nodes where `IsMissing() == true` (e.g., unmatched parentheses, unclosed braces, or missing semicolons).
+  - Recursion stops at `ERROR` node boundaries, so nested damage inside one broken expression is counted once.
+- **Honest, Bounded Reporting:** The rejection message states the count delta (`N new (M pre-existing)`) and reports up to 10 `line:col` locations, appending `(+K more)` for larger files.
+- **Known Tradeoff:** A net-zero swap — fixing one parse error while introducing another — passes under count-diffing and is surfaced in the message rather than rejected.
 - **Graceful Degradation:** This feature is compiled conditionally using Go build tags (`sitter_cgo.go` and `sitter_nocgo.go`). If CGO is disabled or the file language is unsupported, the syntax check is gracefully skipped.
 
 ### 2.4. Security Guarding (Secret Detection)

@@ -8,7 +8,7 @@ func isSitterAvailable() bool {
 	return false
 }
 
-func verifySyntax(newString string, filePath string) error {
+func verifySyntax(oldContent, newContent, filePath string) error {
 	return nil
 }
 

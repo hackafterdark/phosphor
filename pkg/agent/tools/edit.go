@@ -223,7 +223,7 @@ func createNewFile(edit editContext, filePath, content string, call fantasy.Tool
 	if err := validateEditOutput(content); err != nil {
 		return fantasy.NewTextErrorResponse(err.Error()), nil
 	}
-	if err := verifySyntax(content, filePath); err != nil {
+	if err := verifySyntax("", content, filePath); err != nil {
 		return fantasy.NewTextErrorResponse(fmt.Sprintf("Syntax error validation failed: %v. Your edit was rejected to prevent committing broken code. Please correct the edit.", err)), nil
 	}
 
@@ -601,7 +601,7 @@ func replaceContent(edit editContext, filePath, oldString, newString string, rep
 		return fantasy.NewTextErrorResponse(msg), nil
 	}
 
-	if err := verifySyntax(newContent, filePath); err != nil {
+	if err := verifySyntax(oldContent, newContent, filePath); err != nil {
 		return fantasy.NewTextErrorResponse(fmt.Sprintf("Syntax error validation failed: %v. Your edit was rejected to prevent committing broken code. Please correct the edit.", err)), nil
 	}
 
@@ -680,7 +680,7 @@ func replaceContent(edit editContext, filePath, oldString, newString string, rep
 			}
 			return makeNotFoundError(initialContent, oldStringForFuzzy), nil
 		}
-		if err := verifySyntax(newContent, filePath); err != nil {
+		if err := verifySyntax(oldContent, newContent, filePath); err != nil {
 			return fantasy.NewTextErrorResponse(fmt.Sprintf("Syntax error validation failed: %v. Your edit was rejected to prevent committing broken code. Please correct the edit.", err)), nil
 		}
 		finalContentToWrite = newContent
