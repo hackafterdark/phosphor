@@ -43,11 +43,14 @@ pathguard can never disagree:
 2. **Grant only leaf cache directories**, resolved exactly the way the
    tool itself resolves them (its canonical override env var first, then
    the default path): `pkg/mod`, `registry/`, `git/`, `repository/`,
-   `caches/`, `wrapper/`, `daemon/`, `native/`, `install/cache`,
+   `caches/`, `wrapper/`, `native/`, `install/cache`,
    `pnpm/store`, `~/.cache/{pip,uv,ccache}`, `~/.nuget/packages`. The
    whole list is gated behind `tools.bash.trust_toolchain_caches`
    (default off), because a writable cache is trusted input for every
-   future host build.
+   future host build. Gradle's `daemon/` is the deliberate exception:
+   `registry.bin` inside it is the host daemon's connection token, and a
+   confined client that can read it can submit builds to a daemon
+   running outside the sandbox, so the dir is deny-read instead.
 3. **Keep the three dangerous classes denied**, both by scoping the grants
    and by explicit deny-read entries (`CredentialDenyPaths`): `bin/`
    executable dirs, persistent hook/config files, and credential/integrity
@@ -91,10 +94,11 @@ pathguard can never disagree:
 - Confined `go build`/`go test`/toolchain resolution work out of the box
   even when the host GOPATH is unwritable, with host caches shared and no
   duplicated downloads.
-- Opt-in toolchain trust (`trust_toolchain_caches`) covers npm, pip, uv,
+- Opt-in toolchain trust ('trust_toolchain_caches') covers npm, pip, uv,
   ccache, cargo, maven, gradle, bun, pnpm, and NuGet with cargo's dual
-  cache locks and gradle's daemon/native dirs functional inside the
-  sandbox.
+  cache locks and gradle's caches/native dirs functional inside the
+  sandbox; gradle builds that need daemon state run with
+  'GRADLE_USER_HOME' pointed at a workspace path.
 - The writable set is larger than a workspace-only policy: each granted
   cache is acknowledged trusted input, which is why the flag is opt-in and
   why `trusted_extra_roots` stays guard-railed against roots that would

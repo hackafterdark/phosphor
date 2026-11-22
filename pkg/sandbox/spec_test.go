@@ -32,7 +32,7 @@ func TestLanguageCacheDirsAreCacheScoped(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
-	for _, k := range []string{"npm_config_cache", "PIP_CACHE_DIR", "CARGO_HOME", "MAVEN_HOME", "GRADLE_USER_HOME", "UV_CACHE_DIR", "CCACHE_DIR", "BUN_INSTALL", "XDG_DATA_HOME", "NUGET_PACKAGES"} {
+	for _, k := range []string{"npm_config_cache", "PIP_CACHE_DIR", "CARGO_HOME", "MAVEN_HOME", "GRADLE_USER_HOME", "UV_CACHE_DIR", "CCACHE_DIR", "BUN_INSTALL", "XDG_DATA_HOME", "XDG_CACHE_HOME", "NUGET_PACKAGES"} {
 		t.Setenv(k, "")
 	}
 
@@ -46,7 +46,6 @@ func TestLanguageCacheDirsAreCacheScoped(t *testing.T) {
 	require.Contains(t, dirs, filepath.Join(home, ".m2", "repository"))
 	require.Contains(t, dirs, filepath.Join(home, ".gradle", "caches"))
 	require.Contains(t, dirs, filepath.Join(home, ".gradle", "wrapper"))
-	require.Contains(t, dirs, filepath.Join(home, ".gradle", "daemon"))
 	require.Contains(t, dirs, filepath.Join(home, ".gradle", "native"))
 	require.Contains(t, dirs, filepath.Join(home, ".bun", "install", "cache"))
 	require.Contains(t, dirs, filepath.Join(home, ".local", "share", "pnpm", "store"))
@@ -60,6 +59,10 @@ func TestLanguageCacheDirsAreCacheScoped(t *testing.T) {
 	require.NotContains(t, dirs, filepath.Join(home, ".m2"))
 	require.NotContains(t, dirs, filepath.Join(home, ".gradle"))
 	require.NotContains(t, dirs, filepath.Join(home, ".gradle", "init.d"))
+	// The daemon dir carries registry.bin, the host daemon's connection
+	// token; granting it would let a confined client commandeer a daemon
+	// running outside the sandbox.
+	require.NotContains(t, dirs, filepath.Join(home, ".gradle", "daemon"))
 	require.NotContains(t, dirs, filepath.Join(home, ".nuget", "NuGet"))
 	require.NotContains(t, dirs, filepath.Join(home, ".bun", "bin"))
 	require.NotContains(t, dirs, filepath.Join(home, ".local", "share", "pnpm"))
@@ -79,6 +82,7 @@ func TestLanguageCacheDirsHonorToolchainOverrides(t *testing.T) {
 	t.Setenv("CCACHE_DIR", "")
 	t.Setenv("BUN_INSTALL", "")
 	t.Setenv("XDG_DATA_HOME", "")
+	t.Setenv("XDG_CACHE_HOME", "")
 	t.Setenv("NUGET_PACKAGES", "")
 
 	dirs := LanguageCacheDirs()
@@ -91,6 +95,17 @@ func TestLanguageCacheDirsHonorToolchainOverrides(t *testing.T) {
 	t.Setenv("NUGET_PACKAGES", nuget)
 	require.Contains(t, LanguageCacheDirs(), nuget)
 	require.NotContains(t, LanguageCacheDirs(), filepath.Join(home, ".nuget", "packages"))
+	// uv resolves its cache UV_CACHE_DIR → XDG_CACHE_HOME/uv → ~/.cache/uv;
+	// the XDG step must win before the home fallback.
+	xdgCache := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", xdgCache)
+	require.Contains(t, LanguageCacheDirs(), filepath.Join(xdgCache, "uv"))
+	require.NotContains(t, LanguageCacheDirs(), filepath.Join(home, ".cache", "uv"))
+	// UV_CACHE_DIR outranks the XDG directory, exactly as uv itself does.
+	uvCache := t.TempDir()
+	t.Setenv("UV_CACHE_DIR", uvCache)
+	require.Contains(t, LanguageCacheDirs(), uvCache)
+	require.NotContains(t, LanguageCacheDirs(), filepath.Join(xdgCache, "uv"))
 }
 
 func TestTrustedToolchainCachesIncludesModuleCache(t *testing.T) {
@@ -146,6 +161,31 @@ func TestTrustedCacheFilesSkippedWhenCargoHomeMissing(t *testing.T) {
 
 	require.Nil(t, TrustedCacheFiles())
 	require.NoDirExists(t, filepath.Join(home, ".cargo"))
+}
+
+func TestTrustedCacheFilesRejectSymlinkedCargoLocks(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	// A symlinked lock path would turn the writable file rule into write
+	// access to whatever the link resolves to — possibly outside
+	// CARGO_HOME — so it must never reach the spec.
+	cargo := t.TempDir()
+	t.Setenv("CARGO_HOME", cargo)
+	target := filepath.Join(home, "host-file")
+	require.NoError(t, os.WriteFile(target, []byte("host"), 0o600))
+	require.NoError(t, os.Symlink(target, filepath.Join(cargo, ".package-cache")))
+	// The second lock is a plain file and must still be granted.
+	require.NoError(t, os.WriteFile(filepath.Join(cargo, ".package-cache-mutate"), nil, 0o600))
+
+	files := TrustedCacheFiles()
+	require.Equal(t, []string{filepath.Join(cargo, ".package-cache-mutate")}, files)
+	// A dangling symlink would be created at its target by O_CREATE; it
+	// must be rejected the same way.
+	require.NoError(t, os.Remove(filepath.Join(cargo, ".package-cache")))
+	require.NoError(t, os.Symlink(filepath.Join(home, "missing"), filepath.Join(cargo, ".package-cache")))
+	require.Equal(t, []string{filepath.Join(cargo, ".package-cache-mutate")}, TrustedCacheFiles())
+	require.NoFileExists(t, filepath.Join(home, "missing"))
 }
 
 func TestForBashMode(t *testing.T) {
@@ -270,6 +310,12 @@ func TestCredentialDenyPathsInSpec(t *testing.T) {
 
 	home, err := os.UserHomeDir()
 	require.NoError(t, err)
+	// The default assertions below pin the home-dir layout; neutralize
+	// any host override so valid developer configuration cannot fail the
+	// test. The explicit override checks further down set these again.
+	for _, k := range []string{"CARGO_HOME", "GRADLE_USER_HOME", "XDG_DATA_HOME", "CONAN_HOME", "CONAN_USER_HOME"} {
+		t.Setenv(k, "")
+	}
 
 	spec := SpecFor(t.TempDir(), nil)
 	require.Contains(t, spec.DenyRead, filepath.Join(home, ".ssh"))
@@ -284,6 +330,10 @@ func TestCredentialDenyPathsInSpec(t *testing.T) {
 	require.Contains(t, spec.DenyRead, filepath.Join(home, ".config", "containers"))
 	require.Contains(t, spec.DenyRead, filepath.Join(home, ".m2", "settings.xml"))
 	require.Contains(t, spec.DenyRead, filepath.Join(home, ".gradle", "gradle.properties"))
+	// The Gradle daemon dir holds registry.bin, the host daemon's
+	// connection token; it is granted to neither reads nor writes, so a
+	// confined client cannot commandeer a daemon outside the sandbox.
+	require.Contains(t, spec.DenyRead, filepath.Join(home, ".gradle", "daemon"))
 	// uv's plaintext credential store lives in the XDG data dir and is
 	// never covered by the ~/.cache/uv cache grant; the deny entry is the
 	// explicit defense.
@@ -312,14 +362,23 @@ func TestCredentialDenyPathsInSpec(t *testing.T) {
 	require.Contains(t, spec.DenyRead, filepath.Join(home, ".conan", "conan.conf"))
 	require.Contains(t, spec.DenyRead, filepath.Join(home, ".nuget", "NuGet", "NuGet.Config"))
 	require.Contains(t, spec.DenyRead, filepath.Join(home, ".config", "NuGet", "NuGet.Config"))
-	// CONAN_HOME must win over the default, and CONAN_USER_HOME resolves
-	// both the v2 fallback and the v1 home.
+	// CONAN_HOME resolves the v2 home; CONAN_USER_HOME is a Conan v1
+	// base directory that receives a .conan suffix and must never
+	// redirect the v2 home.
 	customConan := t.TempDir()
+	customConanV1 := t.TempDir()
 	t.Setenv("CONAN_HOME", customConan)
-	t.Setenv("CONAN_USER_HOME", customConan)
+	t.Setenv("CONAN_USER_HOME", customConanV1)
 	specOverride := SpecFor(t.TempDir(), nil)
 	require.Contains(t, specOverride.DenyRead, filepath.Join(customConan, "credentials.json"))
 	require.Contains(t, specOverride.DenyRead, filepath.Join(customConan, ".conan.db"))
+	require.Contains(t, specOverride.DenyRead, filepath.Join(customConanV1, ".conan", ".conan.db"))
+	require.Contains(t, specOverride.DenyRead, filepath.Join(customConanV1, ".conan", "conan.conf"))
+	// With CONAN_HOME unset the v2 home stays at ~/.conan2 even when the
+	// v1-era variable is set.
+	t.Setenv("CONAN_HOME", "")
+	require.Contains(t, SpecFor(t.TempDir(), nil).DenyRead,
+		filepath.Join(home, ".conan2", "credentials.json"))
 	// SCCACHE_CONF is the upstream override variable (not
 	// SCCACHE_CONFIG); the deny entry must follow it.
 	customSccache := t.TempDir()
@@ -418,6 +477,10 @@ func TestDefaultSpecPassesDenyReadValidation(t *testing.T) {
 	// would refuse every exec.
 	spec := SpecFor(t.TempDir(), nil)
 	require.NoError(t, spec.ValidateDenyRead())
+	// With toolchain-cache trust on, the narrowed cache roots join the
+	// writable set; none of them may collide with a credential denial.
+	caches := SpecFor(t.TempDir(), TrustedToolchainCaches())
+	require.NoError(t, caches.ValidateDenyRead())
 }
 
 func TestConfinedEnvStripsAgentSocketVars(t *testing.T) {

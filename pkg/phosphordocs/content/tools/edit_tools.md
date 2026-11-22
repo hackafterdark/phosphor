@@ -55,7 +55,7 @@ To prevent the assistant from committing broken code, a pre-write syntax validat
   - Nodes where `IsMissing() == true` (e.g., unmatched parentheses, unclosed braces, or missing semicolons).
   - Recursion stops at `ERROR` node boundaries, so nested damage inside one broken expression is counted once.
 - **Honest, Bounded Reporting:** The rejection message states the count delta (`N new (M pre-existing)`) and reports up to 10 `line:col` locations, appending `(+K more)` for larger files.
-- **Known Tradeoff:** A net-zero swap — fixing one parse error while introducing another — passes under count-diffing and is surfaced in the message rather than rejected.
+- **Known Tradeoff:** A net-zero swap — fixing one parse error while introducing another — passes under count-diffing and passes silently; no message is surfaced for these edits.
 - **Graceful Degradation:** This feature is compiled conditionally using Go build tags (`sitter_cgo.go` and `sitter_nocgo.go`). If CGO is disabled or the file language is unsupported, the syntax check is gracefully skipped.
 
 ### 2.4. Security Guarding (Secret Detection)

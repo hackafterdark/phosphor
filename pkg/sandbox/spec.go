@@ -174,11 +174,13 @@ func TrustedToolchainCaches() []string {
 // registry/ and git/ but not ~/.cargo itself (excluding the bin/ dir that
 // sits on PATH, the credentials file, and config.toml, which can redirect
 // the registry), maven gets repository/ but not settings.xml, and gradle
-// gets caches/, wrapper/, daemon/, and native/ but not gradle.properties
-// or init.d/ (any file dropped in init.d/ executes on every future host
-// Gradle build). Credential files under the excluded parents stay neither
-// writable nor readable in the sandbox, and the same list feeds the
-// in-process pathguard so both layers agree on what is trusted.
+// gets caches/, wrapper/, and native/ but not gradle.properties, init.d/
+// (any file dropped in init.d/ executes on every future host Gradle
+// build), or daemon/ (its registry.bin is the host daemon's connection
+// token; see CredentialDenyPaths). Credential files under the excluded
+// parents stay neither writable nor readable in the sandbox, and the same
+// list feeds the in-process pathguard so both layers agree on what is
+// trusted.
 func LanguageCacheDirs() []string {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -188,11 +190,14 @@ func LanguageCacheDirs() []string {
 	mavenHome := firstNonEmpty(os.Getenv("MAVEN_HOME"), filepath.Join(home, ".m2"))
 	gradleHome := firstNonEmpty(os.Getenv("GRADLE_USER_HOME"), filepath.Join(home, ".gradle"))
 	xdgData := firstNonEmpty(os.Getenv("XDG_DATA_HOME"), filepath.Join(home, ".local", "share"))
+	xdgCache := firstNonEmpty(os.Getenv("XDG_CACHE_HOME"), filepath.Join(home, ".cache"))
 	bunHome := firstNonEmpty(os.Getenv("BUN_INSTALL"), filepath.Join(home, ".bun"))
 	return []string{
 		firstNonEmpty(os.Getenv("npm_config_cache"), filepath.Join(home, ".npm")),
 		firstNonEmpty(os.Getenv("PIP_CACHE_DIR"), filepath.Join(home, ".cache", "pip")),
-		firstNonEmpty(os.Getenv("UV_CACHE_DIR"), filepath.Join(home, ".cache", "uv")),
+		// uv resolves its cache as UV_CACHE_DIR, then XDG_CACHE_HOME/uv,
+		// then ~/.cache/uv — mirror the full chain.
+		firstNonEmpty(os.Getenv("UV_CACHE_DIR"), filepath.Join(xdgCache, "uv")),
 		// ccache.conf lives inside the granted dir and supports
 		// prefix_command/prefix_command_cpp (arbitrary program
 		// execution on every cached compile) — another reason the
@@ -203,11 +208,12 @@ func LanguageCacheDirs() []string {
 		filepath.Join(mavenHome, "repository"),
 		filepath.Join(gradleHome, "caches"),
 		filepath.Join(gradleHome, "wrapper"),
-		// Gradle daemon logs and extracted native libraries live in
-		// dedicated subdirs; neither carries executable build logic, so
-		// granting them does not reopen the init.d/ or gradle.properties
-		// vectors.
-		filepath.Join(gradleHome, "daemon"),
+		// Gradle"s daemon dir is deliberately absent: registry.bin
+		// inside it is the host daemon"s connection token, and a
+		// confined client that can read it can discover the daemon and
+		// submit builds that execute outside the sandbox. Confined
+		// builds that need daemon state must set GRADLE_USER_HOME to a
+		// workspace path, which relocates the daemon dir with it.
 		filepath.Join(gradleHome, "native"),
 		filepath.Join(bunHome, "install", "cache"),
 		filepath.Join(xdgData, "pnpm", "store"),
@@ -239,17 +245,24 @@ func TrustedCacheFiles() []string {
 		filepath.Join(cargoHome, ".package-cache"),
 		filepath.Join(cargoHome, ".package-cache-mutate"),
 	}
-	// Only existing files go into the spec: Landlock needs an O_PATH fd per
-	// rule, so a missing path would fail confinement instead of degrading.
 	var existingLocks []string
 	for _, lock := range locks {
-		if _, err := os.Stat(lock); err != nil {
-			f, err := os.OpenFile(lock, os.O_CREATE|os.O_APPEND, 0o600)
-			if err != nil {
+		// Lstat (not Stat): a symlinked lock path would turn the
+		// writable file rule into write access to whatever the link
+		// resolves to — possibly outside CARGO_HOME. Reject it and
+		// let cargo fall back to its own lock handling.
+		if fi, err := os.Lstat(lock); err == nil {
+			if fi.Mode()&os.ModeSymlink != 0 {
 				continue
 			}
-			_ = f.Close()
+			existingLocks = append(existingLocks, lock)
+			continue
 		}
+		f, err := os.OpenFile(lock, os.O_CREATE|os.O_APPEND, 0o600)
+		if err != nil {
+			continue
+		}
+		_ = f.Close()
 		existingLocks = append(existingLocks, lock)
 	}
 	return existingLocks
@@ -312,6 +325,7 @@ func CredentialDenyPaths() []string {
 	// explicit and blocks any future widening (trusted_extra_roots or a
 	// mis-set CARGO_HOME) from silently exposing them.
 	cargoHome := firstNonEmpty(os.Getenv("CARGO_HOME"), filepath.Join(home, ".cargo"))
+	gradleHome := firstNonEmpty(os.Getenv("GRADLE_USER_HOME"), filepath.Join(home, ".gradle"))
 	xdgData := firstNonEmpty(os.Getenv("XDG_DATA_HOME"), filepath.Join(home, ".local", "share"))
 	paths = append(paths,
 		filepath.Join(cargoHome, "credentials.toml"),
@@ -326,6 +340,12 @@ func CredentialDenyPaths() []string {
 		// Python (PyPI) legacy credential file; uv and pip read it
 		// alongside .netrc, which is denied above.
 		filepath.Join(home, ".pypirc"),
+		// Gradle's daemon dir holds registry.bin, the host daemon's
+		// connection token: it is neither granted nor readable, and
+		// this deny keeps it unreadable under the macOS global-read
+		// layer, so a confined client can neither discover nor submit
+		// builds to a daemon that runs outside the sandbox.
+		filepath.Join(gradleHome, "daemon"),
 		// Ruby/RubyGems API keys and Bundler's config, which routinely
 		// holds private gem-server tokens.
 		filepath.Join(home, ".gem", "credentials"),
@@ -371,9 +391,9 @@ func CredentialDenyPaths() []string {
 	paths = append(paths, filepath.Join(home, ".config", "dart", "pub-credentials.json"))
 	// Conan v2 resolves its home via CONAN_HOME (default ~/.conan2);
 	// credentials.json, source_credentials.json, and the plaintext
-	// login-token database all live at that root. CONAN_USER_HOME is the
-	// v1-era spelling of the same override.
-	conanHome := firstNonEmpty(os.Getenv("CONAN_HOME"), os.Getenv("CONAN_USER_HOME"))
+	// login-token database all live at that root. CONAN_USER_HOME is a
+	// v1-era variable and must not redirect the v2 home.
+	conanHome := os.Getenv("CONAN_HOME")
 	if conanHome == "" {
 		conanHome = filepath.Join(home, ".conan2")
 	}
@@ -382,10 +402,12 @@ func CredentialDenyPaths() []string {
 		filepath.Join(conanHome, "source_credentials.json"),
 		filepath.Join(conanHome, ".conan.db"),
 	)
-	// Conan v1 home (~/.conan, CONAN_USER_HOME override): the v1
-	// credential localdb is .conan.db, and conan.conf/registry.json carry
-	// remote endpoints and proxy configuration.
-	conanV1Home := firstNonEmpty(os.Getenv("CONAN_USER_HOME"), filepath.Join(home, ".conan"))
+	// Conan v1 treats CONAN_USER_HOME as a base directory and creates
+	// .conan inside it; without the override the home is ~/.conan.
+	conanV1Home := filepath.Join(home, ".conan")
+	if base := os.Getenv("CONAN_USER_HOME"); base != "" {
+		conanV1Home = filepath.Join(base, ".conan")
+	}
 	paths = append(paths,
 		filepath.Join(conanV1Home, ".conan.db"),
 		filepath.Join(conanV1Home, "conan.conf"),
@@ -695,10 +717,13 @@ func CleanupToolchainScratch() {
 	toolchainScratchOnce.Do(func() {})
 	if toolchainScratchDir != "" {
 		_ = os.RemoveAll(toolchainScratchDir)
-		toolchainScratchOnce = sync.Once{}
-		toolchainScratchDir = ""
-		toolchainScratchErr = nil
 	}
+	// Reset unconditionally: a cleanup on uncreated state must not burn
+	// the once, or later confined shells would run for the rest of the
+	// process without scratch state.
+	toolchainScratchOnce = sync.Once{}
+	toolchainScratchDir = ""
+	toolchainScratchErr = nil
 }
 
 // toolchainScratchGopath lazily creates the scratch GOPATH. Creation

@@ -65,8 +65,8 @@ func detectLanguageStrict(filePath string) string {
 // block otherwise valid edits.
 //
 // Tradeoff: a net-zero swap — fixing one parse error while introducing
-// another — passes under count-diffing; it is surfaced in the message rather
-// than rejected.
+// another — passes under count-diffing; it passes silently, with no
+// message surfaced for these edits.
 func verifySyntax(oldContent, newContent, filePath string) error {
 	lang := detectLanguageStrict(filePath)
 	if lang == "" {

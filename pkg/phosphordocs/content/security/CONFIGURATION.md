@@ -648,9 +648,9 @@ explicit decision, never a silent default. With
 pathguard both trust the narrowed cache roots — `~/.npm`, `~/.cache/pip`,
 `~/.cache/uv`, `~/.cache/ccache`, `~/.cargo/registry`, `~/.cargo/git`,
 `~/.m2/repository`, `~/.gradle/caches`, `~/.gradle/wrapper`,
-`~/.gradle/daemon`, `~/.gradle/native`, `~/.bun/install/cache`,
+`~/.gradle/native`, `~/.bun/install/cache`,
 `$XDG_DATA_HOME/pnpm/store`, and `~/.nuget/packages` (honoring
-`npm_config_cache`/`PIP_CACHE_DIR`/`UV_CACHE_DIR`/`CCACHE_DIR`/`CARGO_HOME`/`MAVEN_HOME`/`GRADLE_USER_HOME`/`BUN_INSTALL`/`NUGET_PACKAGES`)
+`npm_config_cache`/`PIP_CACHE_DIR`/`UV_CACHE_DIR`/`XDG_CACHE_HOME`/`CCACHE_DIR`/`CARGO_HOME`/`MAVEN_HOME`/`GRADLE_USER_HOME`/`BUN_INSTALL`/`NUGET_PACKAGES`)
 — so workspace builds (`npm install`, `pip install`, `cargo build`, `mvn`,
 `gradle`) keep working inside the sandbox, and commands that *name* a cache
 path in argv (`npm cache clean --cache ~/.npm`) pass the pathguard instead of
@@ -664,8 +664,11 @@ deliberately cache-scoped: `~/.cargo/bin` (on `PATH`), `~/.cargo/credentials`,
 `~/.cargo/config.toml` (which can redirect the registry), `~/.m2/settings.xml`,
 `~/.gradle/gradle.properties`, `~/.gradle/init.d` (any file there executes on
 every future host Gradle build), and `$XDG_DATA_HOME/uv/credentials` (uv's
-plaintext credential store) stay outside the trusted set; `~/.gradle/daemon`
-and `~/.gradle/native` are the deliberate exceptions because daemon logs and
+plaintext credential store) stay outside the trusted set, and
+`~/.gradle/daemon` is the gradle exception: `registry.bin` inside it is the
+host daemon's connection token, and a confined client that can read it can
+submit builds to a daemon running outside the sandbox, so the dir is
+deny-read rather than granted; `~/.gradle/native` is granted because
 extracted native libraries carry no executable build logic. Cargo additionally
 needs its two cache-lock files (`.package-cache`, `.package-cache-mutate`) at
 the `CARGO_HOME` root writable — the mutate lock is taken in shared mode by
