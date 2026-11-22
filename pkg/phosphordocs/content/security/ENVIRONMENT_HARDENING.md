@@ -120,6 +120,23 @@ need full control over the environment. Regardless of the source,
 `PhosphorEnvMarkers()` are always appended so child processes can detect the
 sandbox.
 
+### Toolchain Scratch GOPATH
+
+When kernel sandboxing is active, `NewShell` also appends
+`sandbox.ToolchainScratchEnv()`: a session-lifetime scratch GOPATH under the
+OS temp dir plus the host `GOMODCACHE`/`GOCACHE` pinned explicitly. The
+kernel denies the host GOPATH itself (so `go install` cannot plant binaries
+on PATH and the host checksum DB stays pristine), but Go still needs to
+write `$GOPATH/pkg/sumdb` for checksum-DB lookups and verified toolchain
+downloads — the scratch dir serves those writes. Pinning the caches prevents
+Go from re-deriving them from the scratch GOPATH and duplicating gigabytes
+of modules into `/tmp`. The scratch dir is created with `os.MkdirTemp`
+(unpredictable name, so concurrent Phosphor sessions never share or delete
+each other's scratch state). The injection is skipped when sandboxing is
+off and when no host module cache resolves;
+`sandbox.CleanupToolchainScratch()` removes the scratch dir at shutdown
+without triggering lazy creation.
+
 ## Layer 3: Command Deny List
 
 **Location:** `pkg/shell/run.go` (blockHandler), `pkg/agent/tools/bash.go` (blockFuncs)

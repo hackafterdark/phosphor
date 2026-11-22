@@ -7,6 +7,46 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestEnvironmentHardening_SandboxedShellPinsToolchainScratch verifies that
+// a shell whose child processes are kernel-confined inherits a scratch
+// GOPATH with the host caches pinned, while unrestricted shells keep the
+// host GOPATH untouched.
+func TestEnvironmentHardening_SandboxedShellPinsToolchainScratch(t *testing.T) {
+	// No t.Parallel: t.Setenv mutates the process environment.
+	workspace := t.TempDir()
+	cache := t.TempDir()
+	mod := t.TempDir()
+	t.Setenv("GOCACHE", cache)
+	t.Setenv("GOMODCACHE", mod)
+
+	confined := NewShell(&Options{
+		WorkingDir:  workspace,
+		Workspace:   workspace,
+		SandboxMode: "workspace",
+	})
+	var scratch string
+	for _, kv := range confined.env {
+		if k, v, ok := strings.Cut(kv, "="); ok && k == "GOPATH" {
+			scratch = v
+		}
+	}
+	require.NotEmpty(t, scratch, "confined shell must inherit a scratch GOPATH")
+	require.Contains(t, confined.env, "GOMODCACHE="+mod)
+	require.Contains(t, confined.env, "GOCACHE="+cache)
+
+	// An unrestricted shell must not see the scratch GOPATH: its host
+	// GOPATH is writable without confinement, and pinning it to /tmp
+	// would silently change unrestricted builds.
+	plain := NewShell(&Options{WorkingDir: workspace})
+	plainGopath := ""
+	for _, kv := range plain.env {
+		if k, v, ok := strings.Cut(kv, "="); ok && k == "GOPATH" {
+			plainGopath = v
+		}
+	}
+	require.NotEqual(t, scratch, plainGopath, "unrestricted shell must keep the host GOPATH")
+}
+
 // TestEnvironmentHardening_CommandBlockingViaBlockFuncs verifies that
 // blockFuncs correctly block banned commands when applied to a shell.
 // This tests the core blocking mechanism used by the bash tool.

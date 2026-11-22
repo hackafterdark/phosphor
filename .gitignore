@@ -75,6 +75,8 @@ __pycache__/
 /benchmarks/swebench/out/
 /benchmarks/deepswe1.1/jobs/
 /benchmarks/deepswe1.1/tasks-open/
+/benchmarks/swebench-pro/jobs/
+/benchmarks/swebench-pro/tasks-open/
 
 # Evaluation result trees (per-run logs, results.json)
 /logs/
@@ -85,6 +87,10 @@ benchmarks/swebench/arms/ollama-gpt-oss-120b.json
 benchmarks/swebench/arms/ollama-deepseek-v41-flash.json
 benchmarks/swebench/arms/local.json
 benchmarks/deepswe1.1/arms/deepseek-v41-flash.json
+benchmarks/deepswe1.1/arms/inkling-2-mini.json
+benchmarks/deepswe1.1/run-inkling-mini.sh
+/benchmarks/swebench-pro/arms/*.json
+!/benchmarks/swebench-pro/arms/*.example.json
 
 # Personal benchmark notes (reference tables, budgets) — not committed
 /BENCHMARK_OPTIONS.md

@@ -646,9 +646,11 @@ future build, so widening the writable set to language-runtime caches is an
 explicit decision, never a silent default. With
 `tools.bash.trust_toolchain_caches: true`, the sandbox and the in-process
 pathguard both trust the narrowed cache roots — `~/.npm`, `~/.cache/pip`,
-`~/.cargo/registry`, `~/.cargo/git`, `~/.m2/repository`, `~/.gradle/caches`,
-and `~/.gradle/wrapper` (honoring
-`npm_config_cache`/`PIP_CACHE_DIR`/`CARGO_HOME`/`MAVEN_HOME`/`GRADLE_USER_HOME`)
+`~/.cache/uv`, `~/.cache/ccache`, `~/.cargo/registry`, `~/.cargo/git`,
+`~/.m2/repository`, `~/.gradle/caches`, `~/.gradle/wrapper`,
+`~/.gradle/daemon`, `~/.gradle/native`, `~/.bun/install/cache`,
+`$XDG_DATA_HOME/pnpm/store`, and `~/.nuget/packages` (honoring
+`npm_config_cache`/`PIP_CACHE_DIR`/`UV_CACHE_DIR`/`CCACHE_DIR`/`CARGO_HOME`/`MAVEN_HOME`/`GRADLE_USER_HOME`/`BUN_INSTALL`/`NUGET_PACKAGES`)
 — so workspace builds (`npm install`, `pip install`, `cargo build`, `mvn`,
 `gradle`) keep working inside the sandbox, and commands that *name* a cache
 path in argv (`npm cache clean --cache ~/.npm`) pass the pathguard instead of
@@ -660,7 +662,22 @@ stdlib source directories are never enumerated or trusted — that keeps the
 pathguard and kernel read-only root sets in lockstep. The roots are
 deliberately cache-scoped: `~/.cargo/bin` (on `PATH`), `~/.cargo/credentials`,
 `~/.cargo/config.toml` (which can redirect the registry), `~/.m2/settings.xml`,
-and `~/.gradle/gradle.properties` stay outside the trusted set. Default false;
+`~/.gradle/gradle.properties`, `~/.gradle/init.d` (any file there executes on
+every future host Gradle build), and `$XDG_DATA_HOME/uv/credentials` (uv's
+plaintext credential store) stay outside the trusted set; `~/.gradle/daemon`
+and `~/.gradle/native` are the deliberate exceptions because daemon logs and
+extracted native libraries carry no executable build logic. Cargo additionally
+needs its two cache-lock files (`.package-cache`, `.package-cache-mutate`) at
+the `CARGO_HOME` root writable — the mutate lock is taken in shared mode by
+every plain `cargo build` — so Phosphor adds them as single-file writable
+rules and pre-creates them when `CARGO_HOME` exists (kernel file rules need
+the file to exist before the sandbox attaches; cargo recreates them itself
+afterwards). One cache carries executable configuration: the granted
+`~/.cache/ccache` includes `$CCACHE_DIR/ccache.conf`, whose
+`prefix_command`/`prefix_command_cpp` options run arbitrary programs on
+every cached compile — a writable cache is genuinely trusted input for
+every future host build, which is exactly why this flag stays default-off.
+Default false;
 a workspace config cannot enable it if the operator floor leaves it off.
 Security-relevant home paths (`~/.ssh`, `~/.aws`, browser profiles) stay
 outside the writable set either way; extra readable/writable roots can be
@@ -669,6 +686,20 @@ config load: filesystem and drive roots (`/`, `C:\`), known sensitive
 directories (`/etc`, `C:\Windows`, `C:\Users`, ...), the user home, the OS
 temp dir, the workspace itself, and any workspace ancestor are refused — the
 agent can never be configured to reach the whole filesystem.
+
+The credential deny-read list carries the same per-toolchain coverage even
+where no cache is granted: `~/.pypirc`, `~/.gem/credentials`,
+`~/.bundle/config`, Composer's `auth.json` (resolved via `COMPOSER_HOME`,
+then the existing XDG dir, then the platform default), Dart's
+`pub-credentials.json`, Conan v2 (`credentials.json`,
+`source_credentials.json`, `.conan.db` under `CONAN_HOME`, default
+`~/.conan2`), Conan v1 (`.conan.db`, `conan.conf`, `registry.json` under
+`CONAN_USER_HOME`, default `~/.conan`), sccache's config (`SCCACHE_CONF`,
+then the platform default), and NuGet's user-level `NuGet.Config` (both the
+dotnet CLI and NuGet.exe/Mono layouts). These entries are proactive
+defense-in-depth: they cost nothing at runtime, never block legitimate
+builds, and are the *entire* defense against macOS Seatbelt's global-read
+layer.
 
 ---
 

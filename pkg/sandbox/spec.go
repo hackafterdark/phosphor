@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 )
 
 // DefaultReadOnlyDirs are the well-known roots a development toolchain must
@@ -85,6 +86,12 @@ func ToolchainEtcFiles() []string {
 		"/etc/machine-id",
 		"/etc/krb5.conf",
 		"/etc/gitconfig",
+		// GDB's system-wide initialization. GDB reads these before
+		// any user init file; they are root-owned host configuration,
+		// read-only here, and cannot be reached by a confined child
+		// today, which is why C++ debugging failed to start.
+		"/etc/gdb/gdbinit",
+		"/etc/gdb/gdbinit.d",
 	}
 }
 
@@ -110,6 +117,12 @@ func userReadOnlyFiles() []string {
 // needs: the OS temp dir, and the active GOCACHE/GOMODCACHE when they live
 // outside the workspace. GOMODCACHE is writable so toolchain downloads
 // (GOTOOLCHAIN) don't wedge; a stricter profile can drop it later.
+//
+// The writable roots are directory-scoped and recursive, so the host GOPATH
+// itself stays denied — that keeps 'go install' from planting binaries on
+// PATH and the host checksum DB (pkg/sumdb, a sibling of pkg/mod) pristine.
+// Writes Go legitimately needs there (sumdb lookups, toolchain verification)
+// are served by the scratch GOPATH in [ToolchainScratchEnv].
 //
 // The language-runtime caches (npm, pip, cargo, maven, gradle) are NOT
 // included: a cache directory is trusted input for every future build, so
@@ -153,17 +166,19 @@ func TrustedToolchainCaches() []string {
 // LanguageCacheDirs returns the cache roots for the common language
 // toolchains, honoring each tool's canonical override variable
 // (npm_config_cache, PIP_CACHE_DIR, CARGO_HOME, MAVEN_HOME,
-// GRADLE_USER_HOME) the same way the tools themselves do. Home-relative
-// fallbacks follow each tool's default.
+// GRADLE_USER_HOME, UV_CACHE_DIR, BUN_INSTALL, XDG_DATA_HOME,
+// NUGET_PACKAGES, CCACHE_DIR) the same way the tools themselves do.
+// Home-relative fallbacks follow each tool's default.
 //
 // The roots are deliberately scoped to cache content only: cargo gets
 // registry/ and git/ but not ~/.cargo itself (excluding the bin/ dir that
 // sits on PATH, the credentials file, and config.toml, which can redirect
 // the registry), maven gets repository/ but not settings.xml, and gradle
-// gets caches/ and wrapper/ but not gradle.properties. Credential files
-// under the excluded parents stay neither writable nor readable in the
-// sandbox, and the same list feeds the in-process pathguard so both layers
-// agree on what is trusted.
+// gets caches/, wrapper/, daemon/, and native/ but not gradle.properties
+// or init.d/ (any file dropped in init.d/ executes on every future host
+// Gradle build). Credential files under the excluded parents stay neither
+// writable nor readable in the sandbox, and the same list feeds the
+// in-process pathguard so both layers agree on what is trusted.
 func LanguageCacheDirs() []string {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -172,15 +187,72 @@ func LanguageCacheDirs() []string {
 	cargoHome := firstNonEmpty(os.Getenv("CARGO_HOME"), filepath.Join(home, ".cargo"))
 	mavenHome := firstNonEmpty(os.Getenv("MAVEN_HOME"), filepath.Join(home, ".m2"))
 	gradleHome := firstNonEmpty(os.Getenv("GRADLE_USER_HOME"), filepath.Join(home, ".gradle"))
+	xdgData := firstNonEmpty(os.Getenv("XDG_DATA_HOME"), filepath.Join(home, ".local", "share"))
+	bunHome := firstNonEmpty(os.Getenv("BUN_INSTALL"), filepath.Join(home, ".bun"))
 	return []string{
 		firstNonEmpty(os.Getenv("npm_config_cache"), filepath.Join(home, ".npm")),
 		firstNonEmpty(os.Getenv("PIP_CACHE_DIR"), filepath.Join(home, ".cache", "pip")),
+		firstNonEmpty(os.Getenv("UV_CACHE_DIR"), filepath.Join(home, ".cache", "uv")),
+		// ccache.conf lives inside the granted dir and supports
+		// prefix_command/prefix_command_cpp (arbitrary program
+		// execution on every cached compile) — another reason the
+		// whole list stays gated behind trust_toolchain_caches.
+		firstNonEmpty(os.Getenv("CCACHE_DIR"), filepath.Join(home, ".cache", "ccache")),
 		filepath.Join(cargoHome, "registry"),
 		filepath.Join(cargoHome, "git"),
 		filepath.Join(mavenHome, "repository"),
 		filepath.Join(gradleHome, "caches"),
 		filepath.Join(gradleHome, "wrapper"),
+		// Gradle daemon logs and extracted native libraries live in
+		// dedicated subdirs; neither carries executable build logic, so
+		// granting them does not reopen the init.d/ or gradle.properties
+		// vectors.
+		filepath.Join(gradleHome, "daemon"),
+		filepath.Join(gradleHome, "native"),
+		filepath.Join(bunHome, "install", "cache"),
+		filepath.Join(xdgData, "pnpm", "store"),
+		firstNonEmpty(os.Getenv("NUGET_PACKAGES"), filepath.Join(home, ".nuget", "packages")),
 	}
+}
+
+// TrustedCacheFiles returns single-file writable rules the toolchain caches
+// need on top of [LanguageCacheDirs]'s directory roots: Cargo's cache locks
+// (.package-cache for downloads/resolution, .package-cache-mutate for
+// builds and cache mutation). Both live at the CARGO_HOME root, which stays
+// denied — only registry/ and git/ are granted — so cargo takes its Shared
+// lock file on every plain build and would wedge on the deny without them.
+//
+// Kernel file rules (Landlock) need an O_PATH fd, so the files must exist
+// before the spec is built: this function creates them, but only when
+// CARGO_HOME already exists, keeping a fresh cargo-less host untouched.
+// Cargo recreates the locks itself after they exist once.
+func TrustedCacheFiles() []string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil
+	}
+	cargoHome := firstNonEmpty(os.Getenv("CARGO_HOME"), filepath.Join(home, ".cargo"))
+	if _, err := os.Stat(cargoHome); err != nil {
+		return nil
+	}
+	locks := []string{
+		filepath.Join(cargoHome, ".package-cache"),
+		filepath.Join(cargoHome, ".package-cache-mutate"),
+	}
+	// Only existing files go into the spec: Landlock needs an O_PATH fd per
+	// rule, so a missing path would fail confinement instead of degrading.
+	var existingLocks []string
+	for _, lock := range locks {
+		if _, err := os.Stat(lock); err != nil {
+			f, err := os.OpenFile(lock, os.O_CREATE|os.O_APPEND, 0o600)
+			if err != nil {
+				continue
+			}
+			_ = f.Close()
+		}
+		existingLocks = append(existingLocks, lock)
+	}
+	return existingLocks
 }
 
 func firstNonEmpty(vals ...string) string {
@@ -240,15 +312,115 @@ func CredentialDenyPaths() []string {
 	// explicit and blocks any future widening (trusted_extra_roots or a
 	// mis-set CARGO_HOME) from silently exposing them.
 	cargoHome := firstNonEmpty(os.Getenv("CARGO_HOME"), filepath.Join(home, ".cargo"))
+	xdgData := firstNonEmpty(os.Getenv("XDG_DATA_HOME"), filepath.Join(home, ".local", "share"))
 	paths = append(paths,
 		filepath.Join(cargoHome, "credentials.toml"),
 		filepath.Join(cargoHome, "credentials"),
+		// uv's plaintext credential store (uv >= 0.8.15) lives under
+		// XDG_DATA_HOME/uv/credentials. The cache grant
+		// (~/.cache/uv) never covers it, but the deny entry keeps it
+		// unreadable under the macOS global-read layer and blocks any
+		// future widening from exposing it. uv itself reads ~/.netrc
+		// always, and .netrc is already denied above.
+		filepath.Join(xdgData, "uv", "credentials"),
+		// Python (PyPI) legacy credential file; uv and pip read it
+		// alongside .netrc, which is denied above.
+		filepath.Join(home, ".pypirc"),
+		// Ruby/RubyGems API keys and Bundler's config, which routinely
+		// holds private gem-server tokens.
+		filepath.Join(home, ".gem", "credentials"),
+		filepath.Join(home, ".bundle", "config"),
+		// GDB's user init file executes code on startup. Writability
+		// is already impossible (home is never writable to confined
+		// children); the deny closes the macOS global-read layer too,
+		// so a confined child can neither plant nor stage content in
+		// future host gdb sessions.
+		filepath.Join(home, ".gdbinit"),
+	)
+	// Composer resolves its home dir (auth.json lives there) by
+	// COMPOSER_HOME, then the first existing XDG config dir, then
+	// ~/.composer; the platform default is checked last so a
+	// non-XDG-layout host (macOS, bare installs) is covered too.
+	composerHome := os.Getenv("COMPOSER_HOME")
+	if composerHome == "" {
+		xdgConfig := firstNonEmpty(os.Getenv("XDG_CONFIG_HOME"), filepath.Join(home, ".config"))
+		for _, candidate := range []string{
+			filepath.Join(xdgConfig, "composer"),
+			filepath.Join(home, ".composer"),
+		} {
+			if _, err := os.Stat(candidate); err == nil {
+				composerHome = candidate
+				break
+			}
+		}
+		if composerHome == "" {
+			switch runtime.GOOS {
+			case "windows":
+				composerHome = filepath.Join(home, "AppData", "Roaming", "Composer")
+			case "darwin":
+				composerHome = filepath.Join(home, ".composer")
+			default:
+				composerHome = filepath.Join(xdgConfig, "composer")
+			}
+		}
+	}
+	paths = append(paths, filepath.Join(composerHome, "auth.json"))
+	// Dart/Flutter's pub credential store; macOS keeps it under
+	// Application Support, which the global-read layer would otherwise
+	// expose.
+	paths = append(paths, filepath.Join(home, ".config", "dart", "pub-credentials.json"))
+	// Conan v2 resolves its home via CONAN_HOME (default ~/.conan2);
+	// credentials.json, source_credentials.json, and the plaintext
+	// login-token database all live at that root. CONAN_USER_HOME is the
+	// v1-era spelling of the same override.
+	conanHome := firstNonEmpty(os.Getenv("CONAN_HOME"), os.Getenv("CONAN_USER_HOME"))
+	if conanHome == "" {
+		conanHome = filepath.Join(home, ".conan2")
+	}
+	paths = append(paths,
+		filepath.Join(conanHome, "credentials.json"),
+		filepath.Join(conanHome, "source_credentials.json"),
+		filepath.Join(conanHome, ".conan.db"),
+	)
+	// Conan v1 home (~/.conan, CONAN_USER_HOME override): the v1
+	// credential localdb is .conan.db, and conan.conf/registry.json carry
+	// remote endpoints and proxy configuration.
+	conanV1Home := firstNonEmpty(os.Getenv("CONAN_USER_HOME"), filepath.Join(home, ".conan"))
+	paths = append(paths,
+		filepath.Join(conanV1Home, ".conan.db"),
+		filepath.Join(conanV1Home, "conan.conf"),
+		filepath.Join(conanV1Home, "registry.json"),
+	)
+	// sccache's config (SCCACHE_CONF override) carries S3/GCS/Azure
+	// bucket credentials for the remote cache.
+	sccacheConf := os.Getenv("SCCACHE_CONF")
+	if sccacheConf == "" {
+		switch runtime.GOOS {
+		case "darwin":
+			sccacheConf = filepath.Join(home, "Library", "Application Support", "Mozilla.sccache", "config")
+		case "windows":
+			sccacheConf = filepath.Join(home, "AppData", "Roaming", "Mozilla", "sccache", "config", "config")
+		default:
+			sccacheConf = filepath.Join(firstNonEmpty(os.Getenv("XDG_CONFIG_HOME"), filepath.Join(home, ".config")), "sccache", "config")
+		}
+	}
+	paths = append(paths, sccacheConf)
+	// NuGet user-level configs hold feed credentials; the dotnet CLI and
+	// NuGet.exe/Mono resolve the user-level file to different paths, so
+	// both are denied.
+	paths = append(paths,
+		filepath.Join(home, ".nuget", "NuGet", "NuGet.Config"),
+		filepath.Join(home, ".config", "NuGet", "NuGet.Config"),
 	)
 	switch runtime.GOOS {
 	case "darwin":
 		paths = append(paths,
 			filepath.Join(home, "Library", "Keychains"),
 			filepath.Join(home, ".config", "huggingface"),
+			// Dart/Flutter's pub credential store on macOS lives under
+			// Application Support; the global-read layer makes the
+			// deny entry the entire defense.
+			filepath.Join(home, "Library", "Application Support", "dart", "pub-credentials.json"),
 			// macOS app-data stores. Seatbelt allows global reads by
 			// design, so the deny list is the entire defense for
 			// browser sessions, chat apps, and the TCC database.
@@ -280,6 +452,14 @@ func CredentialDenyPaths() []string {
 			filepath.Join(appdata, "gcloud"),
 			filepath.Join(appdata, "docker", "config.json"),
 			filepath.Join(home, ".docker", "config.json"),
+			// Dart/Flutter's pub credential store follows the same
+			// XDG-style layout on Windows; the deny keeps intent
+			// explicit for the pathguard.
+			filepath.Join(home, ".config", "dart", "pub-credentials.json"),
+			// NuGet's user-level config on Windows lives under
+			// %APPDATA%\NuGet (the Linux/macOS user-level paths are
+			// denied unconditionally above).
+			filepath.Join(appdata, "NuGet", "NuGet.Config"),
 			// Windows Credential Manager DPAPI blobs. AppContainer
 			// default-denies them (ungranted paths are unreadable),
 			// so this is pathguard-level defense-in-depth plus
@@ -361,7 +541,7 @@ func SpecForLimits(workspace string, extraTrustedRoots []string, limits Resource
 		ReadOnlyRoots:  existing(append(append([]string{}, DefaultReadOnlyDirs...), ToolchainEtcFiles()...)),
 		ReadWriteRoots: append(append([]string{}, DefaultReadWriteDirs()...), extraTrustedRoots...),
 		ReadOnlyFiles:  userReadOnlyFiles(),
-		ReadWriteFiles: []string{"/dev/null"},
+		ReadWriteFiles: append([]string{"/dev/null"}, TrustedCacheFiles()...),
 		DenyRead:       CredentialDenyPaths(),
 		Limits:         limits,
 	}
@@ -461,6 +641,92 @@ func cacheDir() string {
 	}
 	return ""
 }
+
+// ToolchainScratchEnv returns the environment entries that isolate the Go
+// toolchain's writable scratch state for confined children: a session-
+// lifetime scratch GOPATH under the OS temp dir plus the host GOCACHE and
+// GOMODCACHE pinned explicitly.
+//
+// The scratch GOPATH is what unblocks module and toolchain downloads that
+// need a checksum-DB lookup ($GOPATH/pkg/sumdb) or a verified GOTOOLCHAIN
+// download (toolchain downloads cannot run with GOSUMDB=off): the host
+// GOPATH itself stays denied so `go install` cannot plant binaries on PATH
+// and the host checksum DB stays pristine. The scratch dir is created under
+// os.TempDir(), which [DefaultReadWriteDirs] already makes writable, so no
+// spec widening is required.
+//
+// GOMODCACHE and GOCACHE are pinned from the same host values
+// [DefaultReadWriteDirs] makes writable; without them Go would re-derive
+// both from the scratch GOPATH and re-download gigabytes of modules and
+// toolchains. Values that resolve empty are omitted so Go falls back to its
+// own defaults rather than to an invalid pinned path.
+//
+// The scratch dir is created lazily on first use and is meant to live for
+// the process lifetime; [CleanupToolchainScratch] removes it at shutdown
+// without triggering lazy creation on runs that never spawned a shell.
+func ToolchainScratchEnv() []string {
+	scratch := toolchainScratchGopath()
+	if scratch == "" {
+		return nil
+	}
+	// Without a resolvable host module cache, pinning GOPATH to the scratch
+	// dir would let Go create <scratch>/pkg/mod and duplicate the host
+	// module cache into /tmp — skip the injection entirely instead.
+	if goModCacheDir() == "" {
+		return nil
+	}
+	env := []string{"GOPATH=" + scratch}
+	if mod := goModCacheDir(); mod != "" {
+		env = append(env, "GOMODCACHE="+mod)
+	}
+	if cache := goCacheDir(); cache != "" {
+		env = append(env, "GOCACHE="+cache)
+	}
+	return env
+}
+
+// CleanupToolchainScratch removes the scratch GOPATH created by
+// [ToolchainScratchEnv]. It is a no-op when the scratch dir was never
+// created, so deferring it at shutdown cannot itself trigger lazy creation.
+func CleanupToolchainScratch() {
+	// The empty Do waits for any in-flight lazy creation to settle without
+	// creating the dir itself, so cleanup never triggers lazy creation and
+	// never races the once-value read.
+	toolchainScratchOnce.Do(func() {})
+	if toolchainScratchDir != "" {
+		_ = os.RemoveAll(toolchainScratchDir)
+		toolchainScratchOnce = sync.Once{}
+		toolchainScratchDir = ""
+		toolchainScratchErr = nil
+	}
+}
+
+// toolchainScratchGopath lazily creates the scratch GOPATH. Creation
+// happens in the Phosphor process (outside the sandbox), and os.MkdirTemp
+// succeeds even when the host GOPATH is unwritable, so there is nothing to
+// preflight. The unpredictable MkdirTemp name keeps concurrent Phosphor
+// sessions from sharing (and one session's shutdown from deleting) another
+// session's scratch state.
+func toolchainScratchGopath() string {
+	toolchainScratchOnce.Do(func() {
+		toolchainScratchDir, toolchainScratchErr = os.MkdirTemp("", "phosphor-gopath-*")
+	})
+	if toolchainScratchErr != nil {
+		return ""
+	}
+	return toolchainScratchDir
+}
+
+// toolchainScratchOnce makes lazy creation race-free: concurrent confined
+// shells see either the created dir or the creation error, never a half-
+// applied state. toolchainScratchDir is "" until (and unless) creation
+// succeeds, which is what makes CleanupToolchainScratch a no-op before any
+// confined shell ran.
+var (
+	toolchainScratchOnce sync.Once
+	toolchainScratchDir  string
+	toolchainScratchErr  error
+)
 
 // Confine wraps cmd's argv through the platform isolator if the sandbox is
 // active for this spec. mode=off leaves cmd untouched; workspace degrades

@@ -138,6 +138,16 @@ func NewShell(opts *Options) *Shell {
 	// Allow tools to detect execution by Phosphor.
 	env = append(env, PhosphorEnvMarkers()...)
 
+	// Confined shells inherit a scratch GOPATH with the host GOCACHE and
+	// GOMODCACHE pinned (see sandbox.ToolchainScratchEnv): the kernel denies
+	// the host GOPATH itself, so sumdb lookups and verified toolchain
+	// downloads would otherwise wedge. Unrestricted shells (and hooks, which
+	// never take this path) keep the host GOPATH unchanged.
+	sbx := newSandboxPolicy(opts.SandboxMode, opts.Workspace, opts.ExtraTrustedRoots, opts.SandboxLimits)
+	if sbx != nil {
+		env = append(env, sandbox.ToolchainScratchEnv()...)
+	}
+
 	// Append the caller-supplied proxy entries last, after allowlist filtering, so
 	// the egress broker's proxy vars and its proxy-auth token survive the filter
 	// (they are not operator allowlisted) yet still cannot smuggle a credential-
@@ -156,7 +166,7 @@ func NewShell(opts *Options) *Shell {
 		logger:      logger,
 		blockFuncs:  opts.BlockFuncs,
 		confinement: newConfinement(opts.Workspace, opts.ExtraTrustedRoots, opts.DisableTempRoot),
-		sandbox:     newSandboxPolicy(opts.SandboxMode, opts.Workspace, opts.ExtraTrustedRoots, opts.SandboxLimits),
+		sandbox:     sbx,
 	}
 }
 
