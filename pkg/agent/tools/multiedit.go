@@ -282,7 +282,7 @@ func processMultiEditWithCreation(edit editContext, params MultiEditParams, call
 	if err := checkSecretsAt(currentContent, params.FilePath, edit.policy); err != nil {
 		return fantasy.NewTextErrorResponse(err.Error()), nil
 	}
-	if err := verifySyntax(currentContent, params.FilePath); err != nil {
+	if err := verifySyntax("", currentContent, params.FilePath); err != nil {
 		return fantasy.NewTextErrorResponse(fmt.Sprintf("Syntax error validation failed: %v. Your edit was rejected to prevent committing broken code. Please correct the edit.", err)), nil
 	}
 
@@ -509,7 +509,7 @@ func processMultiEditExistingFile(edit editContext, params MultiEditParams, call
 	if err := checkSecretsAt(finalContentToWrite, params.FilePath, edit.policy); err != nil {
 		return fantasy.NewTextErrorResponse(err.Error()), nil
 	}
-	if err := verifySyntax(finalContentToWrite, params.FilePath); err != nil {
+	if err := verifySyntax(oldContent, finalContentToWrite, params.FilePath); err != nil {
 		return fantasy.NewTextErrorResponse(fmt.Sprintf("Syntax error validation failed: %v. Your edit was rejected to prevent committing broken code. Please correct the edit.", err)), nil
 	}
 

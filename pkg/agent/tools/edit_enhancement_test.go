@@ -13,12 +13,12 @@ import (
 
 func TestVerifySyntax(t *testing.T) {
 	// Valid Go
-	err := verifySyntax(`package main
+	err := verifySyntax("", `package main
 func main() {}`, "main.go")
 	require.NoError(t, err)
 
 	// Invalid Go - should fail if sitter is available
-	err = verifySyntax(`package main
+	err = verifySyntax("", `package main
 func main(`, "main.go")
 	if isSitterAvailable() {
 		require.Error(t, err)
@@ -27,9 +27,44 @@ func main(`, "main.go")
 	}
 
 	// Invalid syntax in txt file should always succeed
-	err = verifySyntax(`package main
+	err = verifySyntax("", `package main
 func main(`, "main.txt")
 	require.NoError(t, err)
+}
+
+func TestVerifySyntaxDifferential_PassPreExistingError(t *testing.T) {
+	if !isSitterAvailable() {
+		t.Skip("tree-sitter requires cgo")
+	}
+	// A file that already fails to parse (grammar gap) must accept a valid
+	// edit that adds no new errors.
+	pre := "template <typename T> struct S { T x; };\ntemplate struct S<float>;"
+	post := "template <typename T> struct S { T x; };\ntemplate struct S<float>;\n// comment"
+	require.NoError(t, verifySyntax(pre, post, "solver.cpp"))
+}
+
+func TestVerifySyntaxDifferential_RejectNewError(t *testing.T) {
+	if !isSitterAvailable() {
+		t.Skip("tree-sitter requires cgo")
+	}
+	pre := "template <typename T> struct S { T x; };\ntemplate struct S<float>;"
+	post := "template <typename T> struct S { T x; };\ntemplate struct S<float>;\nint main( {"
+	err := verifySyntax(pre, post, "solver.cpp")
+	require.Error(t, err)
+	// The delta (1 new) and the pre-existing count (1) must both be stated,
+	// and the post-edit locations reported.
+	require.Contains(t, err.Error(), "1 new (1 pre-existing)")
+	require.Contains(t, err.Error(), "post-edit locations:")
+}
+
+func TestVerifySyntaxNewFile_RejectsSyntaxErrors(t *testing.T) {
+	if !isSitterAvailable() {
+		t.Skip("tree-sitter requires cgo")
+	}
+	err := verifySyntax("", "package main\nfunc main(", "main.go")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "AST contains 1 error(s)")
+	require.Contains(t, err.Error(), "locations: 2:11")
 }
 
 func TestViewNodeTool(t *testing.T) {

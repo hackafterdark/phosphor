@@ -85,6 +85,7 @@ searchable through the `phosphor_docs` tool or by viewing any
 | [security/SECRETS_PROTECTION.md](security/SECRETS_PROTECTION.md) | Defense-in-depth against secrets reaching the model. |
 | [security/SECURITY_VALIDATION_TEST_SUITE.md](security/SECURITY_VALIDATION_TEST_SUITE.md) | Maintainer-facing validation walkthrough for the guard stack. |
 | [adr/0016-os-level-sandboxing.md](adr/0016-os-level-sandboxing.md) | Kernel sandboxing of bash children (Landlock / Seatbelt / restricted token). |
+| [adr/0017-toolchain-cache-trust-and-scratch-state.md](adr/0017-toolchain-cache-trust-and-scratch-state.md) | Toolchain cache trust model: leaf grants, denied home-dir classes, scratch-GOPATH redirection. |
 
 ## Platform and Integration
 

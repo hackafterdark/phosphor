@@ -17,6 +17,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/hackafterdark/phosphor/internal/proto"
 	"github.com/hackafterdark/phosphor/pkg/csync"
+	"github.com/hackafterdark/phosphor/pkg/sandbox"
 	"github.com/stretchr/testify/require"
 )
 
@@ -679,6 +680,13 @@ func captureDebugLogs(t *testing.T) *syncBuffer {
 // machine's real config.
 func xdgIsolated(t *testing.T) {
 	t.Helper()
+	// Register before any t.TempDir(): cleanups run LIFO, so the
+	// wait must be registered first to run last. Windows sandbox
+	// pre-warm crawls grants in the background and memoizes them
+	// under XDG_CACHE_HOME; without the wait, the memo write races
+	// the temp-dir cleanup and RemoveAll fails with "directory is
+	// not empty".
+	t.Cleanup(sandbox.WaitPreWarm)
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())

@@ -4,10 +4,25 @@ package sandbox
 
 import (
 	"log/slog"
+	"sync"
 	"time"
 
 	"golang.org/x/sys/windows"
 )
+
+// preWarmWG tracks in-flight background pre-warm crawls so callers can
+// wait for them: the crawl memoizes grants under XDG_CACHE_HOME, and
+// a test that redirects XDG_CACHE_HOME to t.TempDir() races the async
+// memo write against cleanup.
+var preWarmWG sync.WaitGroup
+
+// WaitPreWarm blocks until every background pre-warm crawl started by
+// PreWarm has finished. Pre-warm is fire-and-forget for the app; this
+// exists for tests that isolate XDG_CACHE_HOME in a temp dir and must
+// see the grant memo land before teardown removes the directory.
+func WaitPreWarm() {
+	preWarmWG.Wait()
+}
 
 // PreWarm applies the container ACE grants a kernel boundary will
 // later need for this workspace, in the background. The first confined
@@ -27,7 +42,9 @@ func PreWarm(mode, workspace string, limits ResourceLimits) bool {
 		return false
 	}
 	spec := SpecForLimits(workspace, nil, limits)
+	preWarmWG.Add(1)
 	go func() {
+		defer preWarmWG.Done()
 		if err := preWarmGrants(workspace, spec); err != nil {
 			slog.Warn("Failed to pre-apply sandbox container ACEs",
 				"workspace", workspace, "error", err)

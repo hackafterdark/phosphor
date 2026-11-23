@@ -22,6 +22,7 @@ import (
 	"github.com/hackafterdark/phosphor/pkg/message"
 	"github.com/hackafterdark/phosphor/pkg/permission"
 	"github.com/hackafterdark/phosphor/pkg/pubsub"
+	"github.com/hackafterdark/phosphor/pkg/sandbox"
 	"github.com/stretchr/testify/require"
 )
 
@@ -128,6 +129,12 @@ func newE2EHarness(t *testing.T) *e2eHarness {
 // test as parallel.
 func newRealCreateHarness(t *testing.T) *e2eHarness {
 	t.Helper()
+	// Registered before the temp dirs: cleanups run LIFO, so the wait
+	// runs last. Windows sandbox pre-warm memoizes container grants
+	// under XDG_CACHE_HOME asynchronously; without the wait the memo
+	// write races the temp-dir cleanup and RemoveAll fails with
+	// "directory is not empty".
+	t.Cleanup(sandbox.WaitPreWarm)
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())

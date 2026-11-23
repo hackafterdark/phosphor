@@ -59,34 +59,88 @@ func detectLanguageStrict(filePath string) string {
 	}
 }
 
-func verifySyntax(newString string, filePath string) error {
+// verifySyntax rejects an edit only when it adds tree-sitter parse errors
+// relative to the pre-edit content. Pre-existing ERROR/MISSING nodes from
+// grammar gaps (e.g. C++20 corner cases the grammars cannot express) must not
+// block otherwise valid edits.
+//
+// Tradeoff: a net-zero swap — fixing one parse error while introducing
+// another — passes under count-diffing; it passes silently, with no
+// message surfaced for these edits.
+func verifySyntax(oldContent, newContent, filePath string) error {
 	lang := detectLanguageStrict(filePath)
 	if lang == "" {
 		return nil
 	}
-	root := parser.Parse([]byte(newString), lang)
+	postErrors := collectASTErrors(newContent, lang)
+	if len(postErrors) == 0 {
+		return nil
+	}
+	preErrors := 0
+	if oldContent != "" {
+		preErrors = len(collectASTErrors(oldContent, lang))
+	}
+	if len(postErrors) <= preErrors {
+		return nil
+	}
+	locations := formatASTErrorLocations(postErrors)
+	if oldContent == "" {
+		return fmt.Errorf("syntax error: AST contains %d error(s); locations: %s", len(postErrors), locations)
+	}
+	return fmt.Errorf("syntax error: edit introduced %d new (%d pre-existing) AST error(s); post-edit locations: %s", len(postErrors)-preErrors, preErrors, locations)
+}
+
+// astError is the 1-based line:col position of a tree-sitter parse failure.
+type astError struct {
+	line int
+	col  int
+}
+
+// collectASTErrors returns the positions of every top-level parse failure in
+// code. Recursion stops at an ERROR node: tree-sitter frequently nests
+// secondary ERROR or MISSING nodes inside a parent ERROR subtree, and skipping
+// those children keeps one broken expression from inflating the error count.
+func collectASTErrors(code, lang string) []astError {
+	root := parser.Parse([]byte(code), lang)
 	if root == nil {
 		return nil
 	}
-	if hasASTError(root) {
-		return fmt.Errorf("syntax error: AST contains ERROR or missing node")
-	}
-	return nil
-}
-
-func hasASTError(n *sitter.Node) bool {
-	if n == nil {
-		return false
-	}
-	if n.IsError() || n.IsMissing() || n.Kind() == "ERROR" {
-		return true
-	}
-	for i := uint(0); i < n.ChildCount(); i++ {
-		if hasASTError(n.Child(i)) {
-			return true
+	var errs []astError
+	var visit func(n *sitter.Node)
+	visit = func(n *sitter.Node) {
+		if n == nil {
+			return
+		}
+		if n.IsError() || n.IsMissing() || n.Kind() == "ERROR" {
+			start := n.StartPosition()
+			errs = append(errs, astError{line: int(start.Row) + 1, col: int(start.Column) + 1})
+			return
+		}
+		for i := uint(0); i < n.ChildCount(); i++ {
+			visit(n.Child(i))
 		}
 	}
-	return false
+	visit(root)
+	return errs
+}
+
+// formatASTErrorLocations renders at most maxReportedASTErrors locations so a
+// heavily broken file cannot bloat the tool output.
+func formatASTErrorLocations(errs []astError) string {
+	const maxReportedASTErrors = 10
+	shown := errs
+	if len(shown) > maxReportedASTErrors {
+		shown = shown[:maxReportedASTErrors]
+	}
+	parts := make([]string, 0, len(shown))
+	for _, e := range shown {
+		parts = append(parts, fmt.Sprintf("%d:%d", e.line, e.col))
+	}
+	out := strings.Join(parts, ", ")
+	if extra := len(errs) - maxReportedASTErrors; extra > 0 {
+		out += fmt.Sprintf(" (+%d more)", extra)
+	}
+	return out
 }
 
 func generateOutline(code []byte, filePath string) (string, error) {

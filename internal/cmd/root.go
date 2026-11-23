@@ -39,6 +39,7 @@ import (
 	"github.com/hackafterdark/phosphor/internal/workspace"
 	"github.com/hackafterdark/phosphor/pkg/config"
 	"github.com/hackafterdark/phosphor/pkg/db"
+	"github.com/hackafterdark/phosphor/pkg/sandbox"
 	"github.com/hackafterdark/phosphor/pkg/session"
 	"github.com/hackafterdark/phosphor/pkg/skills"
 	"github.com/spf13/cobra"
@@ -375,7 +376,12 @@ func setupLocalWorkspace(cmd *cobra.Command) (workspace.Workspace, func(), *sql.
 	}
 
 	ws := workspace.NewAppWorkspace(appInstance, store)
-	cleanup := func() { appInstance.Shutdown() }
+	cleanup := func() {
+		appInstance.Shutdown()
+		// Removes the Go scratch GOPATH if a confined shell ever created
+		// it; a no-op otherwise.
+		sandbox.CleanupToolchainScratch()
+	}
 	return ws, cleanup, conn, err
 }
 
