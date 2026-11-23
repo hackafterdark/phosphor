@@ -182,11 +182,11 @@ const (
 	// DefaultProviderFirstByteTimeout bounds the prefill + queue wait. Deliberately
 	// huge: cutting a request mid-prefill is worse than waiting on it, so this
 	// only trips on a backend that is truly wedged before ever responding.
-	DefaultProviderFirstByteTimeout = 10 * time.Minute
+	DefaultProviderFirstByteTimeout = 20 * time.Minute
 	// DefaultProviderStreamIdleTimeout bounds the gap between streamed bytes - the
 	// real stall detector. Modest, but still far above any genuine inter-token gap
 	// on a live model.
-	DefaultProviderStreamIdleTimeout = 2 * time.Minute
+	DefaultProviderStreamIdleTimeout = 10 * time.Minute
 )
 
 func providerConnectTimeout() time.Duration {
