@@ -10,8 +10,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var updateProvidersSource string
-
 var updateProvidersCmd = &cobra.Command{
 	Use:   "update-providers [path-or-url]",
 	Short: "Update providers",
@@ -28,12 +26,6 @@ phosphor update-providers /path/to/local-providers.json
 
 # Update Catwalk providers from embedded version
 phosphor update-providers embedded
-
-# Update Hyper provider information
-phosphor update-providers --source=hyper
-
-# Update Hyper from a custom URL
-phosphor update-providers --source=hyper https://hyper.example.com
 `,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// NOTE(@andreynering): We want to skip logging output do stdout here.
@@ -44,15 +36,7 @@ phosphor update-providers --source=hyper https://hyper.example.com
 			pathOrURL = args[0]
 		}
 
-		var err error
-		switch updateProvidersSource {
-		case "catwalk":
-			err = config.UpdateProviders(pathOrURL)
-		case "hyper":
-			err = config.UpdateHyper(pathOrURL)
-		default:
-			return fmt.Errorf("invalid source %q, must be 'catwalk' or 'hyper'", updateProvidersSource)
-		}
+		err := config.UpdateProviders(pathOrURL)
 
 		if err != nil {
 			return err
@@ -70,13 +54,11 @@ phosphor update-providers --source=hyper https://hyper.example.com
 			SetString("SUCCESS")
 		textStyle := lipgloss.NewStyle().
 			MarginLeft(2).
-			SetString(fmt.Sprintf("%s provider updated successfully.", updateProvidersSource))
+			SetString("Catwalk providers updated successfully.")
 
 		fmt.Printf("%s\n%s\n\n", headerStyle.Render(), textStyle.Render())
 		return nil
 	},
 }
 
-func init() {
-	updateProvidersCmd.Flags().StringVar(&updateProvidersSource, "source", "catwalk", "Provider source to update (catwalk or hyper)")
-}
+

@@ -94,7 +94,7 @@ or pre-approve the tools the agent needs.
 
 | Flag | Description |
 | --- | --- |
-| `--source <source>` | Provider source to update (`catwalk` or `hyper`, default: `catwalk`). |
+| `--source <source>` | Provider source to update (`catwalk`, default: `catwalk`). |
 
 ## `phosphor index`
 

@@ -22,7 +22,7 @@ First run needs exactly one thing: a model to talk to.
 
 - **Cloud providers** work out of the box. Export the key (`OPENAI_API_KEY`,
   `ANTHROPIC_API_KEY`, ...) and Phosphor picks the provider up automatically,
-  or authenticate a subscription with `phosphor login` (hyper, copilot).
+  or authenticate a subscription with `phosphor login copilot`.
 - **Local models** (llama.cpp, vLLM, Ollama, LM Studio, anything
   OpenAI-compatible) are one provider block away:
 

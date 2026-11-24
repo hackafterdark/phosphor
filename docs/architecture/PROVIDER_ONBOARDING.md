@@ -36,7 +36,7 @@ Input is captured at two layers:
    dialog in onboarding and re-opens the dialog otherwise.
 
 Selecting a provider/model chains into the credential dialogs
-(`openAuthenticationDialog` → `NewOAuthHyper` / `NewOAuthCopilot` /
+(`openAuthenticationDialog` → `NewOAuthCopilot` /
 `NewAPIKeyInput`). Completing the flow calls `handleSelectModel`, which
 flips the state to `uiLanding`, and initializes the system agent (the
 config store's `autoReload` runs `SetupAgents()` as soon as the first

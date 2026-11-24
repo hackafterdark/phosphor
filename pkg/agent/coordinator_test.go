@@ -10,7 +10,6 @@ import (
 	"charm.land/fantasy/providers/anthropic"
 	"charm.land/fantasy/providers/bedrock"
 	"charm.land/fantasy/providers/openaicompat"
-	"github.com/hackafterdark/phosphor/pkg/agent/hyper"
 	"github.com/hackafterdark/phosphor/pkg/agent/prompt"
 	"github.com/hackafterdark/phosphor/pkg/config"
 	"github.com/stretchr/testify/assert"
@@ -695,9 +694,9 @@ func TestGetProviderOptionsOpenAICompatEffortPassThrough(t *testing.T) {
 			wantThinkingKwarg: true,
 		},
 		{
-			name:              "hyper provider is excluded from pass-through",
-			providerType:      catwalk.Type(hyper.Name),
-			providerID:        hyper.Name,
+			name:              "openai-compat provider passes through",
+			providerType:      catwalk.TypeOpenAICompat,
+			providerID:        openaicompat.Name,
 			effort:            "xhigh",
 			wantThinkingKwarg: true,
 		},
@@ -730,9 +729,9 @@ func TestGetProviderOptionsOpenAICompatEffortPassThrough(t *testing.T) {
 			wantThinkingKwarg: true,
 		},
 		{
-			name:              "hyper honors the enable_thinking override",
-			providerType:      catwalk.Type(hyper.Name),
-			providerID:        hyper.Name,
+			name:              "openai-compat honors the enable_thinking override",
+			providerType:      catwalk.TypeOpenAICompat,
+			providerID:        openaicompat.Name,
 			enableThinking:    "off",
 			wantThinkingKwarg: false,
 		},

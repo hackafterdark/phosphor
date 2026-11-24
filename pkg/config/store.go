@@ -17,8 +17,6 @@ import (
 	"github.com/hackafterdark/phosphor/internal/log"
 	"github.com/hackafterdark/phosphor/internal/oauth"
 	"github.com/hackafterdark/phosphor/internal/oauth/copilot"
-	"github.com/hackafterdark/phosphor/internal/oauth/hyper"
-	hyperp "github.com/hackafterdark/phosphor/pkg/agent/hyper"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
@@ -467,8 +465,6 @@ func (s *ConfigStore) RefreshOAuthToken(ctx context.Context, scope Scope, provid
 	switch providerID {
 	case string(catwalk.InferenceProviderCopilot):
 		refreshedToken, refreshErr = copilot.RefreshToken(ctx, providerConfig.OAuthToken.RefreshToken)
-	case hyperp.Name:
-		refreshedToken, refreshErr = hyper.ExchangeToken(ctx, providerConfig.OAuthToken.RefreshToken)
 	default:
 		return fmt.Errorf("OAuth refresh not supported for provider %s", providerID)
 	}

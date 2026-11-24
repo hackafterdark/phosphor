@@ -158,4 +158,4 @@ For long-running sessions or models with tight context windows (e.g., small loca
 
 - [README.md](./README.md) — Full structural search tool documentation
 - [LANGUAGE_NOTES.md](./LANGUAGE_NOTES.md) — Per-language grammar capabilities and known issues
-- [MODELS_AND_PROVIDERS_CONFIG.md](../MODELS_AND_PROVIDERS_CONFIG.md) — Config file structure and merge behavior
+- [configuration/PROVIDERS_AND_MODELS.md](../configuration/PROVIDERS_AND_MODELS.md) — Config file structure and merge behavior

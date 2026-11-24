@@ -55,7 +55,6 @@ import (
 	"github.com/hackafterdark/phosphor/internal/workspace"
 	"github.com/hackafterdark/phosphor/internal/workspaceindex"
 	"github.com/hackafterdark/phosphor/pkg/agent"
-	"github.com/hackafterdark/phosphor/pkg/agent/hyper"
 	"github.com/hackafterdark/phosphor/pkg/agent/notify"
 	agenttools "github.com/hackafterdark/phosphor/pkg/agent/tools"
 	"github.com/hackafterdark/phosphor/pkg/agent/tools/mcp"
@@ -147,13 +146,6 @@ type (
 
 	// closeDialogMsg is sent to close the current dialog.
 	closeDialogMsg struct{}
-
-	// hyperRefreshDoneMsg is sent after a silent Hyper OAuth refresh
-	// finishes. It carries the original model-selection action so the
-	// selection can be resumed.
-	hyperRefreshDoneMsg struct {
-		action dialog.ActionSelectModel
-	}
 
 	// copyChatHighlightMsg is sent to copy the current chat highlight to clipboard.
 	copyChatHighlightMsg struct{}
@@ -358,9 +350,6 @@ type UI struct {
 	// mouse highlighting related state
 	lastClickTime time.Time
 
-	// hyperCredits is the remaining Hyper credits, updated after each prompt.
-	hyperCredits *int
-
 	// currentGoal is the active goal for the current session.
 	currentGoal *goal.Goal
 
@@ -499,9 +488,6 @@ func (m *UI) Init() tea.Cmd {
 	// load initial session if specified
 	if cmd := m.loadInitialSession(); cmd != nil {
 		cmds = append(cmds, cmd)
-	}
-	if m.com.IsHyper() {
-		cmds = append(cmds, m.fetchHyperCredits())
 	}
 	// load recent sessions for the landing page
 	cmds = append(cmds, m.loadRecentSessions())
@@ -1193,12 +1179,6 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.textarea.SetValue(msg.Text)
 		m.textarea.MoveToEnd()
 		cmds = append(cmds, m.updateTextareaWithPrevHeight(msg, prevHeight))
-	case hyperRefreshDoneMsg:
-		if cmd := m.handleSelectModel(msg.action); cmd != nil {
-			cmds = append(cmds, cmd)
-		}
-	case creditsUpdatedMsg:
-		m.hyperCredits = &msg.credits
 	case util.InfoMsg:
 		if msg.Type == util.InfoTypeError {
 			slog.Error("Error reported", "error", msg.Msg)
@@ -2477,51 +2457,8 @@ func substituteArgs(content string, args map[string]string) string {
 	return content
 }
 
-// refreshHyperAndRetrySelect returns a command that silently refreshes
-// the Hyper OAuth token and then re-runs the model selection. If the
-// refresh fails, the selection resumes with ReAuthenticate set so the
-// OAuth dialog opens.
-func (m *UI) refreshHyperAndRetrySelect(msg dialog.ActionSelectModel) tea.Cmd {
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-		if err := m.com.Workspace.RefreshOAuthToken(ctx, config.ScopeGlobal, "hyper"); err != nil {
-			slog.Warn("Hyper OAuth refresh failed, requesting re-auth", "error", err)
-			msg.ReAuthenticate = true
-		}
-		return hyperRefreshDoneMsg{action: msg}
-	}
-}
-
-// fetchHyperCredits returns a command that asynchronously fetches the
-// remaining Hyper credits from the API.
-func (m *UI) fetchHyperCredits() tea.Cmd {
-	return func() tea.Msg {
-		cfg := m.com.Config()
-		if cfg == nil {
-			return nil
-		}
-		providerCfg, ok := cfg.Providers.Get(hyper.Name)
-		if !ok {
-			return nil
-		}
-		apiKey, err := m.com.Workspace.Resolver().ResolveValue(providerCfg.APIKey)
-		if err != nil || apiKey == "" {
-			return nil
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		credits, err := hyper.FetchCredits(ctx, apiKey)
-		if err != nil {
-			slog.Error("Failed to fetch Hyper credits", "error", err)
-			return nil
-		}
-		return creditsUpdatedMsg{credits: credits}
-	}
-}
-
 // handleSelectModel performs the model selection after any provider
-// pre-checks (such as a silent Hyper OAuth refresh) have completed.
+// pre-checks have completed.
 func (m *UI) handleSelectModel(msg dialog.ActionSelectModel) tea.Cmd {
 	var cmds []tea.Cmd
 
@@ -2541,16 +2478,6 @@ func (m *UI) handleSelectModel(msg dialog.ActionSelectModel) tea.Cmd {
 		isConfigured = func() bool { _, ok := cfg.Providers.Get(providerID); return ok }
 		isOnboarding = m.state == uiOnboarding
 	)
-
-	// For Hyper, if the stored OAuth token is expired, try a silent
-	// refresh before deciding whether the provider is configured. Keeps
-	// users from hitting a 401 on their first message after the
-	// short-lived access token ages out.
-	if !msg.ReAuthenticate && providerID == "hyper" {
-		if pc, ok := cfg.Providers.Get(providerID); ok && pc.OAuthToken != nil && pc.OAuthToken.IsExpired() {
-			return m.refreshHyperAndRetrySelect(msg)
-		}
-	}
 
 	// Attempt to import GitHub Copilot tokens from VSCode if available.
 	if isCopilot && !isConfigured() && !msg.ReAuthenticate {
@@ -2615,8 +2542,6 @@ func (m *UI) handleSelectModel(msg dialog.ActionSelectModel) tea.Cmd {
 		if err := m.com.Workspace.InitSystemAgent(context.TODO()); err != nil {
 			cmds = append(cmds, util.ReportError(err))
 		}
-	} else if m.com.IsHyper() {
-		cmds = append(cmds, m.fetchHyperCredits())
 	}
 
 	return tea.Batch(cmds...)
@@ -2631,8 +2556,6 @@ func (m *UI) openAuthenticationDialog(provider catwalk.Provider, model config.Se
 	)
 
 	switch provider.ID {
-	case "hyper":
-		dlg, cmd = dialog.NewOAuthHyper(m.com, isOnboarding, provider, model, modelType)
 	case catwalk.InferenceProviderCopilot:
 		dlg, cmd = dialog.NewOAuthCopilot(m.com, isOnboarding, provider, model, modelType)
 	default:
@@ -3132,7 +3055,7 @@ func (m *UI) drawHeader(scr uv.Screen, area uv.Rectangle) {
 		m.isCompact,
 		m.detailsOpen,
 		area.Dx(),
-		m.hyperCredits,
+		nil, // hyperCredits removed
 		m.currentGoal,
 	)
 }
@@ -4237,7 +4160,7 @@ func (m *UI) renderEditorView(width int) string {
 
 // cacheSidebarLogo renders and caches the sidebar logo at the specified width.
 func (m *UI) cacheSidebarLogo(width int) {
-	m.sidebarLogo = renderLogo(m.com.Styles, m.com.Styles.LogoConfig.AppTitle, m.com.Styles.LogoConfig.FigletFont, m.com.Styles.LogoConfig.FigletSolid, true, m.com.IsHyper(), width)
+	m.sidebarLogo = renderLogo(m.com.Styles, m.com.Styles.LogoConfig.AppTitle, m.com.Styles.LogoConfig.FigletFont, m.com.Styles.LogoConfig.FigletSolid, true, false, width)
 }
 
 // applyTheme replaces the active styles with the given theme, drops the
@@ -5434,9 +5357,6 @@ func (m *UI) handleAgentNotification(n notify.Notification) tea.Cmd {
 			Title:   "Phosphor is waiting...",
 			Message: fmt.Sprintf("Agent's turn completed in \"%s\"", n.SessionTitle),
 		}))
-		if m.com.IsHyper() {
-			cmds = append(cmds, m.fetchHyperCredits())
-		}
 		return tea.Batch(cmds...)
 	case notify.TypeReAuthenticate:
 		return m.handleReAuthenticate(n.ProviderID)

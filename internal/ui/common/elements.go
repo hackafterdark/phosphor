@@ -11,7 +11,6 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/hackafterdark/phosphor/internal/home"
 	"github.com/hackafterdark/phosphor/internal/ui/styles"
-	"github.com/hackafterdark/phosphor/pkg/agent/hyper"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
 )
@@ -79,12 +78,7 @@ func ModelInfo(t *styles.Styles, modelName, providerName, reasoningInfo string, 
 		parts = append(parts, lipgloss.NewStyle().PaddingLeft(2).Render(formattedInfo))
 	}
 
-	if providerName == hyper.DisplayName && hyperCredits != nil {
-		hcInfo := t.ModelInfo.HypercreditIcon.Render(styles.HypercreditIcon)
-		hcInfo += " "
-		hcInfo += t.ModelInfo.HypercreditText.Render(fmt.Sprintf("%s Hypercredits", FormatCredits(*hyperCredits)))
-		parts = append(parts, "", hcInfo)
-	}
+
 
 	return lipgloss.NewStyle().Width(width).Render(
 		lipgloss.JoinVertical(lipgloss.Left, parts...),
