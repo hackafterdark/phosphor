@@ -18,13 +18,20 @@ Some goals and areas of focus include:
 
 ## Getting Started
 
-First run needs exactly one thing: a model to talk to.
+### 1. Pick a backend
 
-- **Cloud providers** work out of the box. Export the key (`OPENAI_API_KEY`,
-  `ANTHROPIC_API_KEY`, ...) and Phosphor picks the provider up automatically,
-  or authenticate a subscription with `phosphor login copilot`.
-- **Local models** (llama.cpp, vLLM, Ollama, LM Studio, anything
-  OpenAI-compatible) are one provider block away:
+Cloud providers work out of the box: built-in provider definitions activate
+automatically when their API key is available — either as an environment
+variable (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, …) or as an `api_key` in the
+`providers` section. Subscription-style providers authenticate via the CLI:
+
+```bash
+phosphor login copilot    # GitHub Copilot
+phosphor login xai        # xAI (Grok subscription)
+```
+
+Local models (llama.cpp, vLLM, Ollama, LM Studio, anything OpenAI-compatible)
+are one provider block away:
 
   ```json
   {
@@ -43,12 +50,31 @@ First run needs exactly one thing: a model to talk to.
   }
   ```
 
-Drop that into your global config — `~/.config/phosphor/phosphor.json` on
-Linux/macOS, `%USERPROFILE%\.config\phosphor\phosphor.json` on Windows — or
-start from the full annotated example at
-[`examples/phosphor.example.json`](examples/phosphor.example.json). Run
-`phosphor dirs` to print the exact paths in use, and `Ctrl+L` inside the TUI to
-switch models.
+See [Local Models](docs/configuration/LOCAL_MODELS.md) for server-specific
+notes, and [Providers & Models](docs/configuration/PROVIDERS_AND_MODELS.md)
+for the full reference.
+
+### 2. Run it and select a model
+
+Launch `phosphor` in your project and press `Ctrl+L` (or `/` → "Switch
+Model") to choose the large/small model pair. No config file is required to
+start — cloud providers activate from their env vars, and the TUI can add
+custom/local providers for you. Non-interactive runs use
+`phosphor run "your prompt"` — handy for scripts and CI.
+
+### 3. Optional: global config
+
+Phosphor reads `~/.config/phosphor/phosphor.json`
+(`%USERPROFILE%\.config\phosphor\phosphor.json` on Windows) if it exists, but
+never creates it and runs fine without it. Copying the annotated example at
+[`examples/phosphor.example.json`](examples/phosphor.example.json) there is
+only a convenience for editing settings by hand. Providers and model
+selections made in the TUI go to a separate global data config that always
+out-ranks it, so a hand-edited file can't clobber anything the TUI
+configured.
+
+Run `phosphor dirs` to print the exact paths in use and the config merge
+order; `phosphor models` lists every model Phosphor can currently reach.
 
 The [Getting Started & Configuration guide](docs/CONFIGURATION.md) walks
 through config precedence, every configurable section (providers, MCP, LSP,
