@@ -339,6 +339,8 @@ func (c *Config) configureProviders(ctx context.Context, store *ConfigStore, env
 			continue
 		case p.ID == catwalk.InferenceProviderCopilot && config.OAuthToken != nil:
 			prepared.SetupGitHubCopilot()
+		case p.ID == catwalk.InferenceProvider("xai") && config.OAuthToken != nil:
+			prepared.SetupGrokSubscription()
 		}
 
 		switch p.ID {

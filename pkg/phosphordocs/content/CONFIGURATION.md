@@ -34,6 +34,7 @@ files. The configuration is organized into topical reference pages under
 
    ```bash
    phosphor login copilot    # GitHub Copilot
+   phosphor login xai        # xAI (Grok subscription)
    ```
 
    For a local model, see [Local Models](configuration/LOCAL_MODELS.md).
@@ -74,7 +75,7 @@ Non-interactive runs use `phosphor run "your prompt"` — handy for scripts and 
 |---------|---------|
 | `phosphor dirs` | Print resolved config/data/project paths |
 | `phosphor models` | List every model Phosphor can currently reach |
-| `phosphor login [platform]` | OAuth sign-in (copilot) |
+| `phosphor login [platform]` | OAuth sign-in (copilot, xai) |
 | `phosphor logout [platform]` | Clear stored OAuth credentials |
 | `phosphor run "prompt"` | One-shot non-interactive agent run |
 | `phosphor schema` | Emit the JSON schema for `phosphor.json` |

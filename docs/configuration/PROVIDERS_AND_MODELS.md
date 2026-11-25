@@ -75,6 +75,45 @@ provider is keyed by a unique ID (e.g., `"openai"`, `"anthropic"`, `"gb10"`).
 | `discover_models` | bool | No | Auto-discover models from `/v1/models` endpoint (default: `true`) |
 | `models` | array | No | Explicit list of available models (if empty and `discover_models` is true, Phosphor auto-discovers) |
 
+### OAuth login for subscription providers
+
+Some providers authenticate with a subscription rather than an API key.
+`phosphor login <platform>` runs the provider's OAuth device-code flow and
+stores the resulting token as the provider's `api_key`, so it activates the
+provider automatically:
+
+```bash
+phosphor login copilot   # GitHub Copilot
+phosphor login xai       # xAI (Grok / SuperGrok subscription)
+```
+
+The matching `phosphor logout <platform>` clears the stored token. Tokens are
+refreshed automatically at runtime.
+
+> **xAI routing and tier gating.** Subscription and API access are separate.
+> `phosphor login xai` authenticates your Grok/X Premium or SuperGrok
+> subscription and automatically routes requests through the Grok chat proxy
+> (`cli-chat-proxy.grok.com/v1`), which bills against your subscription. The
+> subscription catalog uses model ids such as `grok-4.5` and `grok-build`;
+> select one of those in the model dialog. The proxy serves only its curated
+> CLI/Build catalog; models outside it (e.g. the `grok-4.20-*` reasoning
+> variants) are not subscription models and will fail with a `0/0` rate-limit
+> error because the proxy hands them to the pay-as-you-go backend. The
+> pay-as-you-go path (`api.x.ai/v1`, via `XAI_API_KEY`) is metered by API spend
+> tier — a subscription account with no API spend returns `0/0` rate limits
+> there. If login or a request is rejected (HTTP 403), fall back to
+> `XAI_API_KEY`. The Switch Model dialog badges xAI models accordingly: with a
+> subscription login, API-only models are marked `API-only`; with an API key,
+> subscription-covered models are marked `Subscription`.
+>
+> The proxy enforces a minimum Grok CLI version. Phosphor reports your
+> installed Grok CLI version (from `~/.grok/version.json`) when it is present
+> and at or above the proxy's floor, and otherwise reports a maintained
+> fallback version that carries headroom above the floor, so requests pass the
+> gate. Phosphor's own version is never reported. If xAI later raises the
+> floor, update the `minGrokClientVersion` and `defaultGrokClientVersion`
+> constants.
+
 ### Model Entry Fields (`models[]`)
 
 Each entry in a provider's `models` array may only carry the keys below —

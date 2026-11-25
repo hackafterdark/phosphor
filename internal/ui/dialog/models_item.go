@@ -64,6 +64,8 @@ type ModelItem struct {
 	model     catwalk.Model
 	modelType ModelType
 
+	note string
+
 	cache        map[int]string
 	t            *styles.Styles
 	m            fuzzy.Match
@@ -123,6 +125,13 @@ func (m *ModelItem) Render(width int) string {
 	if m.showProvider {
 		providerInfo = string(m.prov.Name)
 	}
+	if m.note != "" {
+		if providerInfo != "" {
+			providerInfo += " · " + m.note
+		} else {
+			providerInfo = m.note
+		}
+	}
 	styles := ListItemStyles{
 		ItemBlurred:     m.t.Dialog.NormalItem,
 		ItemFocused:     m.t.Dialog.SelectedItem,
@@ -130,6 +139,19 @@ func (m *ModelItem) Render(width int) string {
 		InfoTextFocused: m.t.Dialog.ListItem.InfoFocused,
 	}
 	return renderItem(styles, m.model.Name, providerInfo, m.focused, width, m.cache, &m.m)
+}
+
+// SetNote sets an informational suffix rendered to the right of the item,
+// e.g. to flag that a model is API-only or subscription-covered.
+func (m *ModelItem) SetNote(note string) {
+	if m.note == note {
+		return
+	}
+	m.cache = nil
+	m.note = note
+	if m.Versioned != nil {
+		m.Bump()
+	}
 }
 
 // SetFocused implements ListItem.

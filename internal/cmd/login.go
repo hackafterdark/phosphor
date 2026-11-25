@@ -3,6 +3,7 @@ package cmd
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -12,6 +13,7 @@ import (
 	"github.com/hackafterdark/phosphor/internal/client"
 	"github.com/hackafterdark/phosphor/internal/oauth"
 	"github.com/hackafterdark/phosphor/internal/oauth/copilot"
+	"github.com/hackafterdark/phosphor/internal/oauth/xai"
 	"github.com/hackafterdark/phosphor/pkg/config"
 	"github.com/spf13/cobra"
 )
@@ -22,10 +24,13 @@ var loginCmd = &cobra.Command{
 	Short:   "Login Phosphor to a platform",
 	Long: `Login Phosphor to a specified platform.
 The platform should be provided as an argument.
-Available platforms are: copilot.`,
+Available platforms are: copilot, xai.`,
 	Example: `
 # Authenticate with GitHub Copilot
 phosphor login copilot
+
+# Authenticate with xAI (Grok subscription)
+phosphor login xai
 
 # Force re-authentication even if already logged in
 phosphor login -f copilot
@@ -34,6 +39,8 @@ phosphor login -f copilot
 		"copilot",
 		"github",
 		"github-copilot",
+		"xai",
+		"grok",
 	},
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -57,6 +64,8 @@ phosphor login -f copilot
 		switch provider {
 		case "copilot", "github", "github-copilot":
 			return loginCopilot(c, ws.ID, force)
+		case "xai", "grok":
+			return loginXAI(c, ws.ID, force)
 		default:
 			return fmt.Errorf("unknown platform: %s", args[0])
 		}
@@ -135,6 +144,59 @@ func loginCopilot(c *client.Client, wsID string, force bool) error {
 
 	fmt.Println()
 	fmt.Println("You're now authenticated with GitHub Copilot!")
+	return nil
+}
+
+func loginXAI(c *client.Client, wsID string, force bool) error {
+	loginCtx := getLoginContext()
+
+	if !force {
+		cfg, err := c.GetConfig(loginCtx, wsID)
+		if err == nil && cfg != nil {
+			if pc, ok := cfg.Providers.Get("xai"); ok && pc.OAuthToken != nil {
+				fmt.Println("You are already logged in to xAI.")
+				fmt.Println("Use --force to re-authenticate.")
+				return nil
+			}
+		}
+	}
+
+	fmt.Println("Requesting device code from xAI...")
+	dc, err := xai.RequestDeviceCode(loginCtx)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println()
+	fmt.Println("Open the following URL and follow the instructions to authenticate with xAI:")
+	fmt.Println()
+	fmt.Println(lipgloss.NewStyle().Hyperlink(dc.VerificationURI, "id=xai").Render(dc.VerificationURI))
+	fmt.Println()
+	fmt.Println("Code:", lipgloss.NewStyle().Bold(true).Render(dc.UserCode))
+	fmt.Println()
+	fmt.Println("Waiting for authorization...")
+
+	token, err := xai.PollForToken(loginCtx, dc)
+	if err != nil {
+		if errors.Is(err, xai.ErrNotAvailable) {
+			fmt.Println()
+			fmt.Println("The xAI API is not available for this account.")
+			fmt.Println("If you intended to use an API key instead, set XAI_API_KEY.")
+			fmt.Println()
+			fmt.Println(lipgloss.NewStyle().Hyperlink(xai.SignupURL, "id=xai-signup").Render(xai.SignupURL))
+		}
+		return err
+	}
+
+	if err := cmp.Or(
+		c.SetConfigField(loginCtx, wsID, config.ScopeGlobal, "providers.xai.api_key", token.AccessToken),
+		c.SetConfigField(loginCtx, wsID, config.ScopeGlobal, "providers.xai.oauth", token),
+	); err != nil {
+		return err
+	}
+
+	fmt.Println()
+	fmt.Println("You're now authenticated with xAI!")
 	return nil
 }
 

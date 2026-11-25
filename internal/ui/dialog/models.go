@@ -480,6 +480,7 @@ func (m *Models) setProviderItems() error {
 		group := NewModelGroup(t, name, providerConfigured)
 		for _, model := range displayProvider.Models {
 			item := NewModelItem(t, provider, model, m.modelType, false)
+			item.SetNote(xaiAuthNote(cfg, providerID, model.ID))
 			group.AppendItems(item)
 			itemsMap[item.ID()] = item
 			if model.ID == currentModel.Model && string(provider.ID) == currentModel.Provider {
@@ -504,6 +505,7 @@ func (m *Models) setProviderItems() error {
 			// Show provider for recent items
 			item = NewModelItem(t, item.prov, item.model, m.modelType, true)
 			item.showProvider = true
+			item.SetNote(xaiAuthNote(cfg, string(item.prov.ID), item.model.ID))
 
 			validRecentItems = append(validRecentItems, recent)
 			recentGroup.AppendItems(item)
@@ -552,4 +554,43 @@ func modelKey(providerID, modelID string) string {
 		return ""
 	}
 	return providerID + ":" + modelID
+}
+
+// xaiSubscriptionModels are the xAI model ids served by the Grok chat proxy
+// and therefore usable on a Grok/X Premium or SuperGrok subscription. Any
+// other xAI model is served only by the pay-as-you-go API (api.x.ai), where a
+// subscription account with no API spend hits a 0/0 rate limit.
+//
+// MAINTENANCE COUPLING: the chat proxy does not publish its catalog to
+// third-party clients, so this allowlist is maintained by hand. If xAI adds a
+// model to the subscription, add its id here.
+var xaiSubscriptionModels = map[string]bool{
+	"grok-4.5": true,
+	"grok-4.6": true,
+	"grok-4.7": true,
+}
+
+// xaiAuthNote returns a short badge shown beside an xAI model in the model
+// list, describing how the model is billed for the credential currently in
+// use. It returns "" for non-xAI providers, for unauthenticated providers, and
+// whenever the model's availability already matches the credential.
+func xaiAuthNote(cfg *config.Config, providerID, modelID string) string {
+	if providerID != "xai" {
+		return ""
+	}
+	providerConfig, ok := cfg.Providers.Get(providerID)
+	if !ok {
+		return ""
+	}
+	// An OAuth token means subscription routing; otherwise the provider uses
+	// an API key against api.x.ai.
+	subscription := providerConfig.OAuthToken != nil
+	switch {
+	case subscription && !xaiSubscriptionModels[modelID]:
+		return "API-only"
+	case !subscription && xaiSubscriptionModels[modelID]:
+		return "Subscription"
+	default:
+		return ""
+	}
 }
