@@ -101,8 +101,10 @@ refreshed automatically at runtime.
 > error because the proxy hands them to the pay-as-you-go backend. The
 > pay-as-you-go path (`api.x.ai/v1`, via `XAI_API_KEY`) is metered by API spend
 > tier — a subscription account with no API spend returns `0/0` rate limits
-> there. If login or a request is rejected (HTTP 403), fall back to
-> `XAI_API_KEY`. The Switch Model dialog badges xAI models accordingly: with a
+> there. If login or a request is rejected (HTTP 403), run `phosphor logout xai`
+> first, then set `XAI_API_KEY` — the stored OAuth token keeps requests on the
+> subscription proxy, so the API key alone does not switch the route. The Switch
+> Model dialog badges xAI models accordingly: with a
 > subscription login, API-only models are marked `API-only`; with an API key,
 > subscription-covered models are marked `Subscription`.
 >

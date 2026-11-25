@@ -1866,6 +1866,23 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			cmds = append(cmds, msg.Cmd)
 		}
 
+	case dialog.ActionOAuthAPIKeyFallback:
+		// The device flow was dismissed for a provider that also supports
+		// API-key auth; swap it for the API-key dialog so the user can
+		// still authenticate.
+		m.dialog.CloseFrontDialog()
+		apiDlg, cmd := dialog.NewAPIKeyInput(
+			m.com,
+			m.state == uiOnboarding,
+			msg.Provider,
+			msg.Model,
+			msg.ModelType,
+		)
+		if cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+		m.dialog.OpenDialogWithGrace(apiDlg)
+
 	// Session dialog messages.
 	case dialog.ActionSelectSession:
 		m.dialog.CloseDialog(dialog.SessionsID)

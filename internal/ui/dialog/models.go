@@ -582,6 +582,11 @@ func xaiAuthNote(cfg *config.Config, providerID, modelID string) string {
 	if !ok {
 		return ""
 	}
+	// A stored entry may hold only model settings with no credential yet;
+	// neither note applies until the provider is actually authenticated.
+	if providerConfig.APIKey == "" && providerConfig.OAuthToken == nil {
+		return ""
+	}
 	// An OAuth token means subscription routing; otherwise the provider uses
 	// an API key against api.x.ai.
 	subscription := providerConfig.OAuthToken != nil

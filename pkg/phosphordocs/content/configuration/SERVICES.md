@@ -70,8 +70,11 @@ The TUI emits a `View Diagram` link for every ` ```mermaid ` block and points
 it at `http://127.0.0.1:<port>/service/mermaid/render?id=<id>` on the API
 port (default `8643`). The link is only reachable when `openai-api` is enabled
 and listening; with the API disabled there is no server to handle the request.
-There is no `services.mermaid` (or equivalent) config entry — control it
-through `services.openai-api`.
+Note that this route shares the API's bearer auth: if `openai-api` is
+configured with `auth.type: "bearer"`, the browser cannot supply the required
+`Authorization` header and the link returns `401`. The link is only usable
+directly when no bearer key is configured. There is no `services.mermaid` (or
+equivalent) config entry — control it through `services.openai-api`.
 
 ## Related Docs
 

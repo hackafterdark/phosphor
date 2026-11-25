@@ -135,10 +135,14 @@ func tryGetToken(ctx context.Context, deviceCode string) (*oauth.Token, error) {
 		return nil, err
 	}
 
+	// The device-flow errors (authorization_pending, slow_down) are carried
+	// in the body with an HTTP 400, so decide on the OAuth error field, not
+	// the status alone. Anything else — a 503 gateway page, a 400 with an
+	// unrecognized error — is a real failure, not something to keep polling.
 	switch result.Error {
 	case "":
 		if result.AccessToken == "" {
-			return nil, errPending
+			return nil, fmt.Errorf("token exchange failed: %s (status %d)", resp.Status, resp.StatusCode)
 		}
 		token := &oauth.Token{
 			AccessToken:  result.AccessToken,
@@ -200,9 +204,14 @@ func RefreshToken(ctx context.Context, refreshToken string) (*oauth.Token, error
 	}
 
 	token := &oauth.Token{
-		AccessToken:  result.AccessToken,
+		AccessToken: result.AccessToken,
+		// RFC 6749 §6: a refresh response may omit a new refresh token.
+		// Retain the original so future refreshes still have a credential.
 		RefreshToken: result.RefreshToken,
 		ExpiresIn:    result.ExpiresIn,
+	}
+	if token.RefreshToken == "" {
+		token.RefreshToken = refreshToken
 	}
 	token.SetExpiresAt()
 	return token, nil

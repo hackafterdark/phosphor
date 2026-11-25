@@ -62,6 +62,13 @@ func TestXAIAuthNote(t *testing.T) {
 			want:     "",
 		},
 		{
+			name:     "credential-free entry shows no badge",
+			cfg:      xaiCfg(t, config.ProviderConfig{ID: "xai"}),
+			provider: "xai",
+			model:    "grok-4.5",
+			want:     "",
+		},
+		{
 			name:     "non-xai provider is ignored",
 			cfg:      xaiCfg(t, config.ProviderConfig{OAuthToken: &oauth.Token{AccessToken: "tok"}}),
 			provider: "anthropic",

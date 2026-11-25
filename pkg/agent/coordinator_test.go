@@ -698,6 +698,8 @@ func TestGetProviderOptionsOpenAICompatEffortPassThrough(t *testing.T) {
 			providerType:      catwalk.TypeOpenAICompat,
 			providerID:        openaicompat.Name,
 			effort:            "xhigh",
+			wantEffort:        "xhigh",
+			wantKwarg:         "xhigh",
 			wantThinkingKwarg: true,
 		},
 		{

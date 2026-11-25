@@ -33,6 +33,12 @@ func (m *OAuthXAI) name() string {
 	return "xAI (Grok)"
 }
 
+// supportsAPIKeyFallback lets users without a Grok/X subscription fall back
+// to API-key entry by dismissing the device flow.
+func (m *OAuthXAI) supportsAPIKeyFallback() bool {
+	return true
+}
+
 func (m *OAuthXAI) initiateAuth() tea.Msg {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -54,9 +60,13 @@ func (m *OAuthXAI) initiateAuth() tea.Msg {
 }
 
 func (m *OAuthXAI) startPolling(deviceCode string, expiresIn int) tea.Cmd {
+	// Set up cancellation synchronously, while Update is still running, so a
+	// close that lands before the polling goroutine starts can still cancel
+	// it. Commands must not mutate model state from their goroutine.
+	ctx, cancel := context.WithCancel(context.Background())
+	m.cancelFunc = cancel
 	return func() tea.Msg {
-		ctx, cancel := context.WithCancel(context.Background())
-		m.cancelFunc = cancel
+		defer cancel()
 
 		token, err := xai.PollForToken(ctx, m.deviceCode)
 		if err != nil {

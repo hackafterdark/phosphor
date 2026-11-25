@@ -34,7 +34,7 @@ reasoning.
 | `max_tokens_continuations` | int | `2` | Times the agent auto-resumes a truncated turn (`0` = default of 2, negative = unlimited) |
 | `max_consecutive_tool_failures` | int | `2` | Consecutive same-tool failures before halting interactive runs (`0` = default of 2, negative = never halt) |
 | `max_consecutive_tool_failures_headless` | int | `8` | Same budget for headless runs / cron (`0` = default of 8, negative = never halt) |
-| `structural_search_languages` | string[] | all | Restrict structural search to specific languages |
+| `structural_search_languages` | string[] | all | Limit which languages are advertised in the tool description (does not restrict what the tool can search) |
 | `microcompaction.enabled` | bool | `false` | `true` enables deterministic elision of stale tool outputs |
 | `microcompaction.threshold` | float | `0.5` | Fraction of context window (0–1) before microcompaction triggers |
 | `microcompaction.retention_turns` | int | `8` | Recent turns whose tool outputs are always kept |
@@ -42,9 +42,11 @@ reasoning.
 ## Notes
 
 - `max_tokens_continuations` — Each continuation is a full extra model call.
+  `0` selects the default of two continuations and a negative value removes
+  the limit; there is no supported way to disable continuations entirely.
   Raise this if long single-response tasks (e.g. generating one large file)
-  keep truncating, or lower/disable it if you rely on a low `max_tokens` for
-  cost control and would rather see the truncation than pay for a retry.
+  keep truncating, or lower it if you rely on a low `max_tokens` for cost
+  control and would rather see the truncation than pay for a retry.
 
 - `max_consecutive_tool_failures` — Interactive sessions can keep the tight
   default because a human can step in and redirect the agent.

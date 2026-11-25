@@ -117,3 +117,30 @@ func TestRefreshToken_Error(t *testing.T) {
 		require.True(t, strings.Contains(err.Error(), "invalid_grant"))
 	})
 }
+
+func TestPollForToken_HttpFailure(t *testing.T) {
+	// A transient server failure (e.g. 503) must surface as an error,
+	// not be mistaken for "authorization_pending" and silently retried.
+	withStubAuth(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		fmt.Fprint(w, `{"message":"temporarily unavailable"}`)
+	}, func() {
+		dc := &DeviceCode{DeviceCode: "dc", ExpiresIn: 60, Interval: 0}
+		_, err := PollForToken(context.Background(), dc)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "503")
+	})
+}
+
+func TestRefreshToken_PreservesRefreshTokenWhenOmitted(t *testing.T) {
+	// RFC 6749 §6: a refresh response may omit the refresh token. The
+	// original credential must be retained so future refreshes work.
+	withStubAuth(t, func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"access_token":"new-tok","expires_in":3600}`)
+	}, func() {
+		tok, err := RefreshToken(context.Background(), "old-ref")
+		require.NoError(t, err)
+		require.Equal(t, "new-tok", tok.AccessToken)
+		require.Equal(t, "old-ref", tok.RefreshToken)
+	})
+}

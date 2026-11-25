@@ -521,6 +521,13 @@ func (c *Config) configureProviders(ctx context.Context, store *ConfigStore, env
 			providerConfig.ExtraHeaders[k] = resolved
 		}
 
+		// Apply the Grok subscription routing to custom xAI providers
+		// as well, so disabling default providers doesn't strand an
+		// OAuth-authenticated xAI entry on the pay-as-you-go endpoint.
+		if id == string(catwalk.InferenceProvider("xai")) && providerConfig.OAuthToken != nil {
+			providerConfig.SetupGrokSubscription()
+		}
+
 		c.Providers.Set(id, providerConfig)
 	}
 
