@@ -10,6 +10,7 @@ The `options.tui` section controls the terminal UI's look and feel.
       "compact_mode": false,
       "diff_mode": "unified",
       "transparent": false,
+      "show_thinking": true,
       "history_limit": 100,
       "history_batch_size": 50,
       "keybindings": {
@@ -28,6 +29,7 @@ The `options.tui` section controls the terminal UI's look and feel.
 | `compact_mode` | bool | `false` | `true` reduces visual spacing between messages |
 | `diff_mode` | string | `"unified"` | Diff display style: `"unified"` (single column) or `"split"` (side-by-side) |
 | `transparent` | bool | `false` | `true` renders the background transparent |
+| `show_thinking` | bool | `true` | `false` hides the agent's thinking output, leaving tool calls and the final response |
 | `history_limit` | int | `100` | Maximum chat history messages kept in memory |
 | `history_batch_size` | int | `50` | Messages loaded per batch when scrolling back |
 | `keybindings` | object | `{}` | Custom key bindings (see [KEYBINDINGS.md](../KEYBINDINGS.md)) |

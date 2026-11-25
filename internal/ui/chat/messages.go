@@ -365,7 +365,11 @@ func cappedMessageWidth(availableWidth int) int {
 //
 // For assistant messages with tool calls, pass a toolResults map to link results.
 // Use BuildToolResultMap to create this map from all messages in a session.
-func ExtractMessageItems(sty *styles.Styles, msg *message.Message, toolResults map[string]message.ToolResult) []MessageItem {
+//
+// thinkingVisible controls whether the assistant's reasoning trace is
+// rendered. Hiding it is display-only: the reasoning stays on the message and
+// in the model context.
+func ExtractMessageItems(sty *styles.Styles, msg *message.Message, toolResults map[string]message.ToolResult, thinkingVisible bool) []MessageItem {
 	switch msg.Role {
 	case message.User:
 		r := attachments.NewRenderer(
@@ -379,9 +383,10 @@ func ExtractMessageItems(sty *styles.Styles, msg *message.Message, toolResults m
 	case message.Assistant:
 		var items []MessageItem
 		var assistantItem *AssistantMessageItem
-		if ShouldRenderAssistantMessage(msg) {
+		if ShouldRenderAssistantMessage(msg, thinkingVisible) {
 			item := NewAssistantMessageItem(sty, msg)
 			assistantItem, _ = item.(*AssistantMessageItem)
+			assistantItem.SetThinkingVisible(thinkingVisible)
 			items = append(items, item)
 		}
 		var results []message.ToolResult
@@ -416,9 +421,16 @@ func ExtractMessageItems(sty *styles.Styles, msg *message.Message, toolResults m
 //
 // In some cases the assistant message only has tools so we do not want to render an
 // empty message.
-func ShouldRenderAssistantMessage(msg *message.Message) bool {
+//
+// thinkingVisible gates whether reasoning text alone is enough to render the
+// message. Even when thinking is hidden, a message that is still reasoning is
+// rendered so its spinner stays visible.
+func ShouldRenderAssistantMessage(msg *message.Message, thinkingVisible bool) bool {
 	content := strings.TrimSpace(msg.Content().Text)
 	thinking := strings.TrimSpace(msg.ReasoningContent().Thinking)
+	if !thinkingVisible {
+		thinking = ""
+	}
 	isError := msg.FinishReason() == message.FinishReasonError
 	isCancelled := msg.FinishReason() == message.FinishReasonCanceled
 	hasToolCalls := len(msg.ToolCalls()) > 0

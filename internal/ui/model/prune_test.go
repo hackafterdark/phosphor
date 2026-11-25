@@ -43,7 +43,7 @@ func TestUI_PruneHistoryIfNeeded(t *testing.T) {
 		ui.loadedMessagesCount++
 
 		// Extract message items and append
-		items := chat.ExtractMessageItems(ui.com.Styles, &msg, nil)
+		items := chat.ExtractMessageItems(ui.com.Styles, &msg, nil, true)
 		ui.chat.AppendMessages(items...)
 	}
 
@@ -117,7 +117,7 @@ func TestUI_PruneHistoryWithToolMessages(t *testing.T) {
 
 		// Only user/assistant messages produce visible top-level chat items in our test simulation
 		if msg.Role == message.User || msg.Role == message.Assistant {
-			items := chat.ExtractMessageItems(ui.com.Styles, &msg, nil)
+			items := chat.ExtractMessageItems(ui.com.Styles, &msg, nil, true)
 			ui.chat.AppendMessages(items...)
 		}
 	}

@@ -594,6 +594,13 @@ func (c *Commands) defaultCommands() []*CommandItem {
 	}
 	commands = append(commands, NewCommandItem(c.com.Styles, "toggle_transparent", transparentLabel, "", ActionToggleTransparentBackground{}))
 
+	// Add thinking visibility toggle.
+	thinkingLabel := "Hide Thinking"
+	if cfg != nil && cfg.Options != nil && !cfg.Options.TUI.ThinkingVisible() {
+		thinkingLabel = "Show Thinking"
+	}
+	commands = append(commands, NewCommandItem(c.com.Styles, "toggle_thinking", thinkingLabel, "", ActionToggleThinking{}))
+
 	commands = append(
 		commands,
 		NewCommandItem(c.com.Styles, "quit", "Quit", "ctrl+c", tea.QuitMsg{}).WithAliases("exit"),

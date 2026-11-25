@@ -33,3 +33,27 @@ func TestTUIOptions_HistoryLimits(t *testing.T) {
 		require.Equal(t, 75, batchSize)
 	})
 }
+
+func TestTUIOptions_ThinkingVisible(t *testing.T) {
+	t.Run("nil options", func(t *testing.T) {
+		var opts *TUIOptions
+		require.True(t, opts.ThinkingVisible())
+	})
+
+	t.Run("key absent defaults to visible", func(t *testing.T) {
+		opts := &TUIOptions{}
+		require.True(t, opts.ThinkingVisible())
+	})
+
+	t.Run("explicitly hidden", func(t *testing.T) {
+		hidden := false
+		opts := &TUIOptions{ShowThinking: &hidden}
+		require.False(t, opts.ThinkingVisible())
+	})
+
+	t.Run("explicitly shown", func(t *testing.T) {
+		shown := true
+		opts := &TUIOptions{ShowThinking: &shown}
+		require.True(t, opts.ThinkingVisible())
+	})
+}

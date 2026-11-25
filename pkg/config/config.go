@@ -471,6 +471,12 @@ type TUIOptions struct {
 	DiffMode    string `json:"diff_mode,omitempty" jsonschema:"description=Diff mode for the TUI interface,enum=unified,enum=split"`
 	Theme       string `json:"theme,omitempty" jsonschema:"description=Name of built-in theme, theme file name, or path to a custom JSON/YAML theme file"`
 
+	// ShowThinking controls whether the assistant's reasoning trace is
+	// displayed in the chat. It is display-only: the reasoning stays in the
+	// stored message and in the model context regardless of this setting.
+	// A nil value (the key absent from the config) defaults to visible.
+	ShowThinking *bool `json:"show_thinking,omitempty" jsonschema:"description=Display the agent's thinking output in the chat,default=true"`
+
 	Completions Completions       `json:"completions,omitzero" jsonschema:"description=Completions UI options"`
 	Transparent *bool             `json:"transparent,omitempty" jsonschema:"description=Enable transparent background for the TUI interface,default=false"`
 	KeyBindings map[string]string `json:"keybindings,omitempty" jsonschema:"description=Custom TUI key bindings. Keys are binding names, values are key combinations (e.g., \"ctrl+alt+v\"). Unspecified bindings use defaults."`
@@ -491,6 +497,18 @@ func (t *TUIOptions) HistoryLimits() (limit, batchSize int) {
 		return 100, 50
 	}
 	return ptrValOr(t.HistoryLimit, 100), ptrValOr(t.HistoryBatchSize, 50)
+}
+
+// ThinkingVisible reports whether the thinking output should be displayed in
+// the chat. The default is true, which covers both a nil *TUIOptions and a
+// missing show_thinking key, so configs written before the option existed
+// keep showing thinking. Hiding it affects rendering only; the reasoning
+// remains part of the stored message and of the model context.
+func (t *TUIOptions) ThinkingVisible() bool {
+	if t == nil {
+		return true
+	}
+	return ptrValOr(t.ShowThinking, true)
 }
 
 // Completions defines options for the completions UI.

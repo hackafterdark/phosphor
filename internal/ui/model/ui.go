@@ -1279,15 +1279,15 @@ func (m *UI) setSessionMessages(msgs []message.Message) tea.Cmd {
 		switch msg.Role {
 		case message.User:
 			m.lastUserMessageTime = msg.CreatedAt
-			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap)...)
+			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap, m.thinkingVisible())...)
 		case message.Assistant:
-			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap)...)
+			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap, m.thinkingVisible())...)
 			if msg.FinishPart() != nil && msg.FinishPart().Reason == message.FinishReasonEndTurn {
 				infoItem := chat.NewAssistantInfoItem(m.com.Styles, msg, m.com.Config(), time.Unix(m.lastUserMessageTime, 0))
 				items = append(items, infoItem)
 			}
 		default:
-			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap)...)
+			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap, m.thinkingVisible())...)
 		}
 	}
 
@@ -1374,15 +1374,15 @@ func (m *UI) loadMoreMessages() tea.Cmd {
 		switch msg.Role {
 		case message.User:
 			lastUserTime = msg.CreatedAt
-			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap)...)
+			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap, m.thinkingVisible())...)
 		case message.Assistant:
-			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap)...)
+			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap, m.thinkingVisible())...)
 			if msg.FinishPart() != nil && msg.FinishPart().Reason == message.FinishReasonEndTurn {
 				infoItem := chat.NewAssistantInfoItem(m.com.Styles, msg, m.com.Config(), time.Unix(lastUserTime, 0))
 				items = append(items, infoItem)
 			}
 		default:
-			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap)...)
+			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap, m.thinkingVisible())...)
 		}
 	}
 
@@ -1534,7 +1534,7 @@ func (m *UI) loadNestedToolCalls(items []chat.MessageItem) {
 		// Extract nested tool items.
 		var nestedTools []chat.ToolMessageItem
 		for _, nestedMsg := range nestedMsgPtrs {
-			nestedItems := chat.ExtractMessageItems(m.com.Styles, nestedMsg, nestedToolResultMap)
+			nestedItems := chat.ExtractMessageItems(m.com.Styles, nestedMsg, nestedToolResultMap, m.thinkingVisible())
 			for _, nestedItem := range nestedItems {
 				if nestedToolItem, ok := nestedItem.(chat.ToolMessageItem); ok {
 					// Mark nested tools as simple (compact) rendering.
@@ -1572,7 +1572,7 @@ func (m *UI) appendSessionMessage(msg message.Message) tea.Cmd {
 	switch msg.Role {
 	case message.User:
 		m.lastUserMessageTime = msg.CreatedAt
-		items := chat.ExtractMessageItems(m.com.Styles, &msg, nil)
+		items := chat.ExtractMessageItems(m.com.Styles, &msg, nil, m.thinkingVisible())
 		for _, item := range items {
 			if animatable, ok := item.(chat.Animatable); ok {
 				if cmd := animatable.StartAnimation(); cmd != nil {
@@ -1600,7 +1600,7 @@ func (m *UI) appendSessionMessage(msg message.Message) tea.Cmd {
 			}
 		}
 	case message.Assistant:
-		items := chat.ExtractMessageItems(m.com.Styles, &msg, nil)
+		items := chat.ExtractMessageItems(m.com.Styles, &msg, nil, m.thinkingVisible())
 		for _, item := range items {
 			if animatable, ok := item.(chat.Animatable); ok {
 				if cmd := animatable.StartAnimation(); cmd != nil {
@@ -1675,7 +1675,7 @@ func (m *UI) updateSessionMessage(msg message.Message) tea.Cmd {
 		}
 	}
 
-	shouldRenderAssistant := chat.ShouldRenderAssistantMessage(&msg)
+	shouldRenderAssistant := chat.ShouldRenderAssistantMessage(&msg, m.thinkingVisible())
 	isEndTurn := msg.FinishPart() != nil && msg.FinishPart().Reason == message.FinishReasonEndTurn
 	// If the message of the assistant does not have any response just tool
 	// calls we need to remove it, but keep the info item for end-of-turn
@@ -2205,6 +2205,9 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			}
 			return util.NewInfoMsg("Transparent background " + status)
 		})
+		m.dialog.CloseDialog(dialog.CommandsID)
+	case dialog.ActionToggleThinking:
+		cmds = append(cmds, m.toggleThinking())
 		m.dialog.CloseDialog(dialog.CommandsID)
 	case dialog.ActionQuit:
 		cmds = append(cmds, tea.Quit)
@@ -3479,6 +3482,43 @@ func (m *UI) toggleCompactMode() tea.Cmd {
 	m.updateLayoutAndSize()
 
 	return nil
+}
+
+// thinkingVisible reads the current thinking display setting. The default is
+// true, which also covers a config that was never loaded or that predates the
+// option, so thinking stays visible unless the user opted out.
+func (m *UI) thinkingVisible() bool {
+	cfg := m.com.Config()
+	if cfg == nil || cfg.Options == nil {
+		return true
+	}
+	return cfg.Options.TUI.ThinkingVisible()
+}
+
+// toggleThinking flips whether the agent's thinking output is displayed and
+// persists the choice. Hiding it is display-only: the reasoning stays on the
+// stored message and in the model context, so the model keeps seeing it.
+//
+// Items already in the chat list are updated in place and their render caches
+// dropped, so the change takes effect on the next frame without a reload.
+func (m *UI) toggleThinking() tea.Cmd {
+	newValue := !m.thinkingVisible()
+
+	if err := m.com.Workspace.SetConfigField(config.ScopeGlobal, "options.tui.show_thinking", newValue); err != nil {
+		return util.ReportError(err)
+	}
+
+	for i := range m.chat.Len() {
+		if item, ok := m.chat.ItemAt(i).(*chat.AssistantMessageItem); ok {
+			item.SetThinkingVisible(newValue)
+		}
+	}
+
+	status := "hidden"
+	if newValue {
+		status = "shown"
+	}
+	return util.ReportInfo("Thinking " + status)
 }
 
 // startCodebaseIndexing starts codebase indexing in the background.
