@@ -8,7 +8,7 @@ searchable through the `phosphor_docs` tool or by viewing any
 
 | Doc | Covers |
 | --- | --- |
-| [CONFIGURATION.md](CONFIGURATION.md) | Where config files live per OS, merge order, and a snippet for every config section. Start here. |
+| [CONFIGURATION.md](CONFIGURATION.md) | Configuration index — links to all topical config pages. Start here. |
 | [VIBE_CODING.md](VIBE_CODING.md) | High-trust single-workspace setup: prompt-free toolchain/git/gh loop with the sandbox containing the blast radius. |
 | [CLI.md](CLI.md) | Global flags, subcommands, and per-command options for the `phosphor` CLI. |
 | [CORE_PHILOSOPHY.md](CORE_PHILOSOPHY.md) | Identity and core pillars of the project. |
@@ -18,7 +18,21 @@ searchable through the `phosphor_docs` tool or by viewing any
 
 | Doc | Covers |
 | --- | --- |
-| [MODELS_AND_PROVIDERS_CONFIG.md](MODELS_AND_PROVIDERS_CONFIG.md) | Configuring providers and models in `phosphor.json`. |
+| [configuration/FILES_AND_MERGING.md](configuration/FILES_AND_MERGING.md) | Config file locations, merge order, env vars, schema. |
+| [configuration/PROVIDERS_AND_MODELS.md](configuration/PROVIDERS_AND_MODELS.md) | Provider config, model selection, sampling, reasoning. |
+| [configuration/LOCAL_MODELS.md](configuration/LOCAL_MODELS.md) | OpenAI-compatible servers (Ollama, vLLM, llama.cpp, LM Studio). |
+| [configuration/CONTEXT_AND_DATA.md](configuration/CONTEXT_AND_DATA.md) | Context files, data directory, skills paths. |
+| [configuration/AGENT_BEHAVIOR.md](configuration/AGENT_BEHAVIOR.md) | Turn limits, compaction, reflection, summarization. |
+| [configuration/TUI_APPEARANCE.md](configuration/TUI_APPEARANCE.md) | Themes, keybindings, layout. |
+| [configuration/TOOLS_AND_PERMISSIONS.md](configuration/TOOLS_AND_PERMISSIONS.md) | Tool security knobs, permission prompts. |
+| [configuration/MCP.md](configuration/MCP.md) | MCP server configuration. |
+| [configuration/LSP_AST.md](configuration/LSP_AST.md) | LSP and AST (tree-sitter) configuration. |
+| [configuration/HOOKS.md](configuration/HOOKS.md) | Lifecycle shell hooks. |
+| [configuration/SECURITY.md](configuration/SECURITY.md) | Egress, redaction, read-only mode. |
+| [configuration/OBSERVABILITY.md](configuration/OBSERVABILITY.md) | OTel traces, log files. |
+| [configuration/SERVICES.md](configuration/SERVICES.md) | OpenAI API, cron, memory-graph services. |
+| [configuration/WORKSPACE_SEARCH.md](configuration/WORKSPACE_SEARCH.md) | FTS5 and vector indexing. |
+| [configuration/MEMORY.md](configuration/MEMORY.md) | Durable memory vault. |
 | [THEMES.md](THEMES.md) | Customizing the color scheme and branding via theme files. |
 | [LOGO_CUSTOMIZATION.md](LOGO_CUSTOMIZATION.md) | Logo text and FIGlet font settings. |
 | [UI_LAYOUT_CONFIG.md](UI_LAYOUT_CONFIG.md) | Landing screen and sidebar component layout. |

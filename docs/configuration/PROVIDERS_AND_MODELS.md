@@ -1,4 +1,4 @@
-# Models and Providers Configuration
+# Providers & Models
 
 This document covers how to configure LLM providers and models in `phosphor.json`.
 
@@ -31,13 +31,21 @@ Phosphor configuration has two main sections for LLM setup:
   }
 }
 ```
+
 ## Configuration Scopes
 
-You can configure models either by editing the `phosphor.json` file (global or workspace) or via the TUI.
+You can configure models either by editing the `phosphor.json` file (global or
+workspace) or via the TUI.
 
-When you use the model selection dialog (opened with `/` → "Switch Model" or `Ctrl+L`), the selected model is saved to the **workspace‑local** configuration file (`<project>/.phosphor/phosphor.json`) under the `models.large` or `models.small` key.
+When you use the model selection dialog (opened with `/` → "Switch Model" or
+`Ctrl+L`), the selected model is saved to the **workspace‑local** configuration
+file (`<project>/.phosphor/phosphor.json`) under the `models.large` or
+`models.small` key.
 
-The global configuration (`$XDG_CONFIG_HOME/phosphor/phosphor.json`, falling back to `~/.config/phosphor/phosphor.json` — on Windows, `%USERPROFILE%\.config\phosphor\phosphor.json`) can still be edited manually and provides defaults for workspaces that do not have a local override.
+The global configuration (`$XDG_CONFIG_HOME/phosphor/phosphor.json`, falling
+back to `~/.config/phosphor/phosphor.json` — on Windows,
+`%USERPROFILE%\.config\phosphor\phosphor.json`) can still be edited manually
+and provides defaults for workspaces that do not have a local override.
 
 Workspace‑scoped settings take precedence over global settings.
 
@@ -45,7 +53,8 @@ Workspace‑scoped settings take precedence over global settings.
 
 ## Providers Configuration
 
-The `providers` section defines each LLM provider you want to use. Each provider is keyed by a unique ID (e.g., `"openai"`, `"anthropic"`, `"gb10"`).
+The `providers` section defines each LLM provider you want to use. Each
+provider is keyed by a unique ID (e.g., `"openai"`, `"anthropic"`, `"gb10"`).
 
 ### Provider Fields
 
@@ -65,6 +74,47 @@ The `providers` section defines each LLM provider you want to use. Each provider
 | `flat_rate` | bool | No | Skip cost tracking for subscription/flat-rate billing |
 | `discover_models` | bool | No | Auto-discover models from `/v1/models` endpoint (default: `true`) |
 | `models` | array | No | Explicit list of available models (if empty and `discover_models` is true, Phosphor auto-discovers) |
+
+### OAuth login for subscription providers
+
+Some providers authenticate with a subscription rather than an API key.
+`phosphor login <platform>` runs the provider's OAuth device-code flow and
+stores the resulting token as the provider's `api_key`, so it activates the
+provider automatically:
+
+```bash
+phosphor login copilot   # GitHub Copilot
+phosphor login xai       # xAI (Grok / SuperGrok subscription)
+```
+
+The matching `phosphor logout <platform>` clears the stored token. Tokens are
+refreshed automatically at runtime.
+
+> **xAI routing and tier gating.** Subscription and API access are separate.
+> `phosphor login xai` authenticates your Grok/X Premium or SuperGrok
+> subscription and automatically routes requests through the Grok chat proxy
+> (`cli-chat-proxy.grok.com/v1`), which bills against your subscription. The
+> subscription catalog uses model ids such as `grok-4.5` and `grok-build`;
+> select one of those in the model dialog. The proxy serves only its curated
+> CLI/Build catalog; models outside it (e.g. the `grok-4.20-*` reasoning
+> variants) are not subscription models and will fail with a `0/0` rate-limit
+> error because the proxy hands them to the pay-as-you-go backend. The
+> pay-as-you-go path (`api.x.ai/v1`, via `XAI_API_KEY`) is metered by API spend
+> tier — a subscription account with no API spend returns `0/0` rate limits
+> there. If login or a request is rejected (HTTP 403), run `phosphor logout xai`
+> first, then set `XAI_API_KEY` — the stored OAuth token keeps requests on the
+> subscription proxy, so the API key alone does not switch the route. The Switch
+> Model dialog badges xAI models accordingly: with a
+> subscription login, API-only models are marked `API-only`; with an API key,
+> subscription-covered models are marked `Subscription`.
+>
+> The proxy enforces a minimum Grok CLI version. Phosphor reports your
+> installed Grok CLI version (from `~/.grok/version.json`) when it is present
+> and at or above the proxy's floor, and otherwise reports a maintained
+> fallback version that carries headroom above the floor, so requests pass the
+> gate. Phosphor's own version is never reported. If xAI later raises the
+> floor, update the `minGrokClientVersion` and `defaultGrokClientVersion`
+> constants.
 
 ### Model Entry Fields (`models[]`)
 
@@ -194,7 +244,8 @@ level of the model entry.
 
 ## Models Configuration
 
-The `models` section selects which model to use for different tasks. Phosphor uses two model slots:
+The `models` section selects which model to use for different tasks. Phosphor
+uses two model slots:
 
 - **`large`** — Primary model for coding, reasoning, and complex tasks
 - **`small`** — Fallback model for title generation, quick responses, and sub-agents
@@ -292,7 +343,9 @@ Different providers use different field names for reasoning control:
 
 ## Model Discovery
 
-When you configure a provider without explicit `models`, Phosphor auto-discovers available models by calling the provider's `/v1/models` endpoint (for OpenAI-compatible providers) or using embedded catalog data.
+When you configure a provider without explicit `models`, Phosphor
+auto-discovers available models by calling the provider's `/v1/models`
+endpoint (for OpenAI-compatible providers) or using embedded catalog data.
 
 ### Controlling Discovery
 
@@ -300,8 +353,8 @@ When you configure a provider without explicit `models`, Phosphor auto-discovers
 {
   "providers": {
     "my-provider": {
-      "discover_models": true,  // Default: true
-      "models": []              // Empty = auto-discover
+      "discover_models": true,
+      "models": []
     }
   }
 }
@@ -371,9 +424,12 @@ Result for the large model:
 
 ## Extra Body (OpenAI-Compatible Providers)
 
-The `extra_body` field in provider config passes arbitrary fields to OpenAI-compatible API requests. This is useful for vLLM, llama.cpp, and other self-hosted providers that support non-standard parameters.
+The `extra_body` field in provider config passes arbitrary fields to
+OpenAI-compatible API requests. This is useful for vLLM, llama.cpp, and other
+self-hosted providers that support non-standard parameters.
 
-**Important:** String values in `extra_body` are **not** shell-expanded — they're passed verbatim as JSON.
+**Important:** String values in `extra_body` are **not** shell-expanded —
+they're passed verbatim as JSON.
 
 ### Example: vLLM with Custom Sampling
 
@@ -400,7 +456,8 @@ The `extra_body` field in provider config passes arbitrary fields to OpenAI-comp
 }
 ```
 
-The `min_p` and `repetition_penalty` from the model config are injected into `extra_body` automatically.
+The `min_p` and `repetition_penalty` from the model config are injected into
+`extra_body` automatically.
 
 ---
 
@@ -418,6 +475,34 @@ Controls how tool calls are elicited from models:
   "providers": {
     "gb10": {
       "tool_call_format": "xml"
+    }
+  }
+}
+```
+
+---
+
+## Environment Variables
+
+API keys and other sensitive values support `$VAR` expansion:
+
+```json
+{
+  "providers": {
+    "openai": {
+      "api_key": "$OPENAI_API_KEY"
+    }
+  }
+}
+```
+
+Shell commands are also supported:
+
+```json
+{
+  "providers": {
+    "openai": {
+      "api_key": "$(cat ~/.secrets/openai-key)"
     }
   }
 }
@@ -475,34 +560,6 @@ Controls how tool calls are elicited from models:
 
 ---
 
-## Environment Variables
-
-API keys and other sensitive values support `$VAR` expansion:
-
-```json
-{
-  "providers": {
-    "openai": {
-      "api_key": "$OPENAI_API_KEY"
-    }
-  }
-}
-```
-
-Shell commands are also supported:
-
-```json
-{
-  "providers": {
-    "openai": {
-      "api_key": "$(cat ~/.secrets/openai-key)"
-    }
-  }
-}
-```
-
----
-
 ## Troubleshooting
 
 ### Model Not Found
@@ -533,66 +590,5 @@ If you configure a model that doesn't exist in the provider's catalog:
 - [VLLM Sampling Parameters](https://docs.vllm.ai/en/v0.6.5/dev/sampling_params.html)
 - [OpenAI Chat API Reference](https://platform.openai.com/docs/api-reference/chat/create)
 - [Anthropic Messages API](https://docs.anthropic.com/en/api/messages)
-
----
-
-## Logging Configuration
-
-Application logging is **disabled by default** (safe by default). Enable it explicitly in `phosphor.json`:
-
-```jsonc
-{
-  "logging": {
-    "enabled": true,
-    "level": "info",
-    "max_size_mb": 10,
-    "max_age_days": 30,
-    "max_backups": 0,
-    "compress": false,
-    "filters": [
-      {"field": "msg", "pattern": ".*password.*"},
-      {"field": "msg", "pattern": ".*secret.*"}
-    ]
-  }
-}
-```
-
-### Fields
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `enabled` | `bool` | `false` | Enable application logging. **Default is `false`** — logging is off unless explicitly enabled. |
-| `level` | `"off" \| "info" \| "debug"` | `"info"` | slog log level. `"off"` disables logging even if `enabled: true`. |
-| `max_size_mb` | `int` | `10` | Maximum log file size in MB before rotation (lumberjack). Max 1000. |
-| `max_age_days` | `int` | `30` | Maximum age of log files in days before cleanup. |
-| `max_backups` | `int` | `0` | Maximum number of old rotated log files to retain. |
-| `compress` | `bool` | `false` | Enable gzip compression of rotated log files. |
-| `filters` | `LogFilter[]` | `[]` | Regex filters to exclude matching log entries. See below. |
-
-### Filter Rules
-
-Filters exclude log entries whose fields match the regex pattern. Each filter has:
-
-- `field`: JSON key in the log entry (e.g., `"msg"`, `"source"`, or any custom key)
-- `pattern`: Regular expression matched against the field value (case-insensitive field matching)
-
-Example — redact sensitive messages:
-
-```json
-"filters": [
-  {"field": "msg", "pattern": ".*password.*"},
-  {"field": "msg", "pattern": ".*token.*"},
-  {"field": "api_key", "pattern": ".*"}
-]
-```
-
-### Log File Location
-
-When enabled, logs are written to `{data_directory}/logs/phosphor.log` in JSON format (one JSON object per line). The CLI `phosphor logs --tail N` command reads the last N lines.
-
-### Security Considerations
-
-- Logging is **off by default** — the agent cannot read logs unless you enable it
-- Use `filters` to exclude sensitive data (API keys, passwords, tokens) from log output
-- The `phosphor_logs` agent tool can read log files — only enable when needed for debugging
-- Log rotation prevents disk space issues (default: 10 MB per file, 30 days retention)
+- [LOCAL_MODELS.md](LOCAL_MODELS.md) — OpenAI-compatible server setup
+- [observability/LOGGING.md](../observability/LOGGING.md) — Logging configuration

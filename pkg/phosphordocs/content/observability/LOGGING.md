@@ -297,4 +297,4 @@ Debug level includes:
 
 - [phosphor.json schema](https://raw.githubusercontent.com/hackafterdark/phosphor/main/schema.json) — Full config reference
 - [Observability](./OBSERVABILITY.md) — OpenTelemetry tracing configuration
-- [MODELS_AND_PROVIDERS_CONFIG.md](../MODELS_AND_PROVIDERS_CONFIG.md) — Model and provider settings
+- [configuration/PROVIDERS_AND_MODELS.md](../configuration/PROVIDERS_AND_MODELS.md) — Model and provider settings

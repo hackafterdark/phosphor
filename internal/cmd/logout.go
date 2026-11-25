@@ -27,19 +27,20 @@ var logoutCmd = &cobra.Command{
 	Long: `Logout Phosphor from a specified platform, removing stored credentials.
 The platform should be provided as an argument.
 If no argument is given, a list of logged-in platforms will be shown.
-Available platforms are: hyper, copilot.`,
+Available platforms are: copilot, xai.`,
 	Example: `
-# Sign out from Charm Hyper
-phosphor logout hyper
-
 # Sign out from GitHub Copilot
 phosphor logout copilot
+
+# Sign out from xAI
+phosphor logout xai
   `,
 	ValidArgs: []cobra.Completion{
-		"hyper",
 		"copilot",
 		"github",
 		"github-copilot",
+		"xai",
+		"grok",
 	},
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -80,28 +81,14 @@ phosphor logout copilot
 		}
 
 		switch provider {
-		case "hyper":
-			return logoutHyper(c, ws.ID)
 		case "copilot", "github", "github-copilot":
 			return logoutCopilot(c, ws.ID)
+		case "xai", "grok":
+			return logoutXAI(c, ws.ID)
 		default:
 			return fmt.Errorf("unknown platform: %s", provider)
 		}
 	},
-}
-
-func logoutHyper(c *client.Client, wsID string) error {
-	ctx := getLogoutContext()
-
-	if err := cmp.Or(
-		c.RemoveConfigField(ctx, wsID, config.ScopeGlobal, "providers.hyper.api_key"),
-		c.RemoveConfigField(ctx, wsID, config.ScopeGlobal, "providers.hyper.oauth"),
-	); err != nil {
-		return err
-	}
-
-	fmt.Println(logoutHeaderStyle.Render("Successfully logged out of Hyper."))
-	return nil
 }
 
 func logoutCopilot(c *client.Client, wsID string) error {
@@ -115,6 +102,20 @@ func logoutCopilot(c *client.Client, wsID string) error {
 	}
 
 	fmt.Println(logoutHeaderStyle.Render("Successfully logged out of GitHub Copilot."))
+	return nil
+}
+
+func logoutXAI(c *client.Client, wsID string) error {
+	ctx := getLogoutContext()
+
+	if err := cmp.Or(
+		c.RemoveConfigField(ctx, wsID, config.ScopeGlobal, "providers.xai.api_key"),
+		c.RemoveConfigField(ctx, wsID, config.ScopeGlobal, "providers.xai.oauth"),
+	); err != nil {
+		return err
+	}
+
+	fmt.Println(logoutHeaderStyle.Render("Successfully logged out of xAI."))
 	return nil
 }
 

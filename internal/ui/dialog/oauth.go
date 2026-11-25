@@ -1,7 +1,6 @@
 package dialog
 
 import (
-	"context"
 	"fmt"
 	"strings"
 
@@ -24,6 +23,10 @@ type OAuthProvider interface {
 	initiateAuth() tea.Msg
 	startPolling(deviceCode string, expiresIn int) tea.Cmd
 	stopPolling() tea.Msg
+	// supportsAPIKeyFallback reports whether the provider can also be
+	// authenticated with an API key, so dismissing the device flow offers
+	// API-key entry instead of abandoning authentication.
+	supportsAPIKeyFallback() bool
 }
 
 // OAuthState represents the current state of the device flow.
@@ -66,7 +69,6 @@ type OAuth struct {
 	expiresIn       int
 	interval        int
 	token           *oauth.Token
-	cancelFunc      context.CancelFunc
 }
 
 var _ Dialog = (*OAuth)(nil)
@@ -153,7 +155,21 @@ func (m *OAuth) HandleMsg(msg tea.Msg) Action {
 				return m.saveKeyAndContinue()
 
 			default:
-				return ActionClose{}
+				// Cancel any in-flight device-code poll so it cannot
+				// deliver a token after the dialog is dismissed.
+				stop := m.oAuthProvider.stopPolling
+				if m.oAuthProvider.supportsAPIKeyFallback() {
+					// Fall back to API-key entry so users without a
+					// subscription can still authenticate.
+					return ActionCmd{tea.Batch(stop, func() tea.Msg {
+						return ActionOAuthAPIKeyFallback{
+							Provider:  m.provider,
+							Model:     m.model,
+							ModelType: m.modelType,
+						}
+					})}
+				}
+				return ActionCmd{tea.Batch(stop, func() tea.Msg { return ActionClose{} })}
 			}
 		}
 
@@ -167,11 +183,19 @@ func (m *OAuth) HandleMsg(msg tea.Msg) Action {
 		return ActionCmd{m.oAuthProvider.startPolling(msg.DeviceCode, msg.ExpiresIn)}
 
 	case ActionCompleteOAuth:
+		// Ignore completions from a poll this dialog did not keep open
+		// (e.g. the user dismissed it, or a terminal state was reached).
+		if m.State != OAuthStateDisplay {
+			return nil
+		}
 		m.State = OAuthStateSuccess
 		m.token = msg.Token
 		return ActionCmd{m.oAuthProvider.stopPolling}
 
 	case ActionOAuthErrored:
+		if m.State != OAuthStateDisplay {
+			return nil
+		}
 		m.State = OAuthStateError
 		cmd := tea.Batch(m.oAuthProvider.stopPolling, util.ReportError(msg.Error))
 		return ActionCmd{cmd}

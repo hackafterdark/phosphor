@@ -19,7 +19,6 @@ import (
 	"charm.land/catwalk/pkg/embedded"
 	"github.com/charmbracelet/x/etag"
 	"github.com/hackafterdark/phosphor/internal/home"
-	"github.com/hackafterdark/phosphor/pkg/agent/hyper"
 	"github.com/hackafterdark/phosphor/pkg/csync"
 )
 
@@ -98,43 +97,7 @@ func UpdateProviders(pathOrURL string) error {
 	return nil
 }
 
-// UpdateHyper updates the Hyper provider information from a specified URL.
-func UpdateHyper(pathOrURL string) error {
-	var provider catwalk.Provider
-	pathOrURL = cmp.Or(pathOrURL, hyper.BaseURL())
-
-	switch {
-	case pathOrURL == "embedded":
-		provider = hyper.Embedded()
-	case strings.HasPrefix(pathOrURL, "http://") || strings.HasPrefix(pathOrURL, "https://"):
-		client := realHyperClient{baseURL: pathOrURL}
-		var err error
-		provider, err = client.Get(context.Background(), "")
-		if err != nil {
-			return fmt.Errorf("failed to fetch provider from Hyper: %w", err)
-		}
-	default:
-		content, err := os.ReadFile(pathOrURL)
-		if err != nil {
-			return fmt.Errorf("failed to read file: %w", err)
-		}
-		if err := json.Unmarshal(content, &provider); err != nil {
-			return fmt.Errorf("failed to unmarshal provider data: %w", err)
-		}
-	}
-
-	if err := newCache[catwalk.Provider](cachePathFor("hyper")).Store(provider); err != nil {
-		return fmt.Errorf("failed to save Hyper provider to cache: %w", err)
-	}
-
-	slog.Info("Hyper provider updated successfully", "from", pathOrURL, "to", cachePathFor("hyper"))
-	return nil
-}
-
-var (
-	catwalkSyncer = &catwalkSync{}
-	hyperSyncer   = &hyperSync{}
-)
+var catwalkSyncer = &catwalkSync{}
 
 // Providers returns the list of providers, taking into account cached results
 // and whether or not auto update is enabled.
@@ -173,9 +136,6 @@ func Providers(cfg *Config) ([]catwalk.Provider, error) {
 		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 		defer cancel()
 
-		var hyperProvider catwalk.Provider
-		var hyperFound bool
-
 		wg.Go(func() {
 			if customProvidersOnly {
 				return
@@ -194,29 +154,9 @@ func Providers(cfg *Config) ([]catwalk.Provider, error) {
 			providers.Append(items...)
 		})
 
-		wg.Go(func() {
-			if customProvidersOnly {
-				return
-			}
-			path := cachePathFor("hyper")
-			hyperSyncer.Init(realHyperClient{baseURL: hyper.BaseURL()}, path, autoupdate)
-
-			item, err := hyperSyncer.Get(ctx)
-			if err != nil {
-				errs = append(errs, fmt.Errorf("Phosphor was unable to fetch updated information from Hyper: %w", err)) //nolint:staticcheck
-				return
-			}
-			hyperProvider = item
-			hyperFound = true
-		})
-
 		wg.Wait()
 
-		if hyperFound {
-			providerList = append([]catwalk.Provider{hyperProvider}, slices.Collect(providers.Seq())...)
-		} else {
-			providerList = slices.Collect(providers.Seq())
-		}
+		providerList = slices.Collect(providers.Seq())
 		providerErr = errors.Join(errs...)
 	})
 	return providerList, providerErr

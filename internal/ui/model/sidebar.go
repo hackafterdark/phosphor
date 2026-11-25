@@ -108,7 +108,7 @@ func (m *UI) modelInfo(width int) string {
 			modelName = model.ModelCfg.Model
 		}
 	}
-	return common.ModelInfo(m.com.Styles, modelName, providerName, reasoningInfo, modelContext, width, m.hyperCredits)
+	return common.ModelInfo(m.com.Styles, modelName, providerName, reasoningInfo, modelContext, width, nil)
 }
 
 // sidebar renders the chat sidebar containing session title, working
@@ -514,13 +514,13 @@ func (m *UI) renderSidebarSection(cfg config.SidebarComponentConfig, width int) 
 		// The figlet render plus its gradient pass are pure functions of the
 		// width and logo config, so reuse the string while those hold and only
 		// re-render on a real change. See [UI.sidebarSmallLogo].
-		key := strconv.Itoa(width) + "\x00" + t.LogoConfig.AppTitle + "\x00" + t.LogoConfig.SidebarLogoType + "\x00" + t.LogoConfig.SidebarFigletFont + "\x00" + strconv.FormatBool(m.com.IsHyper())
+		key := strconv.Itoa(width) + "\x00" + t.LogoConfig.AppTitle + "\x00" + t.LogoConfig.SidebarLogoType + "\x00" + t.LogoConfig.SidebarFigletFont
 		if m.sidebarSmallLogoKey == key {
 			return m.sidebarSmallLogo
 		}
 		sidebarLogo := logo.SmallRender(t, width, 3, logo.Opts{
 			AppTitle:          t.LogoConfig.AppTitle,
-			Hyper:             m.com.IsHyper(),
+			Hyper:             false,
 			SidebarLogoPlain:  t.LogoConfig.SidebarLogoType == "plain_text",
 			SidebarLogoHidden: t.LogoConfig.SidebarLogoType == "hidden",
 			SidebarFigletFont: t.LogoConfig.SidebarFigletFont,

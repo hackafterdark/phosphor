@@ -66,7 +66,7 @@ func (h *header) drawHeader(
 ) {
 	t := h.com.Styles
 	if width != h.width || compact != h.compact {
-		h.logo = renderLogo(h.com.Styles, t.LogoConfig.AppTitle, t.LogoConfig.FigletFont, t.LogoConfig.FigletSolid, compact, h.com.IsHyper(), width)
+		h.logo = renderLogo(h.com.Styles, t.LogoConfig.AppTitle, t.LogoConfig.FigletFont, t.LogoConfig.FigletSolid, compact, false, width)
 	}
 
 	h.width = width
@@ -176,11 +176,6 @@ func renderHeaderDetails(
 		}
 		formattedPercentage := t.Header.Percentage.Render(percentageText)
 		parts = append(parts, formattedPercentage)
-	}
-
-	if com.IsHyper() && hyperCredits != nil {
-		hc := t.Header.HypercreditIcon.Render(styles.HypercreditIcon) + " " + t.Header.Percentage.Render(common.FormatCredits(*hyperCredits))
-		parts = append(parts, hc)
 	}
 
 	const keystroke = "ctrl+d"

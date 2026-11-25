@@ -92,9 +92,7 @@ or pre-approve the tools the agent needs.
 
 ## `phosphor update-providers`
 
-| Flag | Description |
-| --- | --- |
-| `--source <source>` | Provider source to update (`catwalk` or `hyper`, default: `catwalk`). |
+Takes an optional positional `[path-or-url]`; it accepts no flags.
 
 ## `phosphor index`
 

@@ -33,6 +33,12 @@ func (m *OAuthCopilot) name() string {
 	return "GitHub Copilot"
 }
 
+// supportsAPIKeyFallback is false: Copilot is authenticated only through the
+// device flow, so dismissing it closes rather than offering API-key entry.
+func (m *OAuthCopilot) supportsAPIKeyFallback() bool {
+	return false
+}
+
 func (m *OAuthCopilot) initiateAuth() tea.Msg {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -54,9 +60,13 @@ func (m *OAuthCopilot) initiateAuth() tea.Msg {
 }
 
 func (m *OAuthCopilot) startPolling(deviceCode string, expiresIn int) tea.Cmd {
+	// Set up cancellation synchronously, while Update is still running, so a
+	// close that lands before the polling goroutine starts can still cancel
+	// it. Commands must not mutate model state from their goroutine.
+	ctx, cancel := context.WithCancel(context.Background())
+	m.cancelFunc = cancel
 	return func() tea.Msg {
-		ctx, cancel := context.WithCancel(context.Background())
-		m.cancelFunc = cancel
+		defer cancel()
 
 		token, err := copilot.PollForToken(ctx, m.deviceCode)
 		if err != nil {

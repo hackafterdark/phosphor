@@ -23,7 +23,6 @@ import (
 	memorytools "github.com/hackafterdark/phosphor/internal/memory/tools"
 	"github.com/hackafterdark/phosphor/internal/oauth/copilot"
 	"github.com/hackafterdark/phosphor/internal/proto"
-	"github.com/hackafterdark/phosphor/pkg/agent/hyper"
 	"github.com/hackafterdark/phosphor/pkg/agent/notify"
 	"github.com/hackafterdark/phosphor/pkg/agent/parser"
 	"github.com/hackafterdark/phosphor/pkg/agent/prompt"
@@ -461,16 +460,7 @@ func (c *coordinator) run(ctx context.Context, accept *AcceptedRun, sessionID st
 	})
 	logTurnSkillUsage(sessionID, prompt, c.activeSkills, c.skillTracker, beforeLoaded)
 
-	if c.isUnauthorized(originalErr) {
-		// Notify only if still unauthorized after retry — a successful
-		// retry means the user doesn't need to re-authenticate.
-		if originalErr != nil && c.notify != nil && model.ModelCfg.Provider == hyper.Name {
-			c.notify.Publish(pubsub.CreatedEvent, notify.Notification{
-				Type:       notify.TypeReAuthenticate,
-				ProviderID: model.ModelCfg.Provider,
-			})
-		}
-	}
+
 
 	if c.isBadRequest(originalErr) {
 		// Retry once on Bad Request — vLLM's tool call parser can produce
@@ -748,7 +738,7 @@ func getProviderOptions(model Model, providerCfg config.ProviderConfig) fantasy.
 		if err == nil {
 			options[google.Name] = parsed
 		}
-	case openaicompat.Name, hyper.Name:
+	case openaicompat.Name:
 		extraBody := make(map[string]any)
 
 		// Inject chat_template_kwargs so Jinja-based providers can
@@ -758,7 +748,7 @@ func getProviderOptions(model Model, providerCfg config.ProviderConfig) fantasy.
 
 		// An explicit user choice overrides the policy's enable_thinking
 		// kwarg default. io.net manages thinking through its own fields.
-		if (providerCfg.Type == openaicompat.Name || providerCfg.Type == hyper.Name) &&
+		if providerCfg.Type == openaicompat.Name &&
 			providerCfg.ID != string(catwalk.InferenceProviderIoNet) &&
 			model.ModelCfg.EnableThinking != "" {
 			if kwargs, ok := extraBody["chat_template_kwargs"].(map[string]any); ok {
@@ -799,8 +789,6 @@ func getProviderOptions(model Model, providerCfg config.ProviderConfig) fantasy.
 		// TODO: Abstract this in Fantasy somehow?
 		// TODO: Allow custom providers to specify how to set this?
 		switch providerCfg.ID {
-		case hyper.Name:
-			extraBody["thinking"] = model.ModelCfg.Think
 		case string(catwalk.InferenceProviderIoNet):
 			if _, ok := extraBody["reasoning"]; !ok && model.CatwalkCfg.CanReason {
 				if model.ModelCfg.Think {
@@ -1717,10 +1705,8 @@ func (c *coordinator) buildProvider(providerCfg config.ProviderConfig, model con
 		return c.buildGoogleProvider(baseURL, apiKey, headers)
 	case "google-vertex":
 		return c.buildGoogleVertexProvider(headers, providerCfg.ExtraParams)
-	case openaicompat.Name, hyper.Name:
+	case openaicompat.Name:
 		switch providerCfg.ID {
-		case hyper.Name:
-			baseURL = hyper.BaseURL() + "/v1"
 		case string(catwalk.InferenceProviderZAI):
 			if providerCfg.ExtraBody == nil {
 				providerCfg.ExtraBody = map[string]any{}
@@ -2191,13 +2177,6 @@ func (c *coordinator) runSubAgent(ctx context.Context, params subAgentParams) (f
 		result, runErr = run()
 		return runErr
 	})
-	// Notify only if still unauthorized after retry.
-	if err != nil && c.isUnauthorized(err) && c.notify != nil && model.ModelCfg.Provider == hyper.Name {
-		c.notify.Publish(pubsub.CreatedEvent, notify.Notification{
-			Type:       notify.TypeReAuthenticate,
-			ProviderID: model.ModelCfg.Provider,
-		})
-	}
 	if err != nil {
 		return fantasy.NewTextErrorResponse(fmt.Sprintf("Failed to generate response: %s", err)), nil
 	}

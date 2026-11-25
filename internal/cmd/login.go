@@ -3,6 +3,7 @@ package cmd
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -10,12 +11,10 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/hackafterdark/phosphor/internal/client"
-	"github.com/hackafterdark/phosphor/internal/clipboard"
 	"github.com/hackafterdark/phosphor/internal/oauth"
 	"github.com/hackafterdark/phosphor/internal/oauth/copilot"
-	"github.com/hackafterdark/phosphor/internal/oauth/hyper"
+	"github.com/hackafterdark/phosphor/internal/oauth/xai"
 	"github.com/hackafterdark/phosphor/pkg/config"
-	"github.com/pkg/browser"
 	"github.com/spf13/cobra"
 )
 
@@ -25,22 +24,23 @@ var loginCmd = &cobra.Command{
 	Short:   "Login Phosphor to a platform",
 	Long: `Login Phosphor to a specified platform.
 The platform should be provided as an argument.
-Available platforms are: hyper, copilot.`,
+Available platforms are: copilot, xai.`,
 	Example: `
-# Authenticate with Charm Hyper
-phosphor login
-
 # Authenticate with GitHub Copilot
 phosphor login copilot
+
+# Authenticate with xAI (Grok subscription)
+phosphor login xai
 
 # Force re-authentication even if already logged in
 phosphor login -f copilot
   `,
 	ValidArgs: []cobra.Completion{
-		"hyper",
 		"copilot",
 		"github",
 		"github-copilot",
+		"xai",
+		"grok",
 	},
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -56,16 +56,16 @@ phosphor login -f copilot
 			defer func() { _, _ = fmt.Fprintf(os.Stderr, ansi.ResetProgressBar) }()
 		}
 
-		provider := "hyper"
-		if len(args) > 0 {
-			provider = args[0]
+		if len(args) == 0 {
+			return fmt.Errorf("please specify a platform (e.g. phosphor login copilot)")
 		}
+		provider := args[0]
 		force, _ := cmd.Flags().GetBool("force")
 		switch provider {
-		case "hyper":
-			return loginHyper(c, ws.ID, force)
 		case "copilot", "github", "github-copilot":
 			return loginCopilot(c, ws.ID, force)
+		case "xai", "grok":
+			return loginXAI(c, ws.ID, force)
 		default:
 			return fmt.Errorf("unknown platform: %s", args[0])
 		}
@@ -74,73 +74,6 @@ phosphor login -f copilot
 
 func init() {
 	loginCmd.Flags().BoolP("force", "f", false, "Force re-authentication even if already logged in")
-}
-
-func loginHyper(c *client.Client, wsID string, force bool) error {
-	ctx := getLoginContext()
-
-	if !force {
-		cfg, err := c.GetConfig(ctx, wsID)
-		if err == nil && cfg != nil {
-			if pc, ok := cfg.Providers.Get("hyper"); ok && pc.OAuthToken != nil {
-				fmt.Println("You are already logged in to Hyper.")
-				fmt.Println("Use --force to re-authenticate.")
-				return nil
-			}
-		}
-	}
-
-	resp, err := hyper.InitiateDeviceAuth(ctx)
-	if err != nil {
-		return err
-	}
-
-	clipboard.WriteText(resp.UserCode)
-	fmt.Println("The following code should be on clipboard already:")
-
-	fmt.Println()
-	fmt.Println(lipgloss.NewStyle().Bold(true).Render(resp.UserCode))
-	fmt.Println()
-	fmt.Println("Press enter to open this URL, and then paste it there:")
-	fmt.Println()
-	fmt.Println(lipgloss.NewStyle().Hyperlink(resp.VerificationURL, "id=hyper").Render(resp.VerificationURL))
-	fmt.Println()
-	waitEnter()
-	if err := browser.OpenURL(resp.VerificationURL); err != nil {
-		fmt.Println("Could not open the URL. You'll need to manually open the URL in your browser.")
-	}
-
-	fmt.Println("Exchanging authorization code...")
-	refreshToken, err := hyper.PollForToken(ctx, resp.DeviceCode, resp.ExpiresIn)
-	if err != nil {
-		return err
-	}
-
-	fmt.Println("Exchanging refresh token for access token...")
-	token, err := hyper.ExchangeToken(ctx, refreshToken)
-	if err != nil {
-		return err
-	}
-
-	fmt.Println("Verifying access token...")
-	introspect, err := hyper.IntrospectToken(ctx, token.AccessToken)
-	if err != nil {
-		return fmt.Errorf("token introspection failed: %w", err)
-	}
-	if !introspect.Active {
-		return fmt.Errorf("access token is not active")
-	}
-
-	if err := cmp.Or(
-		c.SetConfigField(ctx, wsID, config.ScopeGlobal, "providers.hyper.api_key", token.AccessToken),
-		c.SetConfigField(ctx, wsID, config.ScopeGlobal, "providers.hyper.oauth", token),
-	); err != nil {
-		return err
-	}
-
-	fmt.Println()
-	fmt.Println("You're now authenticated with Hyper!")
-	return nil
 }
 
 func loginCopilot(c *client.Client, wsID string, force bool) error {
@@ -214,6 +147,59 @@ func loginCopilot(c *client.Client, wsID string, force bool) error {
 	return nil
 }
 
+func loginXAI(c *client.Client, wsID string, force bool) error {
+	loginCtx := getLoginContext()
+
+	if !force {
+		cfg, err := c.GetConfig(loginCtx, wsID)
+		if err == nil && cfg != nil {
+			if pc, ok := cfg.Providers.Get("xai"); ok && pc.OAuthToken != nil {
+				fmt.Println("You are already logged in to xAI.")
+				fmt.Println("Use --force to re-authenticate.")
+				return nil
+			}
+		}
+	}
+
+	fmt.Println("Requesting device code from xAI...")
+	dc, err := xai.RequestDeviceCode(loginCtx)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println()
+	fmt.Println("Open the following URL and follow the instructions to authenticate with xAI:")
+	fmt.Println()
+	fmt.Println(lipgloss.NewStyle().Hyperlink(dc.VerificationURI, "id=xai").Render(dc.VerificationURI))
+	fmt.Println()
+	fmt.Println("Code:", lipgloss.NewStyle().Bold(true).Render(dc.UserCode))
+	fmt.Println()
+	fmt.Println("Waiting for authorization...")
+
+	token, err := xai.PollForToken(loginCtx, dc)
+	if err != nil {
+		if errors.Is(err, xai.ErrNotAvailable) {
+			fmt.Println()
+			fmt.Println("The xAI API is not available for this account.")
+			fmt.Println("If you intended to use an API key instead, set XAI_API_KEY.")
+			fmt.Println()
+			fmt.Println(lipgloss.NewStyle().Hyperlink(xai.SignupURL, "id=xai-signup").Render(xai.SignupURL))
+		}
+		return err
+	}
+
+	if err := cmp.Or(
+		c.SetConfigField(loginCtx, wsID, config.ScopeGlobal, "providers.xai.api_key", token.AccessToken),
+		c.SetConfigField(loginCtx, wsID, config.ScopeGlobal, "providers.xai.oauth", token),
+	); err != nil {
+		return err
+	}
+
+	fmt.Println()
+	fmt.Println("You're now authenticated with xAI!")
+	return nil
+}
+
 func getLoginContext() context.Context {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, os.Kill)
 	go func() {
@@ -222,8 +208,4 @@ func getLoginContext() context.Context {
 		os.Exit(1)
 	}()
 	return ctx
-}
-
-func waitEnter() {
-	_, _ = fmt.Scanln()
 }

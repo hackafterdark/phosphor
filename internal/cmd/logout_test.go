@@ -28,7 +28,6 @@ func TestLogoutCmd_ValidArgs(t *testing.T) {
 	for _, p := range logoutCmd.ValidArgs {
 		validPlatforms[p] = true
 	}
-	require.True(t, validPlatforms["hyper"])
 	require.True(t, validPlatforms["copilot"])
 	require.True(t, validPlatforms["github"])
 	require.True(t, validPlatforms["github-copilot"])

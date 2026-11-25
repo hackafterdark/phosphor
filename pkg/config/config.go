@@ -3,17 +3,21 @@ package config
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
 	"charm.land/catwalk/pkg/catwalk"
+	"github.com/hackafterdark/phosphor/internal/home"
 	"github.com/hackafterdark/phosphor/internal/log"
 	"github.com/hackafterdark/phosphor/internal/oauth"
 	"github.com/hackafterdark/phosphor/internal/oauth/copilot"
@@ -227,6 +231,108 @@ func (c *ProviderConfig) ToProvider() catwalk.Provider {
 
 func (c *ProviderConfig) SetupGitHubCopilot() {
 	maps.Copy(c.ExtraHeaders, copilot.Headers())
+}
+
+// grokChatProxyBaseURL is the endpoint that bills against a Grok/X
+// subscription. It is distinct from the pay-as-you-go api.x.ai surface,
+// which is metered by API spend tier and returns a 0/0 rate limit for
+// subscription accounts.
+const grokChatProxyBaseURL = "https://cli-chat-proxy.grok.com/v1"
+
+// minGrokClientVersion is the version floor the Grok chat proxy currently
+// enforces: requests reporting anything below it are rejected with HTTP 426
+// "Upgrade Required". It is used only to validate the locally installed CLI
+// version — when the installed CLI is older than this, we report
+// defaultGrokClientVersion instead so we never inherit an outdated version.
+const minGrokClientVersion = "1.0.13"
+
+// defaultGrokClientVersion is the version reported when no (valid) Grok CLI is
+// installed, or when the installed CLI is below the floor. It carries headroom
+// above minGrokClientVersion so a modest floor bump doesn't immediately
+// re-trigger the gate. It matches the fallback used by the upstream CLI proxy.
+const defaultGrokClientVersion = "1.0.46"
+
+// SetupGrokSubscription points the xAI provider at the Grok CLI chat proxy
+// and adds the marker headers that route the request against the user's
+// subscription entitlement rather than the API-spend meter. It is only
+// applied when xAI was authenticated via the OAuth device-code flow.
+func (c *ProviderConfig) SetupGrokSubscription() {
+	c.BaseURL = grokChatProxyBaseURL
+	if c.ExtraHeaders == nil {
+		c.ExtraHeaders = make(map[string]string)
+	}
+	c.ExtraHeaders["x-xai-token-auth"] = "xai-grok-cli"
+	c.ExtraHeaders["x-grok-client-identifier"] = "phosphor"
+	c.ExtraHeaders["x-grok-client-version"] = grokClientVersion()
+}
+
+// grokClientVersion returns the Grok CLI version to report to the chat
+// proxy's version gate (x-grok-client-version). It reports the locally
+// installed CLI version when it is present and at or above the proxy's floor;
+// otherwise it reports defaultGrokClientVersion. Phosphor's own version is
+// never used — the proxy gates on the Grok CLI version, not the third-party
+// client's, and reporting an outdated CLI version yields HTTP 426.
+func grokClientVersion() string {
+	// The Grok CLI writes its version to ~/.grok/version.json. Report that
+	// value so subscription requests track the user's installed CLI, but only
+	// when it clears the floor — an outdated CLI must not drag us under it.
+	data, err := os.ReadFile(filepath.Join(home.Dir(), ".grok", "version.json"))
+	if err == nil {
+		var payload struct {
+			Version string `json:"version"`
+		}
+		if json.Unmarshal(data, &payload) == nil &&
+			payload.Version != "" &&
+			!versionLessThan(payload.Version, minGrokClientVersion) {
+			return payload.Version
+		}
+	}
+	return defaultGrokClientVersion
+}
+
+// versionLessThan reports whether a is numerically below b, comparing the
+// leading major.minor.patch numbers and ignoring any pre-release or build
+// suffixes. A version that cannot be parsed is treated as older than b.
+func versionLessThan(a, b string) bool {
+	as, ok := parseVersionParts(a)
+	if !ok {
+		return true
+	}
+	bs, ok := parseVersionParts(b)
+	if !ok {
+		return false
+	}
+	for i := range bs {
+		if as[i] != bs[i] {
+			return as[i] < bs[i]
+		}
+	}
+	return false
+}
+
+// parseVersionParts extracts the numeric major, minor, and patch components
+// from a version string, ignoring any leading "v" and any trailing suffix.
+func parseVersionParts(v string) ([3]int, bool) {
+	var parts [3]int
+	v = strings.TrimPrefix(v, "v")
+	if i := strings.IndexAny(v, "-+"); i >= 0 {
+		v = v[:i]
+	}
+	fields := strings.Split(v, ".")
+	if len(fields) == 0 {
+		return parts, false
+	}
+	for i := range parts {
+		if i >= len(fields) {
+			return parts, true
+		}
+		n, err := strconv.Atoi(fields[i])
+		if err != nil {
+			return parts, false
+		}
+		parts[i] = n
+	}
+	return parts, true
 }
 
 type MCPType string

@@ -61,7 +61,7 @@ The enforcement layer is described in [OS-level sandboxing
 (ADR-0016)](../adr/0016-os-level-sandboxing.md) and the
 [Bash sandbox section](#kernel-sandboxing-for-bash-children) below; the
 consent layer is configured in
-[CONFIGURATION.md](../CONFIGURATION.md#permissions) and this page.
+[TOOLS_AND_PERMISSIONS.md](../configuration/TOOLS_AND_PERMISSIONS.md) and this page.
 
 ### Defaults and Session Grants
 

@@ -167,6 +167,16 @@ type (
 	ActionOAuthErrored struct {
 		Error error
 	}
+
+	// ActionOAuthAPIKeyFallback is sent when the user dismisses an OAuth
+	// device flow for a provider that also authenticates with an API key,
+	// so the UI can fall back to API-key entry instead of leaving the user
+	// with no way to authenticate.
+	ActionOAuthAPIKeyFallback struct {
+		Provider  catwalk.Provider
+		Model     config.SelectedModel
+		ModelType config.SelectedModelType
+	}
 )
 
 // ActionUpdateAttachment is sent when the content of an attachment is updated in the preview dialog.

@@ -27,7 +27,6 @@ import (
 	"github.com/hackafterdark/phosphor/internal/fsext"
 	"github.com/hackafterdark/phosphor/internal/home"
 	"github.com/hackafterdark/phosphor/internal/jsonmerge"
-	"github.com/hackafterdark/phosphor/pkg/agent/hyper"
 	"github.com/hackafterdark/phosphor/pkg/csync"
 	"github.com/hackafterdark/phosphor/pkg/saferegex"
 	"github.com/tidwall/gjson"
@@ -340,6 +339,8 @@ func (c *Config) configureProviders(ctx context.Context, store *ConfigStore, env
 			continue
 		case p.ID == catwalk.InferenceProviderCopilot && config.OAuthToken != nil:
 			prepared.SetupGitHubCopilot()
+		case p.ID == catwalk.InferenceProvider("xai") && config.OAuthToken != nil:
+			prepared.SetupGrokSubscription()
 		}
 
 		switch p.ID {
@@ -378,19 +379,7 @@ func (c *Config) configureProviders(ctx context.Context, store *ConfigStore, env
 				continue
 			}
 		case catwalk.InferenceProvider("hyper"):
-			if apiKey := env.Get("HYPER_API_KEY"); apiKey != "" {
-				prepared.APIKey = apiKey
-				prepared.APIKeyTemplate = apiKey
-			} else {
-				v, err := resolver.ResolveValue(p.APIKey)
-				if v == "" || err != nil {
-					if configExists {
-						slog.Warn("Skipping Hyper provider due to missing API key", "provider", p.ID)
-						c.Providers.Del(string(p.ID))
-					}
-					continue
-				}
-			}
+			// Hyper provider support removed.
 		default:
 			// if the provider api or endpoint are missing we skip them
 			v, err := resolver.ResolveValue(p.APIKey)
@@ -466,7 +455,6 @@ func (c *Config) configureProviders(ctx context.Context, store *ConfigStore, env
 		// Default to OpenAI if not set.
 		providerConfig.Type = cmp.Or(providerConfig.Type, catwalk.TypeOpenAICompat)
 		if !slices.Contains(catwalk.KnownProviderTypes(), providerConfig.Type) &&
-			providerConfig.Type != hyper.Name &&
 			!discover.IsKnownCustomProvider(string(providerConfig.Type)) {
 			slog.Warn("Skipping custom provider due to unsupported provider type", "provider", id)
 			c.Providers.Del(id)
@@ -531,6 +519,13 @@ func (c *Config) configureProviders(ctx context.Context, store *ConfigStore, env
 				continue
 			}
 			providerConfig.ExtraHeaders[k] = resolved
+		}
+
+		// Apply the Grok subscription routing to custom xAI providers
+		// as well, so disabling default providers doesn't strand an
+		// OAuth-authenticated xAI entry on the pay-as-you-go endpoint.
+		if id == string(catwalk.InferenceProvider("xai")) && providerConfig.OAuthToken != nil {
+			providerConfig.SetupGrokSubscription()
 		}
 
 		c.Providers.Set(id, providerConfig)

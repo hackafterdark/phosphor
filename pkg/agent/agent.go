@@ -16,8 +16,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"math"
-	"net/http"
 	"os"
 	"regexp"
 	"slices"
@@ -44,7 +42,6 @@ import (
 	memorytools "github.com/hackafterdark/phosphor/internal/memory/tools"
 	"github.com/hackafterdark/phosphor/internal/stringext"
 	"github.com/hackafterdark/phosphor/internal/version"
-	"github.com/hackafterdark/phosphor/pkg/agent/hyper"
 	"github.com/hackafterdark/phosphor/pkg/agent/notify"
 	"github.com/hackafterdark/phosphor/pkg/agent/tools"
 	"github.com/hackafterdark/phosphor/pkg/agent/tools/mcp"
@@ -1714,7 +1711,6 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 			}
 			usage, estimated := fallbackStepUsage(stepMessages, stepResult)
 			a.updateSessionUsage(ctx, largeModel, &updatedSession, usage, a.openrouterCost(stepResult.ProviderMetadata), estimated)
-			extractHyperCredits(stepResult.ProviderMetadata)
 			// Update CurrentTokens to reflect the actual context window usage
 			// after the response is received (PromptTokens + CompletionTokens).
 			updatedSession.CurrentTokens = updatedSession.PromptTokens + updatedSession.CompletionTokens
@@ -2016,7 +2012,6 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 	}
 
 	if err != nil {
-		isHyper := largeModel.ModelCfg.Provider == hyper.Name
 		isCancelErr := errors.Is(err, context.Canceled)
 		if currentAssistant == nil {
 			// Cancel-before-assistant-creation window: the run was
@@ -2104,12 +2099,6 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 		linkStyle := lipgloss.NewStyle().Foreground(charmtone.Guac).Underline(true)
 		if isCancelErr {
 			currentAssistant.AddFinish(message.FinishReasonCanceled, "User canceled request", "")
-		} else if isHyper && errors.As(err, &providerErr) && providerErr.StatusCode == http.StatusUnauthorized {
-			currentAssistant.AddFinish(message.FinishReasonError, "Unauthorized", `Please re-authenticate with Hyper. You can also run "phosphor auth" to re-authenticate.`)
-		} else if isHyper && errors.As(err, &providerErr) && providerErr.StatusCode == http.StatusPaymentRequired {
-			url := hyper.BaseURL()
-			link := linkStyle.Hyperlink(url, "id=hyper").Render(url)
-			currentAssistant.AddFinish(message.FinishReasonError, "No credits", "You're out of credits. Add more at "+link)
 		} else if errors.As(err, &providerErr) {
 			if providerErr.Message == "The requested model is not supported." {
 				url := "https://github.com/settings/copilot/features"
@@ -2465,7 +2454,6 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 			}
 			openrouterCost = &newCost
 		}
-		extractHyperCredits(step.ProviderMetadata)
 	}
 
 	a.updateSessionUsage(genCtx, largeModel, &currentSession, resp.TotalUsage, openrouterCost, false)
@@ -3219,7 +3207,6 @@ func (a *sessionAgent) GenerateTitle(ctx context.Context, sessionID string, user
 			}
 			openrouterCost = &newCost
 		}
-		extractHyperCredits(step.ProviderMetadata)
 	}
 
 	modelConfig := model.CatwalkCfg
@@ -3271,24 +3258,7 @@ func (a *sessionAgent) openrouterCost(metadata fantasy.ProviderMetadata) *float6
 	return &opts.Usage.Cost
 }
 
-// extractHyperCredits reads usage.remaining.hypercredits from OpenAI
-// provider metadata and stores it for the next FetchCredits call.
-func extractHyperCredits(metadata fantasy.ProviderMetadata) {
-	openaiMeta, ok := metadata[openai.Name]
-	if !ok {
-		return
-	}
-	pm, ok := openaiMeta.(*openai.ProviderMetadata)
-	if !ok {
-		return
-	}
-	var remaining struct {
-		Hypercredits float64 `json:"hypercredits"`
-	}
-	if pm.ExtraField("remaining", &remaining) && remaining.Hypercredits > 0 {
-		hyper.SetBalance(int(math.Round(remaining.Hypercredits)))
-	}
-}
+
 
 func (a *sessionAgent) updateSessionUsage(ctx context.Context, model Model, session *session.Session, usage fantasy.Usage, overrideCost *float64, estimated bool) {
 	if !usageIsZero(usage) {
