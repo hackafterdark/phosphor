@@ -167,6 +167,15 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore, skillsMgr
 	// revoked at shutdown by CleanupContainerGrants like any others.
 	sandbox.PreWarm(cfg.Tools.Bash.BashSandboxMode(), store.WorkingDir(), cfg.Tools.Bash.BashSandboxLimits())
 
+	// Claim an instance lease in the data directory. Windows teardown
+	// consults leases before revoking the workspace's shared container
+	// ACEs, so a second instance's exit cannot strip file access from
+	// this one's confined children mid-run. The lease is released at
+	// shutdown, just before the ACE teardown decision.
+	if err := sandbox.RegisterInstanceLease(cfg.Options.DataDirectory); err != nil {
+		slog.Warn("Failed to register sandbox instance lease", "error", err)
+	}
+
 	// Initialize the workspace symbol index store.
 	indexStore, err := workspaceindex.NewStore(store.WorkingDir())
 	if err != nil {
@@ -991,6 +1000,13 @@ func (app *App) Shutdown() {
 	// re-granted (and re-revoked) at the next launch.
 	aclCtx, aclCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer aclCancel()
+	// Release this instance's lease before deciding on ACE teardown:
+	// CleanupContainerGrants defers revocation while any sibling
+	// instance's lease is still live, and our own lease must not
+	// count.
+	if err := sandbox.ReleaseInstanceLease(); err != nil {
+		slog.Warn("Failed to release sandbox instance lease", "error", err)
+	}
 	if err := sandbox.CleanupContainerGrants(aclCtx); err != nil {
 		slog.Warn("Failed to revoke sandbox container ACEs on shutdown", "error", err)
 	}
