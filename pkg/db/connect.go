@@ -70,9 +70,10 @@ type connectOptions struct {
 
 // WithDataDirLock toggles acquisition of the per-data-directory lock
 // for this Connect call. The lock is off by default so short-lived
-// read-only invocations (stats, session listing) never refuse to open
-// a database a TUI is using; the local-mode workspace setup and the
-// cron service opt in. PHOSPHOR_SKIP_DATADIR_LOCK still bypasses
+// read-only invocations (stats, session listing) and interactive
+// sessions never refuse to open a database another phosphor is using;
+// only the cron service opts in, since it must not race its own
+// scheduled runs. PHOSPHOR_SKIP_DATADIR_LOCK still bypasses
 // acquisition even when this option is set.
 func WithDataDirLock(enable bool) ConnectOption {
 	return func(o *connectOptions) { o.lockDataDir = enable }
@@ -129,9 +130,9 @@ func Connect(ctx context.Context, dataDir string, opts ...ConnectOption) (*sql.D
 	// phosphor process on the same SQLite file. The lock is released when
 	// the matching Release call drops the refcount to zero. Ensuring
 	// the data directory exists is required because the lock file
-	// lives inside it. Locking is opt-in via WithDataDirLock so that
-	// local-mode invocations do not refuse a second phosphor against the
-	// same data dir until client/server becomes the default.
+	// lives inside it. Locking is opt-in via WithDataDirLock: SQLite
+	// runs in WAL mode with a busy timeout, so concurrent interactive
+	// sessions sharing one data directory are safe without it.
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return nil, fmt.Errorf("failed to create data directory %q: %w", dataDir, err)
 	}

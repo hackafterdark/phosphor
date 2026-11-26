@@ -349,7 +349,11 @@ func setupLocalWorkspace(cmd *cobra.Command) (workspace.Workspace, func(), *sql.
 		slog.Warn("Failed to register project", "error", err)
 	}
 
-	conn, err := db.Connect(ctx, cfg.Options.DataDirectory, db.WithDataDirLock(true))
+	// Locking is off for interactive sessions: SQLite runs in WAL mode
+	// with a busy timeout, so several phosphor TUIs can safely share one
+	// data directory, each on its own session. The cron service keeps
+	// the exclusive lock (see db.WithDataDirLock).
+	conn, err := db.Connect(ctx, cfg.Options.DataDirectory)
 	if err != nil {
 		slog.Error("Failed to open database", "dir", cfg.Options.DataDirectory, "error", err)
 		return nil, nil, nil, err
