@@ -1667,6 +1667,10 @@ func (m *UI) handleClickFocus(msg tea.MouseClickMsg) (cmd tea.Cmd) {
 // message too.
 func (m *UI) updateSessionMessage(msg message.Message) tea.Cmd {
 	var cmds []tea.Cmd
+	var assistantMsg *message.Message
+	if msg.Role == message.Assistant {
+		assistantMsg = &msg
+	}
 	existingItem := m.chat.MessageItem(msg.ID)
 
 	if existingItem != nil {
@@ -1677,6 +1681,37 @@ func (m *UI) updateSessionMessage(msg message.Message) tea.Cmd {
 
 	shouldRenderAssistant := chat.ShouldRenderAssistantMessage(&msg, m.thinkingVisible())
 	isEndTurn := msg.FinishPart() != nil && msg.FinishPart().Reason == message.FinishReasonEndTurn
+	// When thinking is hidden, an assistant message that carried only tool
+	// calls is never extracted; if a later update adds response text, create
+	// the missing item now (before its tool items) so the text appears live
+	// instead of only after a session reload.
+	if assistantMsg != nil && existingItem == nil && shouldRenderAssistant {
+		insertAt := m.chat.Len()
+		for _, tc := range msg.ToolCalls() {
+			if toolItem := m.chat.MessageItem(tc.ID); toolItem != nil {
+				for i := range m.chat.Len() {
+					if m.chat.ItemAt(i) == toolItem {
+						insertAt = i
+						break
+					}
+				}
+				break
+			}
+		}
+		assistantItem := chat.NewAssistantMessageItem(m.com.Styles, assistantMsg)
+		if assistant, ok := assistantItem.(*chat.AssistantMessageItem); ok {
+			assistant.SetThinkingVisible(m.thinkingVisible())
+			if cmd := assistant.StartAnimation(); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
+		m.chat.InsertMessagesAt(insertAt, assistantItem)
+		if m.chat.Follow() {
+			if cmd := m.chat.ScrollToBottomAndAnimate(); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
+	}
 	// If the message of the assistant does not have any response just tool
 	// calls we need to remove it, but keep the info item for end-of-turn
 	// renders so the footer (model/provider/duration) remains visible when,
@@ -1709,7 +1744,10 @@ func (m *UI) updateSessionMessage(msg message.Message) tea.Cmd {
 			}
 		}
 		if existingToolItem == nil {
-			items = append(items, chat.NewToolMessageItem(m.com.Styles, msg.ID, tc, nil, false))
+			toolItem := chat.NewToolMessageItem(m.com.Styles, msg.ID, tc, nil, false)
+			mode, limit := m.toolOutputModeFor(tc.Name)
+			toolItem.SetOutputMode(mode, limit)
+			items = append(items, toolItem)
 		}
 	}
 
@@ -2219,6 +2257,13 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 				item.SetThinkingVisible(msg.Visible)
 			}
 		}
+		// Messages whose only visible content was reasoning are omitted while
+		// thinking is hidden; when thinking is turned back on, restore them so
+		// the transcript matches the setting instead of staying silently
+		// incomplete until the session is reloaded.
+		if msg.Visible {
+			m.restoreOmittedAssistantItems()
+		}
 	case dialog.ActionSetCompactMode:
 		if err := m.com.Workspace.SetCompactMode(config.ScopeGlobal, msg.Enabled); err != nil {
 			cmds = append(cmds, util.ReportError(err))
@@ -2226,6 +2271,13 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		m.updateLayoutAndSize()
 	case dialog.ActionSetToolOutputMode:
 		cmds = append(cmds, m.applyToolOutputMode(msg.Tool, msg.Mode))
+		// The override can add a new per-tool row; rebuild the open dialog
+		// so it appears without reopening.
+		if dia := m.dialog.Dialog(dialog.PreferencesID); dia != nil {
+			if prefs, ok := dia.(*dialog.Preferences); ok {
+				prefs.Refresh()
+			}
+		}
 	case dialog.ActionSetToolOutputLimit:
 		cmds = append(cmds, m.applyToolOutputLimit(msg.Limit))
 	case dialog.ActionQuit:
@@ -3512,6 +3564,46 @@ func (m *UI) thinkingVisible() bool {
 		return true
 	}
 	return cfg.Options.TUI.ThinkingVisible()
+}
+
+// restoreOmittedAssistantItems inserts assistant items that extraction
+// skipped (their message had no visible content when thinking was hidden) but
+// that the current settings render. Items already in the chat are left
+// untouched, preserving selection and expansion state.
+func (m *UI) restoreOmittedAssistantItems() {
+	if m.session == nil {
+		return
+	}
+	msgs, err := m.com.Workspace.ListMessages(context.Background(), m.session.ID)
+	if err != nil {
+		return
+	}
+	byID := make(map[string]*message.Message, len(msgs))
+	for i := range msgs {
+		byID[msgs[i].ID] = &msgs[i]
+	}
+	for i := range m.chat.Len() {
+		item, ok := m.chat.ItemAt(i).(chat.ToolMessageItem)
+		if !ok {
+			continue
+		}
+		assistantID := item.MessageID()
+		if assistantID == "" || m.chat.MessageItem(assistantID) != nil {
+			continue
+		}
+		assistantMsg := byID[assistantID]
+		if assistantMsg == nil || !chat.ShouldRenderAssistantMessage(assistantMsg, m.thinkingVisible()) {
+			continue
+		}
+		assistantItem := chat.NewAssistantMessageItem(m.com.Styles, assistantMsg)
+		if assistant, ok := assistantItem.(*chat.AssistantMessageItem); ok {
+			assistant.SetThinkingVisible(m.thinkingVisible())
+		}
+		m.chat.InsertMessagesAt(i, assistantItem)
+		// The insertion shifted every index from i on; continue after the
+		// assistant item we just placed (i+1 holds it, i+2 the tool item).
+		i++
+	}
 }
 
 // toolOutputModeFor resolves the result body display mode and short-mode line

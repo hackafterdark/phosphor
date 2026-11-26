@@ -33,7 +33,7 @@ The `options.tui` section controls the terminal UI's look and feel.
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `theme` | string | `""` | Color theme — see below |
-|| `compact_mode` | bool | `false` | `true` forces the compact layout (sidebar collapsed) even in large terminals; the layout also kicks in automatically below 120 columns or 30 rows |
+| `compact_mode` | bool | `false` | `true` forces the compact layout (sidebar collapsed) even in large terminals; the layout also kicks in automatically below 120 columns or 30 rows |
 | `diff_mode` | string | `"unified"` | Diff display style: `"unified"` (single column) or `"split"` (side-by-side) |
 | `transparent` | bool | `false` | `true` renders the background transparent |
 | `show_thinking` | bool | `true` | `false` hides the agent's thinking output, leaving tool calls and the final response |

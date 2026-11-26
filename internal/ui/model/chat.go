@@ -272,6 +272,34 @@ func (m *Chat) AppendMessages(msgs ...chat.MessageItem) {
 	m.list.AppendItems(items...)
 }
 
+// InsertMessagesAt inserts message items at idx, shifting every item at or
+// after the insertion point (and its index-map entry) down. It is used to
+// restore items that extraction skipped but that became renderable later,
+// e.g. an assistant message whose text arrives after its tool items.
+func (m *Chat) InsertMessagesAt(idx int, msgs ...chat.MessageItem) {
+	if len(msgs) == 0 {
+		return
+	}
+	idx = max(0, min(idx, m.list.Len()))
+	// Shift indices at or after the insertion point by the inserted count.
+	for id, i := range m.idInxMap {
+		if i >= idx {
+			m.idInxMap[id] = i + len(msgs)
+		}
+	}
+	items := make([]list.Item, len(msgs))
+	for i, msg := range msgs {
+		m.idInxMap[msg.ID()] = idx + i
+		if container, ok := msg.(chat.NestedToolContainer); ok {
+			for _, nested := range container.NestedTools() {
+				m.idInxMap[nested.ID()] = idx + i
+			}
+		}
+		items[i] = msg
+	}
+	m.list.InsertItems(idx, items...)
+}
+
 // PrependMessages prepends new message items to the beginning of the chat list.
 func (m *Chat) PrependMessages(msgs ...chat.MessageItem) {
 	// Shift existing indices in the map

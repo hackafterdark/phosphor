@@ -182,9 +182,10 @@ func (p *Preferences) HandleMsg(msg tea.Msg) Action {
 			p.list.SetSelected(0)
 			// With no matches and typed text, offer the text as a new
 			// per-tool output override instead of showing an empty list.
+			// The prefix the user already typed is part of the tool name
+			// they are adding, so keep the input value in place.
 			if value != "" && len(p.list.FilteredItems()) == 0 {
 				p.addingTool = true
-				p.input.SetValue("")
 				p.input.Placeholder = "tool name to override"
 			}
 			return ActionCmd{cmd}
@@ -232,6 +233,7 @@ func (p *Preferences) cancelAdd() {
 	p.addingTool = false
 	p.input.SetValue("")
 	p.input.Placeholder = "Type to filter"
+	p.list.SetFilter("")
 	p.setItems()
 }
 
@@ -247,6 +249,7 @@ func (p *Preferences) commitAdd() Action {
 	p.addingTool = false
 	p.input.SetValue("")
 	p.input.Placeholder = "Type to filter"
+	p.list.SetFilter("")
 	p.setItems()
 	return ActionSetToolOutputMode{Tool: tool, Mode: mode}
 }
@@ -329,6 +332,16 @@ func (p *Preferences) FullHelp() [][]key.Binding {
 }
 
 func (p *Preferences) setItems() {
+	// Remember where the user was so callers that rebuild rows after a
+	// config change (Refresh) don't jump the selection. The filter term
+	// only survives for that path; cancelAdd/commitAdd clear it
+	// deliberately before rebuilding.
+	prevIdx := p.list.Selected()
+	prevFilter := p.input.Value()
+	if p.addingTool {
+		prevFilter = ""
+	}
+
 	cfg := p.com.Config()
 	thinkingVisible := true
 	compactMode := false
@@ -383,8 +396,26 @@ func (p *Preferences) setItems() {
 	}
 
 	p.list.SetItems(items...)
-	p.list.SetSelected(0)
-	p.list.ScrollToSelected()
+	if prevIdx >= 0 && prevIdx < len(items) {
+		p.list.SetSelected(prevIdx)
+		p.list.ScrollToSelected()
+	} else {
+		p.list.SetSelected(0)
+		p.list.ScrollToSelected()
+	}
+	if prevFilter != "" && !p.addingTool {
+		p.list.SetFilter(prevFilter)
+		p.list.ScrollToTop()
+		p.list.SetSelected(0)
+	}
+}
+
+// Refresh rebuilds the preference rows from the current configuration,
+// keeping the user's selection. It is called after a preference change that
+// can add rows (e.g. a new per-tool output override) so the dialog shows the
+// new row without reopening.
+func (p *Preferences) Refresh() {
+	p.setItems()
 }
 
 // Filter returns the filter value for the preference row.

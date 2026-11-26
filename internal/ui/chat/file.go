@@ -287,6 +287,12 @@ func (e *EditToolRenderContext) RenderTool(sty *styles.Styles, width int, opts *
 	// Get diff content from metadata.
 	var meta tools.EditResponseMetadata
 	if err := json.Unmarshal([]byte(opts.Result.Metadata), &meta); err != nil {
+		// Error results often carry no metadata; route them through the
+		// error renderer so the explanation stays visible even when the
+		// plain body is capped or collapsed away.
+		if opts.Result.IsError {
+			return joinToolParts(header, toolErrorContent(sty, opts.Result, width))
+		}
 		bodyWidth := width - toolBodyLeftPaddingTotal
 		body := sty.Tool.Body.Render(toolOutputPlainContent(sty, opts.Result.Content, bodyWidth, opts))
 		return joinToolParts(header, body)
@@ -377,6 +383,12 @@ func (m *MultiEditToolRenderContext) RenderTool(sty *styles.Styles, width int, o
 	// Get diff content from metadata.
 	var meta tools.MultiEditResponseMetadata
 	if err := json.Unmarshal([]byte(opts.Result.Metadata), &meta); err != nil {
+		// Error results often carry no metadata; route them through the
+		// error renderer so the explanation stays visible even when the
+		// plain body is capped or collapsed away.
+		if opts.Result.IsError {
+			return joinToolParts(header, toolErrorContent(sty, opts.Result, width))
+		}
 		bodyWidth := width - toolBodyLeftPaddingTotal
 		body := sty.Tool.Body.Render(toolOutputPlainContent(sty, opts.Result.Content, bodyWidth, opts))
 		return joinToolParts(header, body)
