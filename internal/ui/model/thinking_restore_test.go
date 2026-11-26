@@ -1,76 +1,77 @@
 package model
 
 import (
-	"context"
 	"testing"
 
 	"github.com/hackafterdark/phosphor/internal/ui/chat"
 	"github.com/hackafterdark/phosphor/internal/ui/common"
-	"github.com/hackafterdark/phosphor/pkg/config"
 	"github.com/hackafterdark/phosphor/pkg/message"
 	"github.com/hackafterdark/phosphor/pkg/session"
 	"github.com/stretchr/testify/require"
 )
 
-// thinkingRestoreWorkspace serves stored messages to the restoration path.
-type thinkingRestoreWorkspace struct {
-	toolOutputTestWorkspace
-	msgs []message.Message
-}
-
-func (w *thinkingRestoreWorkspace) ListMessages(context.Context, string) ([]message.Message, error) {
-	return w.msgs, nil
-}
-
-// TestRestoreOmittedAssistantItemsMultiple walks the thinking toggle-on path
-// with two reasoning-only assistant messages omitted at load and asserts
-// every one is restored directly before its tool items, verifying the
-// restore loop accounts for the index shifts its own insertions cause.
+// TestRestoreOmittedAssistantItemsMultiple loads two assistant messages that
+// each mix reasoning with a tool call through the real load-time extraction
+// with thinking hidden — the path that omits the assistant item while its
+// tool item is still created — and asserts the thinking toggle-on restore
+// re-inserts every omitted assistant directly before its own tool items,
+// verifying the restore loop accounts for the index shifts its own
+// insertions cause.
 func TestRestoreOmittedAssistantItemsMultiple(t *testing.T) {
 	t.Parallel()
 
-	mk := func(id, toolID string) (message.Message, message.Message) {
-		assistant := message.Message{
-			ID:    id,
-			Role:  message.Assistant,
-			Parts: []message.ContentPart{message.ReasoningContent{Thinking: "pondering " + id}},
-		}
-		tool := message.Message{
-			ID:    id + "-tools",
-			Role:  message.Assistant,
-			Parts: []message.ContentPart{message.ToolCall{ID: toolID, Name: "probe", Finished: true}},
-		}
-		return assistant, tool
+	msgs := []message.Message{
+		{
+			ID:   "a1",
+			Role: message.Assistant,
+			Parts: []message.ContentPart{
+				message.ReasoningContent{Thinking: "pondering a1", FinishedAt: 1},
+				message.ToolCall{ID: "tc1", Name: "probe", Finished: true},
+				message.Finish{Reason: message.FinishReasonToolUse, Time: 2},
+			},
+		},
+		{
+			ID:   "a2",
+			Role: message.Assistant,
+			Parts: []message.ContentPart{
+				message.ReasoningContent{Thinking: "pondering a2", FinishedAt: 1},
+				message.ToolCall{ID: "tc2", Name: "probe", Finished: true},
+				message.Finish{Reason: message.FinishReasonToolUse, Time: 2},
+			},
+		},
 	}
-	a1, t1 := mk("a1", "tc1")
-	a2, t2 := mk("a2", "tc2")
 
-	ws := &thinkingRestoreWorkspace{
-		toolOutputTestWorkspace: toolOutputTestWorkspace{cfg: &config.Config{Options: &config.Options{}}},
-		msgs:                    []message.Message{a1, t1, a2, t2},
-	}
 	com := common.DefaultCommon(nil)
-	com.Workspace = ws
 	ui := &UI{
-		com:     com,
-		chat:    NewChat(com),
-		session: &session.Session{ID: "s1"},
+		com:                com,
+		chat:               NewChat(com),
+		session:            &session.Session{ID: "s1"},
+		allSessionMessages: msgs,
 	}
 
-	// Load-time extraction with thinking hidden omits both assistant
-	// messages (reasoning-only), leaving just the two tool items.
-	ui.chat.AppendMessages(
-		chat.NewToolMessageItem(ui.com.Styles, a1.ID, t1.ToolCalls()[0], nil, false),
-		chat.NewToolMessageItem(ui.com.Styles, a2.ID, t2.ToolCalls()[0], nil, false),
-	)
-	require.Nil(t, ui.chat.MessageItem(a1.ID))
-	require.Nil(t, ui.chat.MessageItem(a2.ID))
+	// Load-time extraction with thinking hidden omits both assistant items
+	// (reasoning is their only content besides the tool call), leaving just
+	// the tool items parented to the omitted assistant messages.
+	// allSessionMessages is what the restoration path reads from, and it is
+	// seeded above exactly as session load would seed it.
+	ptrs := make([]*message.Message, len(msgs))
+	for i := range msgs {
+		ptrs[i] = &msgs[i]
+	}
+	toolResults := chat.BuildToolResultMap(ptrs)
+	for i := range msgs {
+		items := chat.ExtractMessageItems(ui.com.Styles, &msgs[i], toolResults, false, nil)
+		ui.chat.AppendMessages(items...)
+	}
+	require.Equal(t, 2, ui.chat.Len(), "thinking-hidden extraction must omit both assistant items")
+	require.Nil(t, ui.chat.MessageItem("a1"))
+	require.Nil(t, ui.chat.MessageItem("a2"))
 
 	ui.restoreOmittedAssistantItems()
 
 	// Both omitted assistant items must now exist...
-	require.NotNil(t, ui.chat.MessageItem(a1.ID))
-	require.NotNil(t, ui.chat.MessageItem(a2.ID))
+	require.NotNil(t, ui.chat.MessageItem("a1"))
+	require.NotNil(t, ui.chat.MessageItem("a2"))
 
 	// ...each directly before its own tool item, preserving transcript
 	// order (tool items identify by tool-call ID).
@@ -80,5 +81,5 @@ func TestRestoreOmittedAssistantItemsMultiple(t *testing.T) {
 		require.True(t, ok)
 		got = append(got, item.ID())
 	}
-	require.Equal(t, []string{a1.ID, "tc1", a2.ID, "tc2"}, got)
+	require.Equal(t, []string{"a1", "tc1", "a2", "tc2"}, got)
 }

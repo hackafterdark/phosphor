@@ -3569,18 +3569,16 @@ func (m *UI) thinkingVisible() bool {
 // restoreOmittedAssistantItems inserts assistant items that extraction
 // skipped (their message had no visible content when thinking was hidden) but
 // that the current settings render. Items already in the chat are left
-// untouched, preserving selection and expansion state.
+// untouched, preserving selection and expansion state. It reads from the
+// loaded message state rather than the database, so it performs no I/O in
+// `Update`.
 func (m *UI) restoreOmittedAssistantItems() {
 	if m.session == nil {
 		return
 	}
-	msgs, err := m.com.Workspace.ListMessages(context.Background(), m.session.ID)
-	if err != nil {
-		return
-	}
-	byID := make(map[string]*message.Message, len(msgs))
-	for i := range msgs {
-		byID[msgs[i].ID] = &msgs[i]
+	byID := make(map[string]*message.Message, len(m.allSessionMessages))
+	for i := range m.allSessionMessages {
+		byID[m.allSessionMessages[i].ID] = &m.allSessionMessages[i]
 	}
 	// Scan the current list state each pass and restart at the inserted
 	// assistant item: insertions shift every later index, so a fixed-range
