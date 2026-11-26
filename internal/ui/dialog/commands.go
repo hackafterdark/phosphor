@@ -594,12 +594,8 @@ func (c *Commands) defaultCommands() []*CommandItem {
 	}
 	commands = append(commands, NewCommandItem(c.com.Styles, "toggle_transparent", transparentLabel, "", ActionToggleTransparentBackground{}))
 
-	// Add thinking visibility toggle.
-	thinkingLabel := "Hide Thinking"
-	if cfg != nil && cfg.Options != nil && !cfg.Options.TUI.ThinkingVisible() {
-		thinkingLabel = "Show Thinking"
-	}
-	commands = append(commands, NewCommandItem(c.com.Styles, "toggle_thinking", thinkingLabel, "", ActionToggleThinking{}))
+	// Add display preferences dialog (thinking + per-tool output modes).
+	commands = append(commands, NewCommandItem(c.com.Styles, "display_preferences", "Display Preferences", "", ActionOpenDialog{DialogID: PreferencesID}))
 
 	commands = append(
 		commands,

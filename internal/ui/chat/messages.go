@@ -369,7 +369,17 @@ func cappedMessageWidth(availableWidth int) int {
 // thinkingVisible controls whether the assistant's reasoning trace is
 // rendered. Hiding it is display-only: the reasoning stays on the message and
 // in the model context.
-func ExtractMessageItems(sty *styles.Styles, msg *message.Message, toolResults map[string]message.ToolResult, thinkingVisible bool) []MessageItem {
+//
+// toolOutput resolves the result body display mode for each tool call
+// (normally toolOutputCfg.ModeFor). It is display-only too: results stay on
+// the message and in the model context.
+func ExtractMessageItems(
+	sty *styles.Styles,
+	msg *message.Message,
+	toolResults map[string]message.ToolResult,
+	thinkingVisible bool,
+	toolOutput func(tool string) (config.ToolOutputMode, int),
+) []MessageItem {
 	switch msg.Role {
 	case message.User:
 		r := attachments.NewRenderer(
@@ -396,13 +406,18 @@ func ExtractMessageItems(sty *styles.Styles, msg *message.Message, toolResults m
 				result = &tr
 				results = append(results, tr)
 			}
-			items = append(items, NewToolMessageItem(
+			toolItem := NewToolMessageItem(
 				sty,
 				msg.ID,
 				tc,
 				result,
 				msg.FinishReason() == message.FinishReasonCanceled,
-			))
+			)
+			if toolOutput != nil {
+				mode, limit := toolOutput(tc.Name)
+				toolItem.SetOutputMode(mode, limit)
+			}
+			items = append(items, toolItem)
 		}
 		// The turn's memories are attached to the assistant item from the same
 		// stored results the tool items render, so the pill and the tool rows can

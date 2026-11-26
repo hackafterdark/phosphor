@@ -20,6 +20,7 @@ import (
 	"github.com/hackafterdark/phosphor/internal/ui/styles"
 	"github.com/hackafterdark/phosphor/pkg/agent"
 	"github.com/hackafterdark/phosphor/pkg/agent/tools"
+	"github.com/hackafterdark/phosphor/pkg/config"
 	"github.com/hackafterdark/phosphor/pkg/hooks"
 	"github.com/hackafterdark/phosphor/pkg/message"
 )
@@ -52,6 +53,11 @@ type ToolMessageItem interface {
 	SetMessageID(id string)
 	SetStatus(status ToolStatus)
 	Status() ToolStatus
+	// SetOutputMode controls how much of the result body is displayed.
+	// It is display-only: the result stays on the message and in the
+	// model context. A limit of zero restores the UI default short-mode
+	// cap.
+	SetOutputMode(mode config.ToolOutputMode, limit int)
 }
 
 // Compactable is an interface for tool items that can render in a compacted mode.
@@ -98,6 +104,58 @@ type ToolRenderOpts struct {
 	Compact         bool
 	IsSpinning      bool
 	Status          ToolStatus
+	// OutputMode caps or expands the result body per the user's display
+	// preference. The empty value behaves as [config.ToolOutputShort].
+	OutputMode config.ToolOutputMode
+	// OutputLimit is the short-mode line cap. Zero falls back to the UI
+	// default (responseContextHeight).
+	OutputLimit int
+}
+
+// outputMode returns the effective display mode, defaulting to short.
+func (o *ToolRenderOpts) outputMode() config.ToolOutputMode {
+	if o.OutputMode == "" {
+		return config.DefaultToolOutputMode
+	}
+	return o.OutputMode
+}
+
+// outputLimit returns the effective short-mode line cap.
+func (o *ToolRenderOpts) outputLimit() int {
+	if o.OutputLimit <= 0 {
+		return responseContextHeight
+	}
+	return o.OutputLimit
+}
+
+// toolOutputMaxLines resolves the body line cap for the given display mode.
+// expanded always wins (the user clicked or pressed space). A negative
+// result means the body is suppressed entirely.
+func toolOutputMaxLines(mode config.ToolOutputMode, expanded bool, total, limit int) int {
+	if expanded {
+		return total
+	}
+	switch mode {
+	case config.ToolOutputCollapsed:
+		return -1
+	case config.ToolOutputFull:
+		return total
+	default:
+		if limit > 0 {
+			return limit
+		}
+		return responseContextHeight
+	}
+}
+
+// toolOutputBodyMode is the exempt display mode for content that must always
+// be visible (diffs, diagnostics). Collapsed is promoted to short so the
+// content renders up to the short-mode cap instead of disappearing.
+func toolOutputBodyMode(mode config.ToolOutputMode) config.ToolOutputMode {
+	if mode == config.ToolOutputCollapsed {
+		return config.ToolOutputShort
+	}
+	return mode
 }
 
 // IsPending returns true if the tool call is still pending (not finished and
@@ -158,6 +216,11 @@ type baseToolMessageItem struct {
 	sty             *styles.Styles
 	anim            *anim.Anim
 	expandedContent bool
+	// outputMode controls how much of the result body is displayed.
+	// The zero value renders short (today's default cap).
+	outputMode config.ToolOutputMode
+	// outputLimit is the short-mode line cap; zero uses the UI default.
+	outputLimit int
 }
 
 var _ Expandable = (*baseToolMessageItem)(nil)
@@ -335,6 +398,8 @@ func (t *baseToolMessageItem) RawRender(width int) string {
 			Compact:         t.isCompact,
 			IsSpinning:      t.isSpinning(),
 			Status:          t.computeStatus(),
+			OutputMode:      t.outputMode,
+			OutputLimit:     t.outputLimit,
 		})
 
 		// Prepend hook indicator if hooks ran for this tool call.
@@ -468,9 +533,25 @@ func (t *baseToolMessageItem) SetSpinningFunc(fn SpinningFunc) {
 // ToggleExpanded toggles the expanded state of the thinking box.
 func (t *baseToolMessageItem) ToggleExpanded() bool {
 	t.expandedContent = !t.expandedContent
+	// The item-level render cache is keyed only on width, so Bump alone
+	// leaves the frozen collapsed (or expanded) body in place; drop it so
+	// the next render picks up the new expansion state.
 	t.clearCache()
 	t.Bump()
 	return t.expandedContent
+}
+
+// SetOutputMode sets the result body display mode and refreshes the item.
+// It is display-only: the result stays on the message and in the model
+// context. A limit of zero restores the UI default short-mode cap.
+func (t *baseToolMessageItem) SetOutputMode(mode config.ToolOutputMode, limit int) {
+	if t.outputMode == mode && t.outputLimit == limit {
+		return
+	}
+	t.outputMode = mode
+	t.outputLimit = limit
+	t.clearCache()
+	t.Bump()
 }
 
 // Finished implements list.Item. A tool call is freezable once the
@@ -622,13 +703,13 @@ func toolHeader(sty *styles.Styles, status ToolStatus, name string, width int, n
 }
 
 // toolOutputPlainContent renders plain text with optional expansion support.
-func toolOutputPlainContent(sty *styles.Styles, content string, width int, expanded bool) string {
+func toolOutputPlainContent(sty *styles.Styles, content string, width int, opts *ToolRenderOpts) string {
 	content = stringext.NormalizeSpace(content)
 	lines := strings.Split(content, "\n")
 
-	maxLines := responseContextHeight
-	if expanded {
-		maxLines = len(lines) // Show all
+	maxLines := toolOutputMaxLines(opts.outputMode(), opts.ExpandedContent, len(lines), opts.outputLimit())
+	if maxLines < 0 {
+		return ""
 	}
 
 	var out []string
@@ -643,25 +724,25 @@ func toolOutputPlainContent(sty *styles.Styles, content string, width int, expan
 		out = append(out, sty.Tool.ContentLine.Width(width).Render(ln))
 	}
 
-	wasTruncated := len(lines) > responseContextHeight
+	wasTruncated := len(lines) > maxLines
 
-	if !expanded && wasTruncated {
+	if !opts.ExpandedContent && wasTruncated {
 		out = append(out, sty.Tool.ContentTruncation.
 			Width(width).
-			Render(fmt.Sprintf(assistantMessageTruncateFormat, len(lines)-responseContextHeight)))
+			Render(fmt.Sprintf(assistantMessageTruncateFormat, len(lines)-maxLines)))
 	}
 
 	return strings.Join(out, "\n")
 }
 
 // toolOutputCodeContent renders code with syntax highlighting and line numbers.
-func toolOutputCodeContent(sty *styles.Styles, path, content string, offset, width int, expanded bool) string {
+func toolOutputCodeContent(sty *styles.Styles, path, content string, offset, width int, opts *ToolRenderOpts) string {
 	content = stringext.NormalizeSpace(content)
 
 	lines := strings.Split(content, "\n")
-	maxLines := responseContextHeight
-	if expanded {
-		maxLines = len(lines)
+	maxLines := toolOutputMaxLines(opts.outputMode(), opts.ExpandedContent, len(lines), opts.outputLimit())
+	if maxLines < 0 {
+		return ""
 	}
 
 	// Truncate if needed.
@@ -697,7 +778,7 @@ func toolOutputCodeContent(sty *styles.Styles, path, content string, offset, wid
 	}
 
 	// Add truncation message if needed.
-	if len(lines) > maxLines && !expanded {
+	if len(lines) > maxLines && !opts.ExpandedContent {
 		out = append(
 			out, sty.Tool.ContentCodeTruncation.
 				Width(width).
@@ -932,7 +1013,7 @@ func formatSize(bytes int) string {
 }
 
 // toolOutputDiffContent renders a diff between old and new content.
-func toolOutputDiffContent(sty *styles.Styles, file, oldContent, newContent string, width int, expanded bool) string {
+func toolOutputDiffContent(sty *styles.Styles, file, oldContent, newContent string, width int, opts *ToolRenderOpts) string {
 	bodyWidth := width - toolBodyLeftPaddingTotal
 
 	formatter := common.DiffFormatter(sty).
@@ -948,13 +1029,14 @@ func toolOutputDiffContent(sty *styles.Styles, file, oldContent, newContent stri
 	formatted := formatter.String()
 	lines := strings.Split(formatted, "\n")
 
-	// Truncate if needed.
-	maxLines := responseContextHeight
-	if expanded {
-		maxLines = len(lines)
+	// Truncate if needed. Diffs are exempt content: collapsed still
+	// renders them up to the short-mode cap.
+	maxLines := toolOutputMaxLines(toolOutputBodyMode(opts.outputMode()), opts.ExpandedContent, len(lines), opts.outputLimit())
+	if maxLines < 0 {
+		return ""
 	}
 
-	if len(lines) > maxLines && !expanded {
+	if len(lines) > maxLines && !opts.ExpandedContent {
 		truncMsg := sty.Tool.DiffTruncation.
 			Width(bodyWidth).
 			Render(fmt.Sprintf(assistantMessageTruncateFormat, len(lines)-maxLines))
@@ -982,7 +1064,7 @@ func formatNonZero(value int) string {
 }
 
 // toolOutputMultiEditDiffContent renders a diff with optional failed edits note.
-func toolOutputMultiEditDiffContent(sty *styles.Styles, file string, meta tools.MultiEditResponseMetadata, totalEdits, width int, expanded bool) string {
+func toolOutputMultiEditDiffContent(sty *styles.Styles, file string, meta tools.MultiEditResponseMetadata, totalEdits, width int, opts *ToolRenderOpts) string {
 	bodyWidth := width - toolBodyLeftPaddingTotal
 
 	formatter := common.DiffFormatter(sty).
@@ -998,13 +1080,14 @@ func toolOutputMultiEditDiffContent(sty *styles.Styles, file string, meta tools.
 	formatted := formatter.String()
 	lines := strings.Split(formatted, "\n")
 
-	// Truncate if needed.
-	maxLines := responseContextHeight
-	if expanded {
-		maxLines = len(lines)
+	// Truncate if needed. Diffs are exempt content: collapsed still
+	// renders them up to the short-mode cap.
+	maxLines := toolOutputMaxLines(toolOutputBodyMode(opts.outputMode()), opts.ExpandedContent, len(lines), opts.outputLimit())
+	if maxLines < 0 {
+		return ""
 	}
 
-	if len(lines) > maxLines && !expanded {
+	if len(lines) > maxLines && !opts.ExpandedContent {
 		truncMsg := sty.Tool.DiffTruncation.
 			Width(bodyWidth).
 			Render(fmt.Sprintf(assistantMessageTruncateFormat, len(lines)-maxLines))
@@ -1041,7 +1124,7 @@ func roundedEnumerator(lPadding, width int) tree.Enumerator {
 }
 
 // toolOutputMarkdownContent renders markdown content with optional truncation.
-func toolOutputMarkdownContent(sty *styles.Styles, content string, width int, expanded bool) string {
+func toolOutputMarkdownContent(sty *styles.Styles, content string, width int, opts *ToolRenderOpts) string {
 	content = stringext.NormalizeSpace(content)
 
 	// Cap width for readability.
@@ -1055,13 +1138,13 @@ func toolOutputMarkdownContent(sty *styles.Styles, content string, width int, ex
 	rendered, err := renderer.Render(content)
 	mu.Unlock()
 	if err != nil {
-		return toolOutputPlainContent(sty, content, width, expanded)
+		return toolOutputPlainContent(sty, content, width, opts)
 	}
 
 	lines := strings.Split(rendered, "\n")
-	maxLines := responseContextHeight
-	if expanded {
-		maxLines = len(lines)
+	maxLines := toolOutputMaxLines(opts.outputMode(), opts.ExpandedContent, len(lines), opts.outputLimit())
+	if maxLines < 0 {
+		return ""
 	}
 
 	var out []string
@@ -1072,7 +1155,7 @@ func toolOutputMarkdownContent(sty *styles.Styles, content string, width int, ex
 		out = append(out, ln)
 	}
 
-	if len(lines) > maxLines && !expanded {
+	if len(lines) > maxLines && !opts.ExpandedContent {
 		out = append(
 			out, sty.Tool.ContentTruncation.
 				Width(width).

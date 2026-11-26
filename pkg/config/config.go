@@ -489,6 +489,81 @@ type TUIOptions struct {
 
 	// Sidebar configures the right sidebar layout.
 	Sidebar *SidebarLayoutConfig `json:"sidebar,omitempty" jsonschema:"description=Configuration for the right sidebar layout"`
+
+	// ToolOutput configures how much of each tool's result is displayed.
+	ToolOutput *ToolOutput `json:"tool_output,omitempty" jsonschema:"description=Tool result display options"`
+}
+
+// ToolOutputMode describes how much of a tool result is displayed.
+type ToolOutputMode string
+
+const (
+	// ToolOutputCollapsed shows only the tool header, hiding the result body.
+	ToolOutputCollapsed ToolOutputMode = "collapsed"
+	// ToolOutputShort shows the default capped number of result lines.
+	ToolOutputShort ToolOutputMode = "short"
+	// ToolOutputFull shows the entire result body.
+	ToolOutputFull ToolOutputMode = "full"
+)
+
+// DefaultToolOutputMode is the mode used when nothing is configured.
+const DefaultToolOutputMode = ToolOutputShort
+
+// ToolOutputDisplayModes lists the valid modes in display order.
+var ToolOutputDisplayModes = []ToolOutputMode{
+	ToolOutputCollapsed,
+	ToolOutputShort,
+	ToolOutputFull,
+}
+
+// ParseToolOutputMode parses a mode string; unknown values map to
+// [DefaultToolOutputMode] so a malformed config degrades to today's behavior.
+func ParseToolOutputMode(s string) ToolOutputMode {
+	for _, m := range ToolOutputDisplayModes {
+		if string(m) == s {
+			return m
+		}
+	}
+	return DefaultToolOutputMode
+}
+
+// ToolOutput configures how tool result bodies are displayed in the chat.
+// It is display-only: tool results stay in the stored messages and in the
+// model context regardless of this setting.
+type ToolOutput struct {
+	// Default applies to every tool without a per-tool override.
+	Default ToolOutputMode `json:"default,omitempty" jsonschema:"description=Display mode for tools without a per-tool override,enum=collapsed,enum=short,enum=full,default=short"`
+	// PerTool overrides the default for specific tool names (e.g. "bash").
+	// An empty override value falls back to Default.
+	PerTool map[string]ToolOutputMode `json:"per_tool,omitempty" jsonschema:"description=Per-tool display mode overrides keyed by tool name"`
+	// Limit is the number of result lines shown in short mode. Unset uses
+	// the UI default. It does not affect full mode or user-expanded output.
+	Limit *int `json:"limit,omitempty" jsonschema:"description=Line cap for short-mode tool output,default=10"`
+}
+
+// ModeFor returns the display mode for the given tool, falling back to the
+// default (short) for unset values.
+func (t *ToolOutput) ModeFor(tool string) ToolOutputMode {
+	if t == nil {
+		return DefaultToolOutputMode
+	}
+	mode := DefaultToolOutputMode
+	if t.Default != "" {
+		mode = ParseToolOutputMode(string(t.Default))
+	}
+	if ov, ok := t.PerTool[tool]; ok && ov != "" {
+		mode = ParseToolOutputMode(string(ov))
+	}
+	return mode
+}
+
+// LineLimit returns the configured short-mode line cap, or 0 when unset
+// (unset means the UI default applies).
+func (t *ToolOutput) LineLimit() int {
+	if t == nil || t.Limit == nil || *t.Limit <= 0 {
+		return 0
+	}
+	return *t.Limit
 }
 
 // HistoryLimits returns the user-defined history_limit and history_batch_size, or their defaults.

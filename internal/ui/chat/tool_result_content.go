@@ -40,20 +40,20 @@ func looksLikeMarkdown(content string) bool {
 	return false
 }
 
-func renderToolResultTextContent(sty *styles.Styles, content string, widths toolResultContentWidths, expanded bool) string {
+func renderToolResultTextContent(sty *styles.Styles, content string, widths toolResultContentWidths, opts *ToolRenderOpts) string {
 	var result json.RawMessage
 	if err := json.Unmarshal([]byte(content), &result); err == nil {
 		prettyResult, err := json.MarshalIndent(result, "", "  ")
 		if err == nil {
-			return sty.Tool.Body.Render(toolOutputCodeContent(sty, "result.json", string(prettyResult), 0, widths.Body, expanded))
+			return sty.Tool.Body.Render(toolOutputCodeContent(sty, "result.json", string(prettyResult), 0, widths.Body, opts))
 		}
-		return sty.Tool.Body.Render(toolOutputPlainContent(sty, content, widths.Body, expanded))
+		return sty.Tool.Body.Render(toolOutputPlainContent(sty, content, widths.Body, opts))
 	}
 	if diffdetect.IsUnifiedDiff(content) {
-		return toolOutputDiffContentFromUnified(sty, content, widths.Diff, expanded)
+		return toolOutputDiffContentFromUnified(sty, content, widths.Diff, opts)
 	}
 	if looksLikeMarkdown(content) {
-		return sty.Tool.Body.Render(toolOutputCodeContent(sty, "result.md", content, 0, widths.Body, expanded))
+		return sty.Tool.Body.Render(toolOutputCodeContent(sty, "result.md", content, 0, widths.Body, opts))
 	}
-	return sty.Tool.Body.Render(toolOutputPlainContent(sty, content, widths.Body, expanded))
+	return sty.Tool.Body.Render(toolOutputPlainContent(sty, content, widths.Body, opts))
 }

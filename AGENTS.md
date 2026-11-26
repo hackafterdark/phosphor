@@ -44,7 +44,6 @@ internal/
   permission/                      Tool permission checking and allow-lists
   skills/                          Skill file discovery and loading
   shell/                           Bash command execution with background job support
-  event/                           Telemetry (PostHog)
   pubsub/                          Internal pub/sub for cross-component messaging
   filetracker/                     Tracks files touched per session
   history/                         Prompt history

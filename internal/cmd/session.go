@@ -420,11 +420,16 @@ func outputSessionHuman(ctx context.Context, cfg *config.ConfigStore, sess sessi
 	var themeOpt string
 	var workingDir string
 	thinkingVisible := true
+	var toolOutput func(string) (config.ToolOutputMode, int)
 	if cfg != nil {
 		providerID = cfg.Config().Models[config.SelectedModelTypeLarge].Provider
 		if cfg.Config().Options != nil && cfg.Config().Options.TUI != nil {
 			themeOpt = cfg.Config().Options.TUI.Theme
 			thinkingVisible = cfg.Config().Options.TUI.ThinkingVisible()
+			toolOutput = func(tool string) (config.ToolOutputMode, int) {
+				t := cfg.Config().Options.TUI.ToolOutput
+				return t.ModeFor(tool), t.LineLimit()
+			}
 		}
 		workingDir = cfg.WorkingDir()
 	}
@@ -469,7 +474,7 @@ func outputSessionHuman(ctx context.Context, cfg *config.ConfigStore, sess sessi
 
 	first := true
 	for _, msg := range msgs {
-		items := chat.ExtractMessageItems(&styles, msg, toolResults, thinkingVisible)
+		items := chat.ExtractMessageItems(&styles, msg, toolResults, thinkingVisible, toolOutput)
 		for _, item := range items {
 			if !first {
 				fmt.Fprintln(&buf)
