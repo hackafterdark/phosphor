@@ -3582,8 +3582,11 @@ func (m *UI) restoreOmittedAssistantItems() {
 	for i := range msgs {
 		byID[msgs[i].ID] = &msgs[i]
 	}
-	for i := range m.chat.Len() {
-		item, ok := m.chat.ItemAt(i).(chat.ToolMessageItem)
+	// Scan the current list state each pass and restart at the inserted
+	// assistant item: insertions shift every later index, so a fixed-range
+	// loop would skip the next candidate after the first insertion.
+	for pos := 0; pos < m.chat.Len(); pos++ {
+		item, ok := m.chat.ItemAt(pos).(chat.ToolMessageItem)
 		if !ok {
 			continue
 		}
@@ -3599,10 +3602,12 @@ func (m *UI) restoreOmittedAssistantItems() {
 		if assistant, ok := assistantItem.(*chat.AssistantMessageItem); ok {
 			assistant.SetThinkingVisible(m.thinkingVisible())
 		}
-		m.chat.InsertMessagesAt(i, assistantItem)
-		// The insertion shifted every index from i on; continue after the
-		// assistant item we just placed (i+1 holds it, i+2 the tool item).
-		i++
+		m.chat.InsertMessagesAt(pos, assistantItem)
+		// pos now holds the inserted assistant item; the tool item sits at
+		// pos+1. The next scan pass starts at pos and only sees already
+		// restored assistants (and the untouched tool item), so progress
+		// is guaranteed and no candidate is skipped.
+		pos--
 	}
 }
 
