@@ -250,6 +250,13 @@ type sessionAgent struct {
 	messageQueue   *csync.Map[string, []SessionAgentCall]
 	activeRequests *csync.Map[string, context.CancelFunc]
 
+	// titleWG tracks the detached session-title goroutines spawned by Run.
+	// It exists so tests can wait for title generation to finish before
+	// closing the database: on Windows the SQLite handles stay open until
+	// the goroutine exits, and cleanup that deletes the temp data dir
+	// mid-flight fails with "used by another process".
+	titleWG sync.WaitGroup
+
 	// dispatchMu holds a per-session mutex that serializes the
 	// accepted -> (cancel-on-entry | queued | active) transition in
 	// Run against a concurrent Cancel. The lock is held only during
@@ -2002,7 +2009,9 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 				}
 				if userMsgCount == 1 {
 					titleCtx, titleCancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+					a.titleWG.Add(1)
 					go func() {
+						defer a.titleWG.Done()
 						defer titleCancel()
 						a.GenerateTitle(titleCtx, call.SessionID, stripRunContext(cmp.Or(call.UserPrompt, call.Prompt)))
 					}()
@@ -3257,8 +3266,6 @@ func (a *sessionAgent) openrouterCost(metadata fantasy.ProviderMetadata) *float6
 	}
 	return &opts.Usage.Cost
 }
-
-
 
 func (a *sessionAgent) updateSessionUsage(ctx context.Context, model Model, session *session.Session, usage fantasy.Usage, overrideCost *float64, estimated bool) {
 	if !usageIsZero(usage) {

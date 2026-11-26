@@ -23,7 +23,7 @@ func TestReconcileStaleTodosDemotesInProgress(t *testing.T) {
 	_, err = env.sessions.Save(t.Context(), sess)
 	require.NoError(t, err)
 
-	sa := testSessionAgent(env, nil, nil, "system").(*sessionAgent)
+	sa := testSessionAgent(t, env, nil, nil, "system").(*sessionAgent)
 	sa.reconcileStaleTodos(t.Context(), sess.ID)
 
 	got, err := env.sessions.Get(t.Context(), sess.ID)
@@ -48,7 +48,7 @@ func TestReconcileStaleTodosPreservesConcurrentTitle(t *testing.T) {
 	_, err = env.sessions.Save(t.Context(), sess)
 	require.NoError(t, err)
 
-	sa := testSessionAgent(env, nil, nil, "system").(*sessionAgent)
+	sa := testSessionAgent(t, env, nil, nil, "system").(*sessionAgent)
 	// Interleave: the title update commits after the reconcile's read
 	// point (a fresh Get here yields the same pre-title snapshot).
 	require.NoError(t, env.sessions.UpdateTitleAndUsage(t.Context(), sess.ID, "Generated Title", 10, 5, 0.42))
@@ -80,7 +80,7 @@ func TestReconcileStaleTodosLeavesCleanListAlone(t *testing.T) {
 	// that no session UpdatedEvent is published during reconciliation.
 	events := env.sessions.Subscribe(t.Context())
 
-	sa := testSessionAgent(env, nil, nil, "system").(*sessionAgent)
+	sa := testSessionAgent(t, env, nil, nil, "system").(*sessionAgent)
 	sa.reconcileStaleTodos(t.Context(), sess.ID)
 
 	select {

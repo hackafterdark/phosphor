@@ -50,7 +50,7 @@ func TestSummarize_AppliesWireRedactionToHistory(t *testing.T) {
 
 	env := testEnv(t)
 	rec := &recordingStreamModel{finishStreamModel: finishStreamModel{text: "summary"}}
-	agent := testSessionAgent(env, rec, rec, "system").(*sessionAgent)
+	agent := testSessionAgent(t, env, rec, rec, "system").(*sessionAgent)
 	agent.wireSecretsForced = true
 
 	session, err := env.sessions.Create(t.Context(), "New Session")
@@ -80,7 +80,7 @@ func TestGenerateTitle_AppliesWireRedactionToPrompt(t *testing.T) {
 
 	env := testEnv(t)
 	rec := &recordingStreamModel{finishStreamModel: finishStreamModel{text: "My Title"}}
-	agent := testSessionAgent(env, rec, rec, "system").(*sessionAgent)
+	agent := testSessionAgent(t, env, rec, rec, "system").(*sessionAgent)
 	agent.wireSecretsForced = true
 
 	session, err := env.sessions.Create(t.Context(), "New Session")

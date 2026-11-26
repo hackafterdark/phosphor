@@ -115,7 +115,7 @@ func newTruncatedCallTestAgent(t *testing.T) (*sessionAgent, fakeEnv, *truncated
 			return fantasy.NewTextResponse("probe ran"), nil
 		},
 	)
-	sa := testSessionAgent(env, model, model, "system", probe).(*sessionAgent)
+	sa := testSessionAgent(t, env, model, model, "system", probe).(*sessionAgent)
 	return sa, env, model
 }
 

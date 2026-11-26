@@ -61,7 +61,7 @@ func newStreamTestAgent(t *testing.T) (*sessionAgent, fakeEnv) {
 	t.Helper()
 	env := testEnv(t)
 	model := &finishStreamModel{text: "done"}
-	sa := testSessionAgent(env, model, model, "system").(*sessionAgent)
+	sa := testSessionAgent(t, env, model, model, "system").(*sessionAgent)
 	return sa, env
 }
 
