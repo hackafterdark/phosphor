@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestThemeBuiltin(t *testing.T) {
@@ -219,18 +221,21 @@ primary: "#000003"
 // The bundled example themes are compiled into the binary and must be
 // selectable by name without any theme files on disk.
 func TestThemeBuiltinExample(t *testing.T) {
-	for _, name := range []string{"synthwave", "poison", "gold-terminal", "afterdark-gothic"} {
+	// Keep a user-level theme file from masking a missing bundled theme.
+	t.Setenv("PHOSPHOR_GLOBAL_CONFIG", t.TempDir())
+
+	for name, palette := range builtinExampleThemes {
+		require.NotNil(t, palette.Primary, "bundled theme %q has no primary color", name)
 		s := Theme(name, "openai", "")
-		if hex(s.WorkingGradFromColor) == nil {
-			t.Errorf("expected theme %q to resolve to bundled example", name)
-		}
+		require.Equal(t, *hex(parseColor(palette.Primary, nil)),
+			*hex(s.WorkingGradFromColor),
+			"theme %q should resolve to its bundled primary color", name)
 	}
 
 	// Unknown names still fall back to the provider default.
 	unknown := Theme("nonexistent-theme", "openai", "")
-	if hex(unknown.Background) == nil || *hex(unknown.Background) != *hex(CharmtonePantera().Background) {
-		t.Errorf("expected unknown theme to fall back to default")
-	}
+	require.Equal(t, *hex(CharmtonePantera().Background), *hex(unknown.Background),
+		"unknown theme should fall back to the default")
 }
 
 // A file theme with the same name as a bundled example wins, so users can

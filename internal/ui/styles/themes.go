@@ -413,7 +413,7 @@ func ListThemes(workingDir string) []ThemeInfo {
 			}
 			name := e.Name()
 			ext := filepath.Ext(name)
-			if !extensions[strings.ToLower(ext)] {
+			if !extensions[ext] {
 				continue
 			}
 			theme := strings.TrimSuffix(name, ext)

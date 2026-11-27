@@ -2286,6 +2286,8 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		cmds = append(cmds, m.applyToolOutputLimit(msg.Limit))
 	case dialog.ActionSetTheme:
 		m.dialog.CloseDialog(dialog.ThemesID)
+		// The live swap happens immediately; persistence runs in a
+		// tea.Cmd so no I/O blocks the update loop.
 		cfg := m.com.Config()
 		if cfg == nil || cfg.Options == nil {
 			cmds = append(cmds, util.ReportWarn("Config not loaded"))
@@ -2295,10 +2297,6 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			cfg.Options.TUI = &config.TUIOptions{}
 		}
 		cfg.Options.TUI.Theme = msg.Name
-		if err := m.com.Workspace.SetConfigField(config.ScopeGlobal, "options.tui.theme", msg.Name); err != nil {
-			cmds = append(cmds, util.ReportError(err))
-			break
-		}
 		// The provider ID is not consulted for the default (empty) theme,
 		// and file themes fall back to the default provider base anyway.
 		m.applyTheme(styles.Theme(msg.Name, "", m.com.Workspace.WorkingDir()))
@@ -2312,6 +2310,7 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			label = "default"
 		}
 		cmds = append(cmds, util.ReportInfo("Theme set to "+label))
+		cmds = append(cmds, m.persistConfigField(config.ScopeGlobal, "options.tui.theme", msg.Name))
 	case dialog.ActionQuit:
 		cmds = append(cmds, tea.Quit)
 	case dialog.ActionEnableDockerMCP:
