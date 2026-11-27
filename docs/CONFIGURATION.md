@@ -37,6 +37,11 @@ files. The configuration is organized into topical reference pages under
    phosphor login xai        # xAI (Grok subscription)
    ```
 
+   Check the provider's current terms of service before using these flows —
+   some providers restrict third-party clients on subscription accounts, and
+   policies can change. See
+   [Providers & Models](configuration/PROVIDERS_AND_MODELS.md#oauth-login-for-subscription-providers).
+
    For a local model, see [Local Models](configuration/LOCAL_MODELS.md).
 
 2. **Run it and select a model.** Launch `phosphor` in your project and press

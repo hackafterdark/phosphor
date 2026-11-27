@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestThemeBuiltin(t *testing.T) {
@@ -213,5 +215,44 @@ primary: "#000003"
 	hex3 := hex(styles3.WorkingGradFromColor)
 	if hex3 == nil || *hex3 != "#000001" {
 		t.Errorf("expected primary #000001, got %v", hex3)
+	}
+}
+
+// The bundled example themes are compiled into the binary and must be
+// selectable by name without any theme files on disk.
+func TestThemeBuiltinExample(t *testing.T) {
+	// Keep a user-level theme file from masking a missing bundled theme.
+	t.Setenv("PHOSPHOR_GLOBAL_CONFIG", t.TempDir())
+
+	for name, palette := range builtinExampleThemes {
+		require.NotNil(t, palette.Primary, "bundled theme %q has no primary color", name)
+		s := Theme(name, "openai", "")
+		require.Equal(t, *hex(parseColor(palette.Primary, nil)),
+			*hex(s.WorkingGradFromColor),
+			"theme %q should resolve to its bundled primary color", name)
+	}
+
+	// Unknown names still fall back to the provider default.
+	unknown := Theme("nonexistent-theme", "openai", "")
+	require.Equal(t, *hex(CharmtonePantera().Background), *hex(unknown.Background),
+		"unknown theme should fall back to the default")
+}
+
+// A file theme with the same name as a bundled example wins, so users can
+// copy an example and customize it.
+func TestThemeFileOverridesBuiltinExample(t *testing.T) {
+	wsDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(wsDir, ".phosphor", "themes"), 0o755); err != nil {
+		t.Fatalf("failed to create dirs: %v", err)
+	}
+	contents := "primary: \"#123456\"\n"
+	if err := os.WriteFile(filepath.Join(wsDir, ".phosphor", "themes", "synthwave.yaml"), []byte(contents), 0o644); err != nil {
+		t.Fatalf("failed to write theme: %v", err)
+	}
+
+	s := Theme("synthwave", "openai", wsDir)
+	h := hex(s.WorkingGradFromColor)
+	if h == nil || *h != "#123456" {
+		t.Errorf("expected workspace file to override bundled example, got %v", h)
 	}
 }

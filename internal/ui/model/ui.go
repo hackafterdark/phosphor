@@ -2284,6 +2284,33 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		}
 	case dialog.ActionSetToolOutputLimit:
 		cmds = append(cmds, m.applyToolOutputLimit(msg.Limit))
+	case dialog.ActionSetTheme:
+		m.dialog.CloseDialog(dialog.ThemesID)
+		// The live swap happens immediately; persistence runs in a
+		// tea.Cmd so no I/O blocks the update loop.
+		cfg := m.com.Config()
+		if cfg == nil || cfg.Options == nil {
+			cmds = append(cmds, util.ReportWarn("Config not loaded"))
+			break
+		}
+		if cfg.Options.TUI == nil {
+			cfg.Options.TUI = &config.TUIOptions{}
+		}
+		cfg.Options.TUI.Theme = msg.Name
+		// The provider ID is not consulted for the default (empty) theme,
+		// and file themes fall back to the default provider base anyway.
+		m.applyTheme(styles.Theme(msg.Name, "", m.com.Workspace.WorkingDir()))
+		// The theme row in the preferences dialog (if open) should reflect
+		// the new value.
+		if pref, ok := m.dialog.Dialog(dialog.PreferencesID).(*dialog.Preferences); ok {
+			pref.Refresh()
+		}
+		label := msg.Name
+		if label == "" {
+			label = "default"
+		}
+		cmds = append(cmds, util.ReportInfo("Theme set to "+label))
+		cmds = append(cmds, m.persistConfigField(config.ScopeGlobal, "options.tui.theme", msg.Name))
 	case dialog.ActionQuit:
 		cmds = append(cmds, tea.Quit)
 	case dialog.ActionEnableDockerMCP:
@@ -4955,6 +4982,12 @@ func (m *UI) openDialog(id string) tea.Cmd {
 		if cmd := m.openPreferencesDialog(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
+	case dialog.ThemesID:
+		if m.dialog.ContainsDialog(dialog.ThemesID) {
+			m.dialog.BringToFront(dialog.ThemesID)
+			break
+		}
+		m.dialog.OpenDialog(dialog.NewThemes(m.com))
 	case dialog.FilePickerID:
 		if cmd := m.openFilesDialog(); cmd != nil {
 			cmds = append(cmds, cmd)
@@ -5610,13 +5643,20 @@ func (m *UI) handlePermissionNotification(notification permission.PermissionNoti
 	}
 
 	// If this notification reflects a final resolution (granted or denied),
-	// dismiss any open permissions dialog whose tool call ID matches. This
-	// covers the case where another client resolved the request remotely.
+	// dismiss any open permissions dialog whose request ID matches. The ID
+	// is required: notifications without one (auto-approve shortcuts) or
+	// carrying a different request's ID (e.g. the execute-permission grant
+	// that precedes a sandbox escalation prompt on the same tool call) must
+	// never close this dialog. This covers the case where another client
+	// resolved the request remotely.
 	if !notification.Granted && !notification.Denied {
 		return
 	}
+	if notification.RequestID == "" {
+		return
+	}
 	if d := m.dialog.Dialog(dialog.PermissionsID); d != nil {
-		if perm, ok := d.(*dialog.Permissions); ok && perm.ToolCallID() == notification.ToolCallID {
+		if perm, ok := d.(*dialog.Permissions); ok && perm.RequestID() == notification.RequestID {
 			m.dialog.CloseDialog(dialog.PermissionsID)
 		}
 	}

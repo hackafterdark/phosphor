@@ -31,6 +31,7 @@ func TestHandlePermissionNotification_RemoteGrantClosesDialog(t *testing.T) {
 	u.handlePermissionNotification(permission.PermissionNotification{
 		ToolCallID: "tool-call-X",
 		Granted:    true,
+		RequestID:  "perm-1",
 	})
 
 	require.False(t, u.dialog.ContainsDialog(dialog.PermissionsID),
@@ -50,6 +51,7 @@ func TestHandlePermissionNotification_RemoteDenyClosesDialog(t *testing.T) {
 	u.handlePermissionNotification(permission.PermissionNotification{
 		ToolCallID: "tool-call-Y",
 		Denied:     true,
+		RequestID:  "perm-2",
 	})
 
 	require.False(t, u.dialog.ContainsDialog(dialog.PermissionsID),
@@ -93,4 +95,51 @@ func TestHandlePermissionNotification_DifferentToolCallIDDoesNotClose(t *testing
 
 	require.True(t, u.dialog.ContainsDialog(dialog.PermissionsID),
 		"notification for unrelated tool call must not close the dialog")
+}
+
+// The escalation race: a bash command raises the execute-permission request
+// and then, for the same tool call, a sandbox escalation request. When the
+// execute grant is resolved (or auto-approved), its terminal notification
+// must not close the escalation dialog — otherwise the user cannot answer
+// the escalation prompt and the tool hangs until the run is cancelled.
+func TestHandlePermissionNotification_SameToolCallIDDifferentRequest(t *testing.T) {
+	t.Parallel()
+
+	u := newTestUIForPermissions()
+	escalation := permission.PermissionRequest{
+		ID:         "perm-escalation",
+		ToolCallID: "tool-call-shared",
+		ToolName:   "bash",
+	}
+	u.dialog.OpenDialogWithGrace(dialog.NewPermissions(u.com, escalation))
+
+	// Terminal notification for the execute request of the same tool call.
+	u.handlePermissionNotification(permission.PermissionNotification{
+		ToolCallID: "tool-call-shared",
+		Granted:    true,
+		RequestID:  "perm-execute",
+	})
+
+	require.True(t, u.dialog.ContainsDialog(dialog.PermissionsID),
+		"a different request's resolution must not close the escalation dialog")
+
+	// Shortcut grants (auto-approve) carry no request ID at all and must
+	// never close the dialog either.
+	u.handlePermissionNotification(permission.PermissionNotification{
+		ToolCallID: "tool-call-shared",
+		Granted:    true,
+	})
+
+	require.True(t, u.dialog.ContainsDialog(dialog.PermissionsID),
+		"shortcut grant without request ID must not close the dialog")
+
+	// The escalation request's own resolution still closes it.
+	u.handlePermissionNotification(permission.PermissionNotification{
+		ToolCallID: "tool-call-shared",
+		Denied:     true,
+		RequestID:  "perm-escalation",
+	})
+
+	require.False(t, u.dialog.ContainsDialog(dialog.PermissionsID),
+		"the escalation request's own resolution must close the dialog")
 }

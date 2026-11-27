@@ -77,6 +77,11 @@ type (
 	ActionSetToolOutputLimit struct {
 		Limit int
 	}
+	// ActionSetTheme is emitted by the theme selector dialog to activate a
+	// theme by name. An empty Name selects the provider-based default.
+	ActionSetTheme struct {
+		Name string
+	}
 	ActionInitializeProject struct{}
 	ActionSummarize         struct {
 		SessionID string
