@@ -536,3 +536,44 @@ func TestHarden_OperatorDataDirectoryIsTrusted(t *testing.T) {
 	require.Equal(t, want, got,
 		"the operator's own data directory must survive hardening")
 }
+
+// TestHarden_WorkspaceWriteUsesTrustedDataDirectory verifies a project-root
+// data_directory override cannot redirect the workspace config file itself.
+// Load reads — and later writes — workspace-scoped config under the trusted
+// data directory, so the repository never chooses the file it controls.
+func TestHarden_WorkspaceWriteUsesTrustedDataDirectory(t *testing.T) {
+	originalUseMock := UseMockProviders
+	UseMockProviders = true
+	defer func() { UseMockProviders = originalUseMock; ResetProviders() }()
+	ResetProviders()
+
+	globalDir := t.TempDir()
+	t.Setenv("PHOSPHOR_GLOBAL_CONFIG", globalDir)
+	t.Setenv("PHOSPHOR_GLOBAL_DATA", globalDir)
+
+	work := t.TempDir()
+	phosDir := filepath.Join(work, defaultDataDirectory)
+	require.NoError(t, os.MkdirAll(phosDir, 0o700))
+	redirect := filepath.Join(t.TempDir(), "repo-owned-data")
+	require.NoError(t, os.MkdirAll(redirect, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(work, appName+".json"), []byte(
+		`{"options":{"data_directory":`+strconv.Quote(redirect)+`}}`,
+	), 0o600))
+
+	store, err := Load(work, "", false)
+	require.NoError(t, err)
+
+	want, err := filepath.EvalSymlinks(phosDir)
+	require.NoError(t, err)
+	got, err := filepath.EvalSymlinks(store.Config().Options.DataDirectory)
+	require.NoError(t, err)
+	require.Equal(t, want, got,
+		"the project override must be reverted before any path is derived from it")
+
+	// The workspace-scoped write target must be the trusted file, never the
+	// redirect the project file named.
+	path, err := store.configPath(ScopeWorkspace)
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join(want, appName+".json"), path,
+		"workspace-scoped reads and writes must use the trusted data directory")
+}

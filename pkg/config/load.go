@@ -73,6 +73,16 @@ func Load(workingDir, dataDir string, debug bool) (*ConfigStore, error) {
 		}
 	}
 
+	// The security floor is global files plus the operator's own data
+	// directory — the only sources this workspace may not downgrade. It is
+	// built before the workspace config path is derived: a project-level
+	// data_directory override would otherwise choose which file Load reads
+	// and where workspace-scoped writes land, ahead of the clamp.
+	floor := trustedSecurityFloor(workingDir, operatorDataDir)
+	if cfg.Options != nil && floor.Options != nil {
+		cfg.Options.DataDirectory = floor.Options.DataDirectory
+	}
+
 	store := &ConfigStore{
 		config:          cfg,
 		workingDir:      workingDir,
@@ -117,7 +127,7 @@ func Load(workingDir, dataDir string, debug bool) (*ConfigStore, error) {
 	// The floor must be built from the operator"s own data directory, never
 	// from the merged value: a workspace or project file could otherwise
 	// select its own baseline and skip the clamp entirely.
-	hardenAgainstWorkspaceOverrides(cfg, trustedSecurityFloor(workingDir, operatorDataDir))
+	hardenAgainstWorkspaceOverrides(cfg, floor)
 
 	// Validate hooks after all config merging is complete so workspace
 	// hooks also get their matcher regexes compiled.

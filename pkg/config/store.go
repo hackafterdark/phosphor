@@ -59,7 +59,7 @@ type RuntimeOverrides struct {
 type ConfigStore struct {
 	config             *Config
 	workingDir         string
-	operatorDataDir    string   // the --data-dir the operator passed to Load
+	operatorDataDir    string // the --data-dir the operator passed to Load
 	resolver           VariableResolver
 	globalDataPath     string   // ~/.local/share/phosphor/phosphor.json
 	workspacePath      string   // .phosphor/phosphor.json
@@ -812,6 +812,14 @@ func (s *ConfigStore) reloadFromDiskLocked(ctx context.Context) error {
 		dataDir = s.config.Options.DataDirectory
 	}
 	cfg.setDefaults(s.workingDir, dataDir)
+
+	// The floor is built and applied before the workspace config path is
+	// derived, mirroring Load: workspace-scoped reads and writes must use
+	// the trusted data directory, never one a project file selected.
+	floor := trustedSecurityFloor(s.workingDir, s.operatorDataDir)
+	if cfg.Options != nil && floor.Options != nil {
+		cfg.Options.DataDirectory = floor.Options.DataDirectory
+	}
 
 	// Merge workspace config if present
 	workspacePath := filepath.Join(cfg.Options.DataDirectory, fmt.Sprintf("%s.json", appName))
