@@ -60,10 +60,16 @@ Preferences** dialog (`/display_preferences`) in the TUI.
 
 | Value | Result |
 |-------|--------|
-| `""` (empty) | Provider-based default theme |
-| `"pantera"` / `"charmtone"` | Charmtone Pantera |
-| `"obsidiana"` / `"hyper"` | Hyperphosphor Obsidiana |
+| """" (empty) | Provider-based default theme |
+| ""pantera"" / ""charmtone"" | Charmtone Pantera |
+| ""obsidiana"" / ""hyper"" | Hyperphosphor Obsidiana |
+| ""synthwave"", ""poison"", ""gold-terminal"", ""afterdark-gothic"" | Bundled example themes, compiled into the binary |
 | a path/name | A custom theme file; if it cannot be found or parsed, falls back to the provider default |
+
+Custom theme files with the same name as a bundled example theme take
+priority, so you can copy an example and customize it. Changing the theme
+from the Theme row in the **Display Preferences** dialog
+("/display_preferences") applies immediately — no restart needed.
 
 For custom theme files, see [THEMES.md](../THEMES.md).
 
