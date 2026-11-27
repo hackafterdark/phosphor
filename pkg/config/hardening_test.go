@@ -5,9 +5,11 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/hackafterdark/phosphor/internal/filepathext"
 	"github.com/stretchr/testify/require"
 )
 
@@ -433,7 +435,9 @@ func TestHarden_LoadClampsWorkspaceDataDirectory(t *testing.T) {
 }
 
 // TestHarden_LoadClampsSymlinkedDataDirectory verifies a planted symlink at
-// the default data directory cannot redirect writes outside the workspace.
+// the default data directory cannot redirect writes outside the workspace:
+// the resolved destination, not the unresolved spelling, is what must stay
+// inside the workspace.
 func TestHarden_LoadClampsSymlinkedDataDirectory(t *testing.T) {
 	originalUseMock := UseMockProviders
 	UseMockProviders = true
@@ -451,10 +455,55 @@ func TestHarden_LoadClampsSymlinkedDataDirectory(t *testing.T) {
 
 	store, err := Load(work, "", false)
 	require.NoError(t, err)
-	// The unresolved default path IS the planted symlink, so no config-level
-	// value can be safe here; the filesystem boundary refuses it when the
-	// panic mirror is installed (TestPanicHookRefusesEscapedLogDir). The
-	// config value itself must remain the workspace-contained literal.
-	require.Equal(t, filepath.Join(work, defaultDataDirectory), store.Config().Options.DataDirectory,
-		"the data directory must remain the workspace-contained literal")
+	got := store.Config().Options.DataDirectory
+	// The unresolved spelling is meaningless here: it is the planted
+	// symlink itself. Assert on the resolved destination instead — it must
+	// land in the operator-owned data directory, never on the redirect.
+	resolved, err := filepath.EvalSymlinks(got)
+	require.NoError(t, err)
+	require.False(t, filepathext.IsInside(resolved, outside),
+		"the resolved data directory %q must not follow the planted symlink", resolved)
+	fallback, err := filepath.EvalSymlinks(filepath.Dir(GlobalConfigData()))
+	require.NoError(t, err)
+	require.Equal(t, fallback, resolved,
+		"the escaping default must fall back to the operator data directory")
+	// The workspace symlink is never followed, so nothing is written to
+	// the redirect target.
+	entries, err := os.ReadDir(outside)
+	require.NoError(t, err)
+	require.Empty(t, entries, "the planted symlink target must stay untouched")
+}
+
+// TestHarden_LoadClampsInWorkspaceProjectDataDirectory verifies a
+// project-root config cannot redirect the data directory even when the
+// requested path stays inside the workspace: the field is operator-only, so
+// the trusted floor value is restored either way.
+func TestHarden_LoadClampsInWorkspaceProjectDataDirectory(t *testing.T) {
+	originalUseMock := UseMockProviders
+	UseMockProviders = true
+	defer func() { UseMockProviders = originalUseMock; ResetProviders() }()
+	ResetProviders()
+
+	globalDir := t.TempDir()
+	t.Setenv("PHOSPHOR_GLOBAL_CONFIG", globalDir)
+	t.Setenv("PHOSPHOR_GLOBAL_DATA", globalDir)
+
+	work := t.TempDir()
+	phosDir := filepath.Join(work, defaultDataDirectory)
+	require.NoError(t, os.MkdirAll(phosDir, 0o700))
+	inside := filepath.Join(work, "repo-owned-data")
+	// The project file asks for a directory that is still inside the
+	// workspace, so no containment check would catch it on its own.
+	require.NoError(t, os.WriteFile(filepath.Join(work, appName+".json"), []byte(
+		`{"options":{"data_directory":`+strconv.Quote(inside)+`}}`,
+	), 0o600))
+
+	store, err := Load(work, "", false)
+	require.NoError(t, err)
+	got, err := filepath.EvalSymlinks(store.Config().Options.DataDirectory)
+	require.NoError(t, err)
+	want, err := filepath.EvalSymlinks(phosDir)
+	require.NoError(t, err)
+	require.Equal(t, want, got,
+		"a project-supplied in-workspace data_directory must be reverted to the trusted floor")
 }

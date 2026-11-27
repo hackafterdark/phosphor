@@ -571,6 +571,33 @@ func safeDataDir(workingDir, dataDir string) (string, bool) {
 	return filepath.Clean(candidateAbs), true
 }
 
+// workspaceDataDir resolves the default data directory for a workspace. The
+// candidate is verified against its own parent directory rather than trusted
+// on its spelling: a repository can plant a symlink at the default location
+// (or discover state in a parent directory) whose target resolves outside the
+// directory it sits in, which would redirect the SQLite database, config
+// writes, and the panic-log mirror outside the workspace. When the resolved
+// destination escapes, the operator-owned data directory is used instead —
+// the one location a repository cannot influence.
+func workspaceDataDir(workingDir string) string {
+	dir := filepath.Join(workingDir, defaultDataDirectory)
+	if path, ok := fsext.LookupClosestBounded(workingDir, projectBoundary(workingDir), defaultDataDirectory); ok {
+		dir = path
+	}
+	// Comparing against the candidate's own parent keeps the intended
+	// monorepo layout (state in a parent directory of the workspace)
+	// working, while rejecting a symlink component that leaves it.
+	if !filepathext.IsInside(dir, filepath.Dir(dir)) {
+		slog.Warn(
+			"Rejected workspace data directory whose resolved destination escapes its parent",
+			"path", dir,
+			"reason", "a symlink at the default data directory resolves outside the workspace",
+		)
+		return filepath.Dir(GlobalConfigData())
+	}
+	return dir
+}
+
 func (c *Config) setDefaults(workingDir, dataDir string) {
 	if c.Options == nil {
 		c.Options = &Options{}
@@ -592,11 +619,7 @@ func (c *Config) setDefaults(workingDir, dataDir string) {
 	if safeDir, ok := safeDataDir(workingDir, dataDir); ok {
 		c.Options.DataDirectory = safeDir
 	} else if c.Options.DataDirectory == "" {
-		if path, ok := fsext.LookupClosestBounded(workingDir, projectBoundary(workingDir), defaultDataDirectory); ok {
-			c.Options.DataDirectory = path
-		} else {
-			c.Options.DataDirectory = filepath.Join(workingDir, defaultDataDirectory)
-		}
+		c.Options.DataDirectory = workspaceDataDir(workingDir)
 	}
 	c.Options.DataDirectory = filepath.Clean(filepathext.UnsafeSmartJoin(workingDir, c.Options.DataDirectory))
 	if c.Providers == nil {

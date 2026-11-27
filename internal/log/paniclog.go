@@ -63,9 +63,6 @@ func hookPanicLog(logFile, workspaceDir string) bool {
 	// Refuse a planted symlink at the mirror path: the crash log is
 	// opened on the crash path itself, and an attacker-controlled
 	// target there would redirect crash output outside the log dir.
-	// Refuse a planted symlink at the mirror path: the crash log is
-	// opened on the crash path itself, and an attacker-controlled
-	// target there would redirect crash output outside the log dir.
 	// codeql[go/path-injection]
 	if fi, err := os.Lstat(panicFile); err == nil && fi.Mode()&os.ModeSymlink != 0 {
 		return false

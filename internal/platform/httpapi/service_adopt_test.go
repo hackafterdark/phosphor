@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"context"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -37,11 +36,16 @@ func TestService_StartAdoptsLocalWorkspace(t *testing.T) {
 	t.Cleanup(func() {
 		_ = svc.Stop(context.Background())
 		// The service holds long-lived DB handles (the adopted
-		// workspace's app plus the mermaid diagram querier opened by
+		// workspace"s app plus the mermaid diagram querier opened by
 		// the OpenAI API setup); release every reference so TempDir
 		// cleanup can remove the workspace directory on Windows.
+		// Release under the config"s own data-directory spelling: the
+		// pool is keyed on the canonicalized path Load resolved, which
+		// differs from t.TempDir()"s spelling on macOS (/var vs
+		// /private/var) and Windows (8.3 short names).
+		dataDir := cfgStore.Config().Options.DataDirectory
 		for range 2 {
-			_ = db.Release(filepath.Join(wd, ".phosphor"))
+			_ = db.Release(dataDir)
 		}
 	})
 

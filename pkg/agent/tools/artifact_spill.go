@@ -42,20 +42,20 @@ func spillFullOutput(workspaceDir, sessionID, toolName, content string) (path st
 	}
 	defer root.Close()
 
-	// codeql[go/path-injection]
 	// sessionID is validated above to a single path component, and the
 	// os.Root operations cannot resolve outside the workspace root even if
 	// an ancestor becomes a symlink concurrently.
+	// codeql[go/path-injection]
 	dir := filepath.Join(".phosphor", "artifacts", sessionID)
 	if err := root.MkdirAll(dir, 0o755); err != nil {
 		return "", "", err
 	}
 	name := fmt.Sprintf("%s-%d.txt", toolName, time.Now().UnixNano())
 	full := filepath.Join(dir, name)
-	// codeql[go/path-injection]
 	// full stays root-relative: the file name is internal tool constants
 	// plus a nanosecond timestamp, and the root rejects any resolution
 	// outside the workspace.
+	// codeql[go/path-injection]
 	f, err := root.OpenFile(full, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		return "", "", err
