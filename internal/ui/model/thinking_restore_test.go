@@ -3,6 +3,9 @@ package model
 import (
 	"testing"
 
+	"github.com/charmbracelet/x/ansi"
+	"github.com/hackafterdark/phosphor/internal/memory"
+	memoryui "github.com/hackafterdark/phosphor/internal/memory/ui"
 	"github.com/hackafterdark/phosphor/internal/ui/chat"
 	"github.com/hackafterdark/phosphor/internal/ui/common"
 	"github.com/hackafterdark/phosphor/pkg/message"
@@ -82,4 +85,58 @@ func TestRestoreOmittedAssistantItemsMultiple(t *testing.T) {
 		got = append(got, item.ID())
 	}
 	require.Equal(t, []string{"a1", "tc1", "a2", "tc2"}, got)
+}
+
+// TestRestoreOmittedAssistantItemsAttachesMemoryPill asserts a restored
+// assistant item receives the same memory provenance pill that load-time
+// extraction wires from the turn's stored tool results, so toggling thinking
+// on does not leave the pill missing until the session reloads.
+func TestRestoreOmittedAssistantItemsAttachesMemoryPill(t *testing.T) {
+	t.Parallel()
+
+	sources := []memoryui.Source{
+		{ID: "mem-one", Type: "decision", Status: "active", Summary: "First claim.", Trust: 0.8},
+		{ID: "mem-two", Type: "constraint", Status: "active", Summary: "Second claim.", Trust: 0.5},
+	}
+	msgs := []message.Message{
+		{
+			ID:   "a1",
+			Role: message.Assistant,
+			Parts: []message.ContentPart{
+				message.ReasoningContent{Thinking: "pondering", FinishedAt: 1},
+				message.ToolCall{ID: "tc1", Name: memory.SearchToolName, Finished: true},
+				message.Finish{Reason: message.FinishReasonToolUse, Time: 2},
+			},
+		},
+		{
+			ID:   "r1",
+			Role: message.Tool,
+			Parts: []message.ContentPart{
+				message.ToolResult{ToolCallID: "tc1", Name: memory.SearchToolName, Content: memoryui.Card(2, sources)},
+			},
+		},
+	}
+
+	com := common.DefaultCommon(nil)
+	ui := &UI{
+		com:                com,
+		chat:               NewChat(com),
+		session:            &session.Session{ID: "s1"},
+		allSessionMessages: msgs,
+	}
+
+	// Load-time extraction with thinking hidden omits the assistant item;
+	// the memory result sits in the loaded message state beside it.
+	toolResults := chat.BuildToolResultMap([]*message.Message{&msgs[0], &msgs[1]})
+	for i := range msgs {
+		ui.chat.AppendMessages(chat.ExtractMessageItems(ui.com.Styles, &msgs[i], toolResults, false, nil)...)
+	}
+	require.Nil(t, ui.chat.MessageItem("a1"))
+
+	ui.restoreOmittedAssistantItems()
+
+	assistant, ok := ui.chat.MessageItem("a1").(*chat.AssistantMessageItem)
+	require.True(t, ok, "the omitted assistant item must be restored")
+	rendered := ansi.Strip(assistant.RawRender(100))
+	require.Contains(t, rendered, "+2 memories", "the restored item must carry the same memory pill the extractor would have wired")
 }

@@ -2248,9 +2248,7 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		cfg := m.com.Config()
 		if cfg != nil && cfg.Options != nil && cfg.Options.TUI != nil {
 			cfg.Options.TUI.ShowThinking = &msg.Visible
-			if err := m.com.Workspace.SetConfigField(config.ScopeGlobal, "options.tui.show_thinking", msg.Visible); err != nil {
-				cmds = append(cmds, util.ReportError(err))
-			}
+			cmds = append(cmds, m.persistConfigField(config.ScopeGlobal, "options.tui.show_thinking", msg.Visible))
 		}
 		for i := range m.chat.Len() {
 			if item, ok := m.chat.ItemAt(i).(*chat.AssistantMessageItem); ok {
@@ -2265,10 +2263,16 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			m.restoreOmittedAssistantItems()
 		}
 	case dialog.ActionSetCompactMode:
-		if err := m.com.Workspace.SetCompactMode(config.ScopeGlobal, msg.Enabled); err != nil {
-			cmds = append(cmds, util.ReportError(err))
-		}
+		// Apply the layout live, then persist; the workspace write is I/O
+		// and belongs in a tea.Cmd.
+		m.forceCompactMode = msg.Enabled
 		m.updateLayoutAndSize()
+		cmds = append(cmds, func() tea.Msg {
+			if err := m.com.Workspace.SetCompactMode(config.ScopeGlobal, msg.Enabled); err != nil {
+				return util.NewErrorMsg(err)
+			}
+			return nil
+		})
 	case dialog.ActionSetToolOutputMode:
 		cmds = append(cmds, m.applyToolOutputMode(msg.Tool, msg.Mode))
 		// The override can add a new per-tool row; rebuild the open dialog
@@ -3577,9 +3581,12 @@ func (m *UI) restoreOmittedAssistantItems() {
 		return
 	}
 	byID := make(map[string]*message.Message, len(m.allSessionMessages))
+	ptrs := make([]*message.Message, len(m.allSessionMessages))
 	for i := range m.allSessionMessages {
 		byID[m.allSessionMessages[i].ID] = &m.allSessionMessages[i]
+		ptrs[i] = &m.allSessionMessages[i]
 	}
+	toolResults := chat.BuildToolResultMap(ptrs)
 	// Scan the current list state each pass and restart at the inserted
 	// assistant item: insertions shift every later index, so a fixed-range
 	// loop would skip the next candidate after the first insertion.
@@ -3599,6 +3606,18 @@ func (m *UI) restoreOmittedAssistantItems() {
 		assistantItem := chat.NewAssistantMessageItem(m.com.Styles, assistantMsg)
 		if assistant, ok := assistantItem.(*chat.AssistantMessageItem); ok {
 			assistant.SetThinkingVisible(m.thinkingVisible())
+			// The pill reads the same stored results the tool items render,
+			// exactly as load-time extraction does, so a restored message is
+			// not silently missing its memory provenance.
+			var results []message.ToolResult
+			for _, tc := range assistantMsg.ToolCalls() {
+				if tr, ok := toolResults[tc.ID]; ok {
+					results = append(results, tr)
+				}
+			}
+			if sources := memoryui.SourcesFromResults(results); len(sources) > 0 {
+				assistant.SetMemorySources(sources)
+			}
 		}
 		m.chat.InsertMessagesAt(pos, assistantItem)
 		// pos now holds the inserted assistant item; the tool item sits at
@@ -3606,6 +3625,18 @@ func (m *UI) restoreOmittedAssistantItems() {
 		// restored assistants (and the untouched tool item), so progress
 		// is guaranteed and no candidate is skipped.
 		pos--
+	}
+}
+
+// persistConfigField writes a single config field to disk off the update
+// loop. The live value is applied to the in-memory config synchronously in
+// `Update`; only the persistence is deferred, per the no-I/O-in-Update rule.
+func (m *UI) persistConfigField(scope config.Scope, key string, value any) tea.Cmd {
+	return func() tea.Msg {
+		if err := m.com.Workspace.SetConfigField(scope, key, value); err != nil {
+			return util.NewErrorMsg(err)
+		}
+		return nil
 	}
 }
 
@@ -3634,19 +3665,16 @@ func (m *UI) applyToolOutputMode(tool string, mode config.ToolOutputMode) tea.Cm
 	if cfg.Options.TUI.ToolOutput == nil {
 		cfg.Options.TUI.ToolOutput = &config.ToolOutput{}
 	}
+	var key string
 	if tool == "" {
 		cfg.Options.TUI.ToolOutput.Default = mode
-		if err := m.com.Workspace.SetConfigField(config.ScopeGlobal, "options.tui.tool_output.default", string(mode)); err != nil {
-			return util.ReportError(err)
-		}
+		key = "options.tui.tool_output.default"
 	} else {
 		if cfg.Options.TUI.ToolOutput.PerTool == nil {
 			cfg.Options.TUI.ToolOutput.PerTool = make(map[string]config.ToolOutputMode)
 		}
 		cfg.Options.TUI.ToolOutput.PerTool[tool] = mode
-		if err := m.com.Workspace.SetConfigField(config.ScopeGlobal, "options.tui.tool_output.per_tool."+tool, string(mode)); err != nil {
-			return util.ReportError(err)
-		}
+		key = "options.tui.tool_output.per_tool." + tool
 	}
 
 	for i := range m.chat.Len() {
@@ -3660,7 +3688,10 @@ func (m *UI) applyToolOutputMode(tool string, mode config.ToolOutputMode) tea.Cm
 	if tool != "" {
 		label = tool
 	}
-	return util.ReportInfo("Tool output for " + label + " set to " + string(mode))
+	return tea.Batch(
+		m.persistConfigField(config.ScopeGlobal, key, string(mode)),
+		util.ReportInfo("Tool output for "+label+" set to "+string(mode)),
+	)
 }
 
 // applyToolOutputLimit sets the short-mode line cap for tool output, persists
@@ -3677,9 +3708,6 @@ func (m *UI) applyToolOutputLimit(limit int) tea.Cmd {
 		cfg.Options.TUI.ToolOutput = &config.ToolOutput{}
 	}
 	cfg.Options.TUI.ToolOutput.Limit = &limit
-	if err := m.com.Workspace.SetConfigField(config.ScopeGlobal, "options.tui.tool_output.limit", limit); err != nil {
-		return util.ReportError(err)
-	}
 
 	for i := range m.chat.Len() {
 		if item, ok := m.chat.ItemAt(i).(chat.ToolMessageItem); ok {
@@ -3688,7 +3716,10 @@ func (m *UI) applyToolOutputLimit(limit int) tea.Cmd {
 		}
 	}
 
-	return util.ReportInfo("Short tool output line limit set to " + strconv.Itoa(limit))
+	return tea.Batch(
+		m.persistConfigField(config.ScopeGlobal, "options.tui.tool_output.limit", limit),
+		util.ReportInfo("Short tool output line limit set to "+strconv.Itoa(limit)),
+	)
 }
 
 // startCodebaseIndexing starts codebase indexing in the background.
