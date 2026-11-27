@@ -68,6 +68,7 @@ func wrapEvent(ev any) *pubsub.Payload {
 				ToolCallID: e.Payload.ToolCallID,
 				Granted:    e.Payload.Granted,
 				Denied:     e.Payload.Denied,
+				RequestID:  e.Payload.RequestID,
 			},
 		})
 	case pubsub.Event[message.Message]:

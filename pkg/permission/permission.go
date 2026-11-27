@@ -62,6 +62,11 @@ type PermissionNotification struct {
 	ToolCallID string `json:"tool_call_id"`
 	Granted    bool   `json:"granted"`
 	Denied     bool   `json:"denied"`
+	// RequestID is the ID of the request that was resolved. It is empty
+	// for shortcut grants (allowlists, hooks, session caches) that never
+	// opened a prompt; dialogs must only react to notifications that
+	// carry their own request ID.
+	RequestID string `json:"request_id,omitempty"`
 }
 
 type PermissionRequest struct {
@@ -170,6 +175,7 @@ func (s *permissionService) resolve(permission PermissionRequest, granted, denie
 		ToolCallID: permission.ToolCallID,
 		Granted:    granted,
 		Denied:     denied,
+		RequestID:  permission.ID,
 	})
 
 	// respCh is buffered (cap 1) and only ever has at most one sender

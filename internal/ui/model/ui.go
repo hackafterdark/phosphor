@@ -5644,13 +5644,20 @@ func (m *UI) handlePermissionNotification(notification permission.PermissionNoti
 	}
 
 	// If this notification reflects a final resolution (granted or denied),
-	// dismiss any open permissions dialog whose tool call ID matches. This
-	// covers the case where another client resolved the request remotely.
+	// dismiss any open permissions dialog whose request ID matches. The ID
+	// is required: notifications without one (auto-approve shortcuts) or
+	// carrying a different request's ID (e.g. the execute-permission grant
+	// that precedes a sandbox escalation prompt on the same tool call) must
+	// never close this dialog. This covers the case where another client
+	// resolved the request remotely.
 	if !notification.Granted && !notification.Denied {
 		return
 	}
+	if notification.RequestID == "" {
+		return
+	}
 	if d := m.dialog.Dialog(dialog.PermissionsID); d != nil {
-		if perm, ok := d.(*dialog.Permissions); ok && perm.ToolCallID() == notification.ToolCallID {
+		if perm, ok := d.(*dialog.Permissions); ok && perm.RequestID() == notification.RequestID {
 			m.dialog.CloseDialog(dialog.PermissionsID)
 		}
 	}

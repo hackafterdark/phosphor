@@ -230,6 +230,11 @@ func (p *Permissions) ToolCallID() string {
 	return p.permission.ToolCallID
 }
 
+// RequestID returns the ID of this dialog's permission request.
+func (p *Permissions) RequestID() string {
+	return p.permission.ID
+}
+
 // HandleMsg implements [Dialog].
 func (p *Permissions) HandleMsg(msg tea.Msg) Action {
 	switch msg := msg.(type) {
