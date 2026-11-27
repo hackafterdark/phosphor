@@ -215,3 +215,39 @@ primary: "#000003"
 		t.Errorf("expected primary #000001, got %v", hex3)
 	}
 }
+
+// The bundled example themes are compiled into the binary and must be
+// selectable by name without any theme files on disk.
+func TestThemeBuiltinExample(t *testing.T) {
+	for _, name := range []string{"synthwave", "poison", "gold-terminal", "afterdark-gothic"} {
+		s := Theme(name, "openai", "")
+		if hex(s.WorkingGradFromColor) == nil {
+			t.Errorf("expected theme %q to resolve to bundled example", name)
+		}
+	}
+
+	// Unknown names still fall back to the provider default.
+	unknown := Theme("nonexistent-theme", "openai", "")
+	if hex(unknown.Background) == nil || *hex(unknown.Background) != *hex(CharmtonePantera().Background) {
+		t.Errorf("expected unknown theme to fall back to default")
+	}
+}
+
+// A file theme with the same name as a bundled example wins, so users can
+// copy an example and customize it.
+func TestThemeFileOverridesBuiltinExample(t *testing.T) {
+	wsDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(wsDir, ".phosphor", "themes"), 0o755); err != nil {
+		t.Fatalf("failed to create dirs: %v", err)
+	}
+	contents := "primary: \"#123456\"\n"
+	if err := os.WriteFile(filepath.Join(wsDir, ".phosphor", "themes", "synthwave.yaml"), []byte(contents), 0o644); err != nil {
+		t.Fatalf("failed to write theme: %v", err)
+	}
+
+	s := Theme("synthwave", "openai", wsDir)
+	h := hex(s.WorkingGradFromColor)
+	if h == nil || *h != "#123456" {
+		t.Errorf("expected workspace file to override bundled example, got %v", h)
+	}
+}

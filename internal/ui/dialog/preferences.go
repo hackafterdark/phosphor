@@ -38,6 +38,8 @@ const (
 	preferenceToolOutput
 	// preferenceLineLimit cycles the short-mode line cap for tool output.
 	preferenceLineLimit
+	// preferenceTheme opens the theme selector dialog.
+	preferenceTheme
 )
 
 // Preferences represents a dialog for display preferences: thinking
@@ -219,6 +221,11 @@ func (p *Preferences) cycle(item *PreferenceItem) Action {
 		item.value = strconv.Itoa(limit)
 		item.Bump()
 		return ActionSetToolOutputLimit{Limit: limit}
+	case preferenceTheme:
+		// The theme list can be arbitrarily long (workspace and global
+		// theme files), so selection happens in its own dialog stacked
+		// on top of this one.
+		return ActionOpenDialog{DialogID: ThemesID}
 	case preferenceToolOutput:
 		mode := nextToolOutputMode(item.value)
 		item.value = string(mode)
@@ -345,16 +352,18 @@ func (p *Preferences) setItems() {
 	cfg := p.com.Config()
 	thinkingVisible := true
 	compactMode := false
+	theme := ""
 	toolOutput := &config.ToolOutput{}
 	if cfg != nil && cfg.Options != nil && cfg.Options.TUI != nil {
 		thinkingVisible = cfg.Options.TUI.ThinkingVisible()
 		compactMode = cfg.Options.TUI.CompactMode
+		theme = cfg.Options.TUI.Theme
 		if cfg.Options.TUI.ToolOutput != nil {
 			toolOutput = cfg.Options.TUI.ToolOutput
 		}
 	}
 
-	items := make([]list.FilterableItem, 0, 4+len(toolOutput.PerTool))
+	items := make([]list.FilterableItem, 0, 5+len(toolOutput.PerTool))
 	items = append(items, &PreferenceItem{
 		Versioned: list.NewVersioned(),
 		kind:      preferenceThinking,
@@ -365,6 +374,12 @@ func (p *Preferences) setItems() {
 		Versioned: list.NewVersioned(),
 		kind:      preferenceCompactMode,
 		value:     onOffState(compactMode),
+		t:         p.com.Styles,
+	})
+	items = append(items, &PreferenceItem{
+		Versioned: list.NewVersioned(),
+		kind:      preferenceTheme,
+		value:     defaultThemeLabel(theme),
 		t:         p.com.Styles,
 	})
 	items = append(items, &PreferenceItem{
@@ -429,6 +444,8 @@ func (p *PreferenceItem) Filter() string {
 		return "tool output default"
 	case preferenceLineLimit:
 		return "tool output short line limit"
+	case preferenceTheme:
+		return "theme appearance color"
 	default:
 		return "tool output " + p.tool
 	}
@@ -445,6 +462,8 @@ func (p *PreferenceItem) ID() string {
 		return "tool_output_default"
 	case preferenceLineLimit:
 		return "tool_output_limit"
+	case preferenceTheme:
+		return "theme"
 	default:
 		return "tool_output_" + p.tool
 	}
@@ -486,6 +505,8 @@ func (p *PreferenceItem) Render(width int) string {
 		title = "Tool output (default)"
 	case preferenceLineLimit:
 		title = "Short output line limit"
+	case preferenceTheme:
+		title = "Theme"
 	default:
 		title = "Tool output (" + p.tool + ")"
 	}
@@ -497,6 +518,14 @@ func (p *PreferenceItem) Render(width int) string {
 		InfoTextFocused: p.t.Dialog.ListItem.InfoFocused,
 	}
 	return renderItem(st, title, info, p.focused, width, p.cache, &p.m)
+}
+
+// defaultThemeLabel renders the display value for the theme row.
+func defaultThemeLabel(theme string) string {
+	if theme == "" {
+		return "default"
+	}
+	return theme
 }
 
 // toggleState maps a bool to its display value.

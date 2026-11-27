@@ -3,13 +3,16 @@ package styles
 import (
 	"encoding/json"
 	"image/color"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/exp/charmtone"
+	examplethemes "github.com/hackafterdark/phosphor/examples/themes"
 	"github.com/hackafterdark/phosphor/internal/home"
 	"gopkg.in/yaml.v3"
 )
@@ -108,19 +111,30 @@ func Theme(themeOption string, providerID string, workingDir string) Styles {
 		return HyperphosphorObsidiana()
 	}
 
-	// Try to resolve file path.
+	// Try to resolve file path. File themes win over the bundled example
+	// themes so users can copy an example and customize it.
 	path := findThemePath(themeOption, workingDir)
-	if path == "" {
-		slog.Warn("Theme file not found, falling back to default theme", "theme", themeOption)
-		return ThemeForProvider(providerID)
+	if path != "" {
+		palette, err := loadThemeFile(path)
+		if err != nil {
+			slog.Warn("Failed to load theme file, falling back to default theme", "path", path, "error", err)
+			return ThemeForProvider(providerID)
+		}
+		return themeFromPalette(palette, providerID)
 	}
 
-	palette, err := loadThemeFile(path)
-	if err != nil {
-		slog.Warn("Failed to load theme file, falling back to default theme", "path", path, "error", err)
-		return ThemeForProvider(providerID)
+	// Bundled example themes, compiled into the binary.
+	if palette, ok := builtinExampleThemes[strings.ToLower(themeOption)]; ok {
+		return themeFromPalette(palette, providerID)
 	}
 
+	slog.Warn("Theme file not found, falling back to default theme", "theme", themeOption)
+	return ThemeForProvider(providerID)
+}
+
+// themeFromPalette builds a full [Styles] set from a theme file palette,
+// falling back to the provider-based default for any unset token.
+func themeFromPalette(palette ThemePalette, providerID string) Styles {
 	// Start with the default provider-based theme as base.
 	baseOpts := defaultQuickStyleOpts(providerID)
 
@@ -307,6 +321,114 @@ func globalThemesDir() string {
 		return filepath.Join(phosphorGlobal, "themes")
 	}
 	return filepath.Join(home.Config(), "phosphor", "themes")
+}
+
+// ThemeInfo describes one theme the user can select. Name is the value
+// stored in options.tui.theme; Source is "built-in", "workspace", or
+// "global".
+type ThemeInfo struct {
+	Name   string
+	Source string
+}
+
+// builtinExampleThemes are the bundled example themes under
+// examples/themes, compiled into the binary and selectable by name
+// (case-insensitive, by file name).
+var builtinExampleThemes = loadBuiltinExampleThemes()
+
+func loadBuiltinExampleThemes() map[string]ThemePalette {
+	themes := map[string]ThemePalette{}
+	entries, err := fs.ReadDir(examplethemes.FS, ".")
+	if err != nil {
+		return themes
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		ext := strings.ToLower(filepath.Ext(name))
+		if ext != ".yaml" && ext != ".yml" {
+			continue
+		}
+		data, err := examplethemes.FS.ReadFile(name)
+		if err != nil {
+			continue
+		}
+		var p ThemePalette
+		if err := yaml.Unmarshal(data, &p); err != nil {
+			slog.Warn("Failed to parse bundled theme", "theme", name, "error", err)
+			continue
+		}
+		themes[strings.ToLower(strings.TrimSuffix(name, filepath.Ext(name)))] = p
+	}
+	return themes
+}
+
+// builtinThemes lists the compiled-in themes, selectable by name.
+var builtinThemes = builtinThemeList()
+
+func builtinThemeList() []ThemeInfo {
+	list := []ThemeInfo{
+		{Name: "pantera", Source: "built-in"},
+		{Name: "obsidiana", Source: "built-in"},
+	}
+	for name := range builtinExampleThemes {
+		list = append(list, ThemeInfo{Name: name, Source: "built-in"})
+	}
+	sort.Slice(list, func(i, j int) bool { return list[i].Name < list[j].Name })
+	return list
+}
+
+// ListThemes returns the built-in themes followed by file themes found
+// in the workspace (.phosphor/themes, then themes) and global
+// (~/.config/phosphor/themes) directories. Earlier directories win on
+// name collisions, matching findThemePath's resolution order.
+func ListThemes(workingDir string) []ThemeInfo {
+	themes := make([]ThemeInfo, 0, len(builtinThemes)+4)
+	themes = append(themes, builtinThemes...)
+
+	seen := make(map[string]bool, len(builtinThemes))
+	for _, t := range builtinThemes {
+		seen[strings.ToLower(t.Name)] = true
+	}
+	dirs := []struct {
+		dir    string
+		source string
+	}{
+		{filepath.Join(workingDir, ".phosphor", "themes"), "workspace"},
+		{filepath.Join(workingDir, "themes"), "workspace"},
+		{globalThemesDir(), "global"},
+	}
+	extensions := map[string]bool{".yaml": true, ".yml": true, ".json": true}
+	for _, d := range dirs {
+		entries, err := os.ReadDir(d.dir)
+		if err != nil {
+			continue
+		}
+		var names []string
+		for _, e := range entries {
+			if e.IsDir() {
+				continue
+			}
+			name := e.Name()
+			ext := filepath.Ext(name)
+			if !extensions[strings.ToLower(ext)] {
+				continue
+			}
+			theme := strings.TrimSuffix(name, ext)
+			if theme == "" || seen[theme] {
+				continue
+			}
+			seen[theme] = true
+			names = append(names, theme)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			themes = append(themes, ThemeInfo{Name: name, Source: d.source})
+		}
+	}
+	return themes
 }
 
 func findThemePath(themeOption string, workingDir string) string {

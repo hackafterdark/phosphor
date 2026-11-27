@@ -15,6 +15,7 @@ import (
 type mockWorkspace struct {
 	workspace.Workspace
 	cfg *config.Config
+	dir string
 }
 
 func (m *mockWorkspace) Config() *config.Config {
@@ -22,6 +23,10 @@ func (m *mockWorkspace) Config() *config.Config {
 		m.cfg = &config.Config{}
 	}
 	return m.cfg
+}
+
+func (m *mockWorkspace) WorkingDir() string {
+	return m.dir
 }
 
 func TestCommandItem_DisabledState(t *testing.T) {
