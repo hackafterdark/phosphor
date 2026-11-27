@@ -59,6 +59,7 @@ type RuntimeOverrides struct {
 type ConfigStore struct {
 	config             *Config
 	workingDir         string
+	operatorDataDir    string // the --data-dir the operator passed to Load
 	resolver           VariableResolver
 	globalDataPath     string   // ~/.local/share/phosphor/phosphor.json
 	workspacePath      string   // .phosphor/phosphor.json
@@ -812,6 +813,14 @@ func (s *ConfigStore) reloadFromDiskLocked(ctx context.Context) error {
 	}
 	cfg.setDefaults(s.workingDir, dataDir)
 
+	// The floor is built and applied before the workspace config path is
+	// derived, mirroring Load: workspace-scoped reads and writes must use
+	// the trusted data directory, never one a project file selected.
+	floor := trustedSecurityFloor(s.workingDir, s.operatorDataDir)
+	if cfg.Options != nil && floor.Options != nil {
+		cfg.Options.DataDirectory = floor.Options.DataDirectory
+	}
+
 	// Merge workspace config if present
 	workspacePath := filepath.Join(cfg.Options.DataDirectory, fmt.Sprintf("%s.json", appName))
 	if wsData, err := os.ReadFile(workspacePath); err == nil && len(wsData) > 0 {
@@ -828,8 +837,11 @@ func (s *ConfigStore) reloadFromDiskLocked(ctx context.Context) error {
 	}
 
 	// Security hardening: reject workspace/project downgrades of security-critical
-	// fields relative to the trusted user/system baseline (mirrors Load).
-	hardenAgainstWorkspaceOverrides(cfg, trustedSecurityFloor(s.workingDir, cfg.Options.DataDirectory))
+	// fields relative to the trusted user/system baseline (mirrors Load). The
+	// clamp reuses the same floor computed above — the operator"s own data
+	// directory, never the merged value — so the pre-merge workspace path and
+	// the post-merge clamp can never disagree.
+	hardenAgainstWorkspaceOverrides(cfg, floor)
 
 	// Validate hooks after all config merging is complete so matcher
 	// regexes are recompiled on the reloaded config (mirrors Load).
@@ -885,7 +897,7 @@ func (s *ConfigStore) reloadFromDiskLocked(ctx context.Context) error {
 	logFile := filepath.Join(cfg.Options.DataDirectory, "logs", "phosphor.log")
 	logCfg := cfg.Logging.ToLogConfig()
 	log.Reset()
-	log.SetupWithConfig(logFile, logCfg, false) // debug flag not available during reload
+	log.SetupWithConfig(logFile, WorkspaceDataDir(s.workingDir, cfg.Options.DataDirectory), logCfg, false) // debug flag not available during reload
 
 	// Mirror startup flow: setup models and agents against NEW config
 	var setupErr error

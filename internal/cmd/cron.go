@@ -47,6 +47,7 @@ until interrupted by a signal (Ctrl+C).`,
 			// terminal and keep a persistent log for post-hoc diagnostics.
 			phosphorlog.SetupWithConfig(
 				filepath.Join(config.GlobalCacheDir(), "cron", "phosphor.log"),
+				"",
 				&phosphorlog.LogConfig{
 					Enabled: true,
 					Level:   "info",

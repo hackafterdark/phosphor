@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"slices"
 
 	"github.com/hackafterdark/phosphor/pkg/shell"
@@ -62,6 +63,18 @@ func hardenAgainstWorkspaceOverrides(cfg, floor *Config) int {
 			"field", field,
 			"reason", reason,
 		)
+	}
+
+	// The data directory is where phosphor writes state and logs, and the
+	// panic-log mirror derives from it. A repository may keep or tighten
+	// containment, but an absolute path (or one that escapes the workspace)
+	// must come from the trusted floor, never from workspace/project files:
+	// otherwise a malicious repo redirects the crash-log mirror and
+	// workspace state outside the workspace.
+	if cfg.Options != nil && floor.Options != nil &&
+		cfg.Options.DataDirectory != floor.Options.DataDirectory {
+		cfg.Options.DataDirectory = floor.Options.DataDirectory
+		revert("options.data_directory", "workspace attempted to redirect the data directory outside the trusted floor")
 	}
 
 	// Secure-by-default tri-state masks: the floor keeps them on; a repo may not
@@ -278,4 +291,19 @@ func cloneEgressIsolation(e *EgressIsolationConfig) *EgressIsolationConfig {
 	c := *e
 	c.AllowedHosts = slices.Clone(e.AllowedHosts)
 	return &c
+}
+
+// WorkspaceDataDir returns the workspace root when the config's data
+// directory is the workspace-derived default (the trusted floor keeps it
+// workspace-contained), and "" when it is an operator-selected directory that
+// may live anywhere. Callers that enforce workspace containment on data
+// directory writes should apply the check only to the former.
+func WorkspaceDataDir(workingDir, dataDir string) string {
+	if workingDir == "" || dataDir == "" {
+		return ""
+	}
+	if dataDir == filepath.Join(workingDir, defaultDataDirectory) {
+		return workingDir
+	}
+	return ""
 }

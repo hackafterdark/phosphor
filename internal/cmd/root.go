@@ -336,7 +336,7 @@ func setupLocalWorkspace(cmd *cobra.Command) (workspace.Workspace, func(), *sql.
 	// silently against the DiscardHandler installed in Execute.
 	logFile := filepath.Join(cfg.Options.DataDirectory, "logs", "phosphor.log")
 	logCfg := cfg.Logging.ToLogConfig()
-	phosphorlog.SetupWithConfig(logFile, logCfg, debug)
+	phosphorlog.SetupWithConfig(logFile, config.WorkspaceDataDir(store.WorkingDir(), cfg.Options.DataDirectory), logCfg, debug)
 
 	gitIgnorePath := filepath.Join(cfg.Options.DataDirectory, ".gitignore")
 	if _, err := os.Stat(gitIgnorePath); os.IsNotExist(err) {
@@ -475,7 +475,7 @@ func connectToServer(cmd *cobra.Command) (*client.Client, *proto.Workspace, func
 	if ws.Config != nil {
 		logFile := filepath.Join(ws.Config.Options.DataDirectory, "logs", "phosphor.log")
 		logCfg := ws.Config.Options.Logging.ToLogConfig()
-		phosphorlog.SetupWithConfig(logFile, logCfg, debug)
+		phosphorlog.SetupWithConfig(logFile, config.WorkspaceDataDir(ws.Path, ws.Config.Options.DataDirectory), logCfg, debug)
 	}
 
 	cleanup := func() { _ = c.DeleteWorkspace(context.Background(), ws.ID) }
@@ -493,7 +493,7 @@ func ensureServer(cmd *cobra.Command, hostURL *url.URL) error {
 	// later call from connectToServer becomes a no-op.
 	debug, _ := cmd.Flags().GetBool("debug")
 	logFile := filepath.Join(config.GlobalCacheDir(), "server-"+safeHostName(hostURL), "phosphor.log")
-	phosphorlog.Setup(logFile, debug) // server logs use defaults (no user config available yet)
+	phosphorlog.Setup(logFile, "", debug) // server logs use defaults (no user config available yet)
 
 	switch hostURL.Scheme {
 	case "unix", "npipe":

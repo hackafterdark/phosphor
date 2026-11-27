@@ -4,6 +4,7 @@ package workspaceindex
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"encoding/xml"
 	"fmt"
 	"io"
@@ -123,7 +124,7 @@ func pdfExtractGxPDF(data []byte) (string, error) {
 // pdfExtractPDFCPU uses pdfcpu to extract raw content streams from a PDF.
 func pdfExtractPDFCPU(data []byte) (string, error) {
 	conf := model.NewDefaultConfiguration()
-	ctx, err := apicpu.ReadContext(bytes.NewReader(data), conf)
+	ctx, err := apicpu.ReadContext(context.Background(), bytes.NewReader(data), conf)
 	if err != nil {
 		return "", err
 	}
@@ -132,7 +133,7 @@ func pdfExtractPDFCPU(data []byte) (string, error) {
 	var lines []string
 
 	for pageNr := 1; pageNr <= pageCount; pageNr++ {
-		reader, err := pdfcpu.ExtractPageContent(ctx, pageNr)
+		reader, err := pdfcpu.ExtractPageContent(context.Background(), ctx, pageNr)
 		if err != nil {
 			return "", err
 		}

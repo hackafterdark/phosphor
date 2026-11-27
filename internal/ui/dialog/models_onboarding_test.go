@@ -13,11 +13,11 @@ import (
 )
 
 func TestOnboardingCustomProviderEntry(t *testing.T) {
-	t.Parallel()
+	// The provider mock flag is a package-level global: keep the test
+	// serialized so subtests cannot race on it.
+	t.Setenv("PHOSPHOR_TEST_SERIALIZED", "1")
 
 	t.Run("shown at top of list during onboarding", func(t *testing.T) {
-		t.Parallel()
-
 		m := newTestModels(t, true)
 		items := visibleSelectable(m)
 		require.NotEmpty(t, items)
@@ -27,8 +27,6 @@ func TestOnboardingCustomProviderEntry(t *testing.T) {
 	})
 
 	t.Run("selecting it opens the provider wizard", func(t *testing.T) {
-		t.Parallel()
-
 		m := newTestModels(t, true)
 		m.list.SelectFirst()
 		action := m.HandleMsg(selectKeyMsg())
@@ -38,8 +36,6 @@ func TestOnboardingCustomProviderEntry(t *testing.T) {
 	})
 
 	t.Run("not shown outside onboarding", func(t *testing.T) {
-		t.Parallel()
-
 		m := newTestModels(t, false)
 		for _, item := range visibleSelectable(m) {
 			mi, ok := item.(*ModelItem)
@@ -51,8 +47,6 @@ func TestOnboardingCustomProviderEntry(t *testing.T) {
 	})
 
 	t.Run("real models are unaffected", func(t *testing.T) {
-		t.Parallel()
-
 		m := newTestModels(t, true)
 		var found bool
 		for _, item := range visibleSelectable(m) {

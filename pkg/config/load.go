@@ -41,6 +41,20 @@ func Load(workingDir, dataDir string, debug bool) (*ConfigStore, error) {
 	// Migrate deprecated disable_notifications before loading config.
 	migrateDisableNotifications()
 
+	// Resolve symlinks in the workspace root before any path is derived
+	// from it, so the config, the trusted security floor, and the bounds
+	// checks all agree on one spelling. If the workspace doesn't exist on
+	// disk (e.g. during tests), use it as-is.
+	if resolvedWorkingDir, err := filepath.EvalSymlinks(workingDir); err == nil {
+		workingDir = resolvedWorkingDir
+	}
+
+	// The operator-supplied data directory is trusted input. The security
+	// floor is built from it so the hardening clamp can revert a
+	// workspace/project override without discarding the operator's own
+	// choice.
+	operatorDataDir := dataDir
+
 	configPaths := lookupConfigs(workingDir)
 
 	cfg, loadedPaths, err := loadFromConfigPaths(configPaths)
@@ -59,19 +73,23 @@ func Load(workingDir, dataDir string, debug bool) (*ConfigStore, error) {
 		}
 	}
 
-	// Resolve symlinks in the workspace root to prevent bypass through
-	// symlink traversal in bounds checking. If the workspace doesn't exist
-	// on disk (e.g. during tests), use it as-is.
-	if resolvedWorkingDir, err := filepath.EvalSymlinks(workingDir); err == nil {
-		workingDir = resolvedWorkingDir
+	// The security floor is global files plus the operator's own data
+	// directory — the only sources this workspace may not downgrade. It is
+	// built before the workspace config path is derived: a project-level
+	// data_directory override would otherwise choose which file Load reads
+	// and where workspace-scoped writes land, ahead of the clamp.
+	floor := trustedSecurityFloor(workingDir, operatorDataDir)
+	if cfg.Options != nil && floor.Options != nil {
+		cfg.Options.DataDirectory = floor.Options.DataDirectory
 	}
 
 	store := &ConfigStore{
-		config:         cfg,
-		workingDir:     workingDir,
-		globalDataPath: GlobalConfigData(),
-		workspacePath:  filepath.Join(cfg.Options.DataDirectory, fmt.Sprintf("%s.json", appName)),
-		loadedPaths:    loadedPaths,
+		config:          cfg,
+		workingDir:      workingDir,
+		operatorDataDir: operatorDataDir,
+		globalDataPath:  GlobalConfigData(),
+		workspacePath:   filepath.Join(cfg.Options.DataDirectory, fmt.Sprintf("%s.json", appName)),
+		loadedPaths:     loadedPaths,
 	}
 
 	if debug {
@@ -106,7 +124,10 @@ func Load(workingDir, dataDir string, debug bool) (*ConfigStore, error) {
 	// project-local config tried to weaken below the trusted user/system baseline,
 	// so an untrusted repository cannot silently disable a secret mask, shrink the
 	// sensitive-file set, or broaden the bash child environment.
-	hardenAgainstWorkspaceOverrides(cfg, trustedSecurityFloor(workingDir, cfg.Options.DataDirectory))
+	// The floor must be built from the operator"s own data directory, never
+	// from the merged value: a workspace or project file could otherwise
+	// select its own baseline and skip the clamp entirely.
+	hardenAgainstWorkspaceOverrides(cfg, floor)
 
 	// Validate hooks after all config merging is complete so workspace
 	// hooks also get their matcher regexes compiled.
@@ -547,6 +568,13 @@ func safeDataDir(workingDir, dataDir string) (string, bool) {
 	if err != nil {
 		return "", false
 	}
+	// Compare canonical forms. The workspace root may have been typed or
+	// discovered through a symlink, and the caller's candidate may spell the
+	// same tree differently; comparing raw spellings would reject a
+	// legitimate directory that is in fact workspace-contained.
+	if resolved, err := filepath.EvalSymlinks(baseAbs); err == nil {
+		baseAbs = resolved
+	}
 
 	candidate := dataDir
 	if !filepath.IsAbs(candidate) {
@@ -555,6 +583,9 @@ func safeDataDir(workingDir, dataDir string) (string, bool) {
 	candidateAbs, err := filepath.Abs(candidate)
 	if err != nil {
 		return "", false
+	}
+	if resolved, err := filepath.EvalSymlinks(candidateAbs); err == nil {
+		candidateAbs = resolved
 	}
 
 	rel, err := filepath.Rel(baseAbs, candidateAbs)
@@ -566,6 +597,33 @@ func safeDataDir(workingDir, dataDir string) (string, bool) {
 	}
 
 	return filepath.Clean(candidateAbs), true
+}
+
+// workspaceDataDir resolves the default data directory for a workspace. The
+// candidate is verified against its own parent directory rather than trusted
+// on its spelling: a repository can plant a symlink at the default location
+// (or discover state in a parent directory) whose target resolves outside the
+// directory it sits in, which would redirect the SQLite database, config
+// writes, and the panic-log mirror outside the workspace. When the resolved
+// destination escapes, the operator-owned data directory is used instead —
+// the one location a repository cannot influence.
+func workspaceDataDir(workingDir string) string {
+	dir := filepath.Join(workingDir, defaultDataDirectory)
+	if path, ok := fsext.LookupClosestBounded(workingDir, projectBoundary(workingDir), defaultDataDirectory); ok {
+		dir = path
+	}
+	// Comparing against the candidate's own parent keeps the intended
+	// monorepo layout (state in a parent directory of the workspace)
+	// working, while rejecting a symlink component that leaves it.
+	if !filepathext.IsInside(dir, filepath.Dir(dir)) {
+		slog.Warn(
+			"Rejected workspace data directory whose resolved destination escapes its parent",
+			"path", dir,
+			"reason", "a symlink at the default data directory resolves outside the workspace",
+		)
+		return filepath.Dir(GlobalConfigData())
+	}
+	return dir
 }
 
 func (c *Config) setDefaults(workingDir, dataDir string) {
@@ -589,11 +647,7 @@ func (c *Config) setDefaults(workingDir, dataDir string) {
 	if safeDir, ok := safeDataDir(workingDir, dataDir); ok {
 		c.Options.DataDirectory = safeDir
 	} else if c.Options.DataDirectory == "" {
-		if path, ok := fsext.LookupClosestBounded(workingDir, projectBoundary(workingDir), defaultDataDirectory); ok {
-			c.Options.DataDirectory = path
-		} else {
-			c.Options.DataDirectory = filepath.Join(workingDir, defaultDataDirectory)
-		}
+		c.Options.DataDirectory = workspaceDataDir(workingDir)
 	}
 	c.Options.DataDirectory = filepath.Clean(filepathext.UnsafeSmartJoin(workingDir, c.Options.DataDirectory))
 	if c.Providers == nil {
