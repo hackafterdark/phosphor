@@ -36,10 +36,13 @@ func TestService_StartAdoptsLocalWorkspace(t *testing.T) {
 	require.NoError(t, svc.Start(ctx))
 	t.Cleanup(func() {
 		_ = svc.Stop(context.Background())
-		// The service holds a long-lived DB handle for mermaid
-		// diagram queries; release it so TempDir cleanup can
-		// remove the workspace directory on Windows.
-		_ = db.Release(filepath.Join(wd, ".phosphor"))
+		// The service holds long-lived DB handles (the adopted
+		// workspace's app plus the mermaid diagram querier opened by
+		// the OpenAI API setup); release every reference so TempDir
+		// cleanup can remove the workspace directory on Windows.
+		for range 2 {
+			_ = db.Release(filepath.Join(wd, ".phosphor"))
+		}
 	})
 
 	wsList := svc.srv.Backend().ListWorkspaces()

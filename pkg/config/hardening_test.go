@@ -417,7 +417,13 @@ func TestHarden_LoadClampsWorkspaceDataDirectory(t *testing.T) {
 
 	store, err := Load(work, "", false)
 	require.NoError(t, err)
-	require.Equal(t, phosDir, store.Config().Options.DataDirectory,
+	// Compare canonical forms: Load resolves the workspace root's symlinks
+	// (macOS /var temp dirs, Windows 8.3 temp names).
+	got, err := filepath.EvalSymlinks(store.Config().Options.DataDirectory)
+	require.NoError(t, err)
+	want, err := filepath.EvalSymlinks(phosDir)
+	require.NoError(t, err)
+	require.Equal(t, want, got,
 		"project-supplied absolute data_directory must be reverted to the trusted floor")
 }
 
@@ -440,6 +446,10 @@ func TestHarden_LoadClampsSymlinkedDataDirectory(t *testing.T) {
 
 	store, err := Load(work, "", false)
 	require.NoError(t, err)
-	require.Equal(t, filepath.Join(work, defaultDataDirectory), store.Config().Options.DataDirectory,
+	got, err := filepath.EvalSymlinks(store.Config().Options.DataDirectory)
+	require.NoError(t, err)
+	want, err := filepath.EvalSymlinks(filepath.Join(work, defaultDataDirectory))
+	require.NoError(t, err)
+	require.Equal(t, want, got,
 		"a symlinked data directory escaping the workspace must fall back to the plain default")
 }
