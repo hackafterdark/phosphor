@@ -90,6 +90,15 @@ phosphor login xai       # xAI (Grok / SuperGrok subscription)
 The matching `phosphor logout <platform>` clears the stored token. Tokens are
 refreshed automatically at runtime.
 
+> **Check the provider`s terms of service.** Using third-party clients like
+> Phosphor against a subscription-backed provider is only as allowed as that
+> provider`s current terms allow, and terms change. xAI and GitHub Copilot
+> currently work through these login flows, but other providers (e.g. Google
+> and Anthropic) explicitly restrict this type of usage with subscription
+> accounts. Review the provider`s terms before relying on it and use these
+> flows at your own discretion — continued use after a policy change could
+> put your account at risk.
+
 > **xAI routing and tier gating.** Subscription and API access are separate.
 > `phosphor login xai` authenticates your Grok/X Premium or SuperGrok
 > subscription and automatically routes requests through the Grok chat proxy
