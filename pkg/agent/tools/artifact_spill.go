@@ -45,8 +45,8 @@ func spillFullOutput(workspaceDir, sessionID, toolName, content string) (path st
 	// sessionID is validated above to a single path component, and the
 	// os.Root operations cannot resolve outside the workspace root even if
 	// an ancestor becomes a symlink concurrently.
-	// codeql[go/path-injection]
 	dir := filepath.Join(".phosphor", "artifacts", sessionID)
+	// codeql[go/path-injection]
 	if err := root.MkdirAll(dir, 0o755); err != nil {
 		return "", "", err
 	}
@@ -62,10 +62,13 @@ func spillFullOutput(workspaceDir, sessionID, toolName, content string) (path st
 	}
 	if _, err := f.WriteString(content); err != nil {
 		f.Close()
+		// codeql[go/path-injection] cleanup of the file this call just
+		// created inside the root; see the containment note above.
 		_ = root.Remove(full)
 		return "", "", err
 	}
 	if err := f.Close(); err != nil {
+		// codeql[go/path-injection] same cleanup path as above.
 		_ = root.Remove(full)
 		return "", "", err
 	}
