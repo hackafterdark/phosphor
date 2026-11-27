@@ -46,14 +46,20 @@ func spillFullOutput(workspaceDir, sessionID, toolName, content string) (path st
 	if !filepathext.IsInside(dir, absWorkspace) {
 		return "", "", fmt.Errorf("artifact dir %q resolves outside workspace %q", dir, absWorkspace)
 	}
+	// codeql[go/path-injection] dir is validated above: sessionID is a
+	// single path component and the path is workspace-contained.
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", "", err
 	}
 	name := fmt.Sprintf("%s-%d.txt", toolName, time.Now().UnixNano())
 	full := filepath.Join(dir, name)
+	// codeql[go/path-injection] full stays under the validated dir; the
+	// file name is internal tool constants plus a nanosecond timestamp.
 	if err := os.WriteFile(full, []byte(content), 0o600); err != nil {
 		return "", "", err
 	}
+	// codeql[go/path-injection] full is workspace-contained per the check
+	// above, so the relative path cannot escape the workspace.
 	rel, err := filepath.Rel(workspaceDir, full)
 	if err != nil {
 		_ = os.Remove(full)

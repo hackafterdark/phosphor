@@ -35,15 +35,21 @@ func hookPanicLog(logFile string) bool {
 	if panicLogPath == panicFile {
 		return true
 	}
+	// codeql[go/path-injection] panicFile is operator-configured, built
+	// above from the log-dir config; no attacker-controlled component.
 	if err := os.MkdirAll(filepath.Dir(panicFile), 0o700); err != nil {
 		return false
 	}
 	// Refuse a planted symlink at the mirror path: the crash log is
 	// opened on the crash path itself, and an attacker-controlled
 	// target there would redirect crash output outside the log dir.
+	// codeql[go/path-injection] same operator-configured panicFile; the
+	// Lstat itself is the planted-symlink check for this path.
 	if fi, err := os.Lstat(panicFile); err == nil && fi.Mode()&os.ModeSymlink != 0 {
 		return false
 	}
+	// codeql[go/path-injection] same operator-configured panicFile, opened
+	// only after the symlink check above.
 	f, err := os.OpenFile(panicFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		return false
