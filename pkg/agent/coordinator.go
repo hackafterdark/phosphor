@@ -973,7 +973,7 @@ func (c *coordinator) buildAgent(ctx context.Context, prompt *prompt.Prompt, age
 		DisableAutoSummarize: c.cfg.Config().Options.DisableAutoSummarize,
 		SummarizeThreshold:   c.cfg.Config().Options.SummarizeThreshold,
 		MicroCompactionThreshold: func() float64 {
-			if mc := c.cfg.Config().Options.Agent.MicroCompaction; mc != nil && mc.Enabled {
+			if mc := c.cfg.Config().Options.Agent.MicroCompaction; mc != nil && mc.EnabledOrDefault() {
 				return mc.Threshold
 			}
 			return 0
