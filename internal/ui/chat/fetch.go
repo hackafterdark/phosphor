@@ -67,7 +67,7 @@ func (f *FetchToolRenderContext) RenderTool(sty *styles.Styles, width int, opts 
 
 	// Determine file extension for syntax highlighting based on format.
 	file := getFileExtensionForFormat(params.Format)
-	body := toolOutputCodeContent(sty, file, opts.Result.Content, 0, cappedWidth, opts.ExpandedContent)
+	body := toolOutputCodeContent(sty, file, opts.Result.Content, 0, cappedWidth, opts)
 	return joinToolParts(header, body)
 }
 
@@ -133,7 +133,7 @@ func (w *WebFetchToolRenderContext) RenderTool(sty *styles.Styles, width int, op
 		return header
 	}
 
-	body := toolOutputMarkdownContent(sty, opts.Result.Content, cappedWidth, opts.ExpandedContent)
+	body := toolOutputMarkdownContent(sty, opts.Result.Content, cappedWidth, opts)
 	return joinToolParts(header, body)
 }
 
@@ -187,6 +187,6 @@ func (w *WebSearchToolRenderContext) RenderTool(sty *styles.Styles, width int, o
 		return header
 	}
 
-	body := toolOutputMarkdownContent(sty, opts.Result.Content, cappedWidth, opts.ExpandedContent)
+	body := toolOutputMarkdownContent(sty, opts.Result.Content, cappedWidth, opts)
 	return joinToolParts(header, body)
 }

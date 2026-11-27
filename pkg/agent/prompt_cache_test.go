@@ -172,7 +172,7 @@ func TestWirePromptByteStableAcrossTodosUpdate(t *testing.T) {
 	// Title generation runs asynchronously after Run returns and tries the
 	// small model first; keeping it off the probe keeps the recorded
 	// prompts exactly the two run steps this test pins.
-	sa := testSessionAgent(env, model, &finishStreamModel{text: "title"}, "system", tools.NewTodosTool(env.sessions)).(*sessionAgent)
+	sa := testSessionAgent(t, env, model, &finishStreamModel{text: "title"}, "system", tools.NewTodosTool(env.sessions)).(*sessionAgent)
 	accept := sa.BeginAccepted(sess.ID)
 	_, err = sa.Run(t.Context(), SessionAgentCall{
 		SessionID: sess.ID,
@@ -247,7 +247,7 @@ func TestContinuationNoteDeliveredForPersistedMessage(t *testing.T) {
 	sess, err := env.sessions.Create(t.Context(), "continuation-note")
 	require.NoError(t, err)
 
-	sa := testSessionAgent(env, model, model, "system", tools.NewTodosTool(env.sessions)).(*sessionAgent)
+	sa := testSessionAgent(t, env, model, model, "system", tools.NewTodosTool(env.sessions)).(*sessionAgent)
 	accept := sa.BeginAccepted(sess.ID)
 	_, err = sa.Run(t.Context(), SessionAgentCall{
 		SessionID: sess.ID,
@@ -321,7 +321,7 @@ func TestQueuedTurnDeliversSnapshotForPersistedMessage(t *testing.T) {
 	_, err = env.sessions.Save(t.Context(), sess)
 	require.NoError(t, err)
 
-	sa := testSessionAgent(env, model, model, "system", tools.NewTodosTool(env.sessions)).(*sessionAgent)
+	sa := testSessionAgent(t, env, model, model, "system", tools.NewTodosTool(env.sessions)).(*sessionAgent)
 
 	// The queue-dispatch path: the message is persisted before Run.
 	queued := SessionAgentCall{SessionID: sess.ID, Prompt: "queued turn"}

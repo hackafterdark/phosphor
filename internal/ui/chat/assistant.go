@@ -133,6 +133,10 @@ type AssistantMessageItem struct {
 	anim              *anim.Anim
 	thinkingViewMode  thinkingViewMode
 	thinkingBoxHeight int // Tracks the rendered thinking box height for click detection.
+	// thinkingVisible gates whether the reasoning trace is rendered. It is
+	// display-only: the reasoning stays on the message and in the model
+	// context. Constructed items default to visible.
+	thinkingVisible bool
 
 	// Per-section render caches. Splitting these out means content
 	// streaming does not invalidate the (often expensive) thinking
@@ -170,6 +174,7 @@ func NewAssistantMessageItem(sty *styles.Styles, message *message.Message) Messa
 		focusableMessageItem:     newFocusableMessageItem(v),
 		message:                  message,
 		sty:                      sty,
+		thinkingVisible:          true,
 	}
 
 	a.anim = anim.New(anim.Settings{
@@ -326,9 +331,31 @@ func (a *AssistantMessageItem) compositionKey() uint64 {
 		finishedFlag = 1
 		reason = string(a.message.FinishReason())
 	}
+	var thinkingFlag byte
+	if a.thinkingVisible {
+		thinkingFlag = 1
+	}
 	// Length-prefixed framing keeps the finished flag and the reason
 	// string from blending into one another.
-	return fnvFields([]byte{finishedFlag}, []byte(reason))
+	return fnvFields([]byte{finishedFlag, thinkingFlag}, []byte(reason))
+}
+
+// SetThinkingVisible controls whether the reasoning trace is rendered. It is
+// display-only: the reasoning stays on the message and in the model context,
+// so this only changes what the user sees. Returns whether the state changed.
+//
+// The runtime toggle calls this on already-rendered items, so a change drops
+// the cached renders and bumps the version, which forces the list cache to
+// redraw that item on the next frame.
+func (a *AssistantMessageItem) SetThinkingVisible(visible bool) bool {
+	if a.thinkingVisible == visible {
+		return false
+	}
+	a.thinkingVisible = visible
+	a.thinkingBoxHeight = 0
+	a.clearCache()
+	a.Bump()
+	return true
 }
 
 // renderMessageContent renders the message content including thinking, main
@@ -340,8 +367,17 @@ func (a *AssistantMessageItem) renderMessageContent(width int) (string, int) {
 	thinking := strings.TrimSpace(a.message.ReasoningContent().Thinking)
 	content := strings.TrimSpace(a.message.Content().Text)
 
+	if !a.thinkingVisible {
+		thinking = ""
+	}
+
 	if thinking != "" {
 		messageParts = append(messageParts, a.cachedThinking(width))
+	} else {
+		// The thinking box is the click target for expansion. When it is not
+		// rendered, clear the stale height so clicks in that region fall
+		// through instead of toggling an invisible block.
+		a.thinkingBoxHeight = 0
 	}
 
 	if content != "" {
@@ -737,7 +773,7 @@ func (a *AssistantMessageItem) ToggleExpanded() bool {
 	if len(a.memorySources) > 0 {
 		a.memoryExpanded = !a.memoryExpanded
 	}
-	if strings.TrimSpace(a.message.ReasoningContent().Thinking) == "" {
+	if strings.TrimSpace(a.message.ReasoningContent().Thinking) == "" || !a.thinkingVisible {
 		if len(a.memorySources) > 0 {
 			a.Bump()
 		}

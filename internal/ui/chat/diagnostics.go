@@ -63,6 +63,10 @@ func (d *DiagnosticsToolRenderContext) RenderTool(sty *styles.Styles, width int,
 	}
 
 	bodyWidth := cappedWidth - toolBodyLeftPaddingTotal
-	body := sty.Tool.Body.Render(toolOutputPlainContent(sty, opts.Result.Content, bodyWidth, opts.ExpandedContent))
+	// Diagnostics are exempt content: collapsed still renders them up to
+	// the short-mode cap instead of hiding them.
+	exemptOpts := *opts
+	exemptOpts.OutputMode = toolOutputBodyMode(opts.outputMode())
+	body := sty.Tool.Body.Render(toolOutputPlainContent(sty, opts.Result.Content, bodyWidth, &exemptOpts))
 	return joinToolParts(header, body)
 }

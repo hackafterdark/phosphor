@@ -594,6 +594,9 @@ func (c *Commands) defaultCommands() []*CommandItem {
 	}
 	commands = append(commands, NewCommandItem(c.com.Styles, "toggle_transparent", transparentLabel, "", ActionToggleTransparentBackground{}))
 
+	// Add display preferences dialog (thinking + per-tool output modes).
+	commands = append(commands, NewCommandItem(c.com.Styles, "display_preferences", "Display Preferences", "", ActionOpenDialog{DialogID: PreferencesID}))
+
 	commands = append(
 		commands,
 		NewCommandItem(c.com.Styles, "quit", "Quit", "ctrl+c", tea.QuitMsg{}).WithAliases("exit"),

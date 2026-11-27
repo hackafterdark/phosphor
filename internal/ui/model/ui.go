@@ -1279,15 +1279,15 @@ func (m *UI) setSessionMessages(msgs []message.Message) tea.Cmd {
 		switch msg.Role {
 		case message.User:
 			m.lastUserMessageTime = msg.CreatedAt
-			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap)...)
+			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap, m.thinkingVisible(), m.toolOutputModeFor)...)
 		case message.Assistant:
-			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap)...)
+			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap, m.thinkingVisible(), m.toolOutputModeFor)...)
 			if msg.FinishPart() != nil && msg.FinishPart().Reason == message.FinishReasonEndTurn {
 				infoItem := chat.NewAssistantInfoItem(m.com.Styles, msg, m.com.Config(), time.Unix(m.lastUserMessageTime, 0))
 				items = append(items, infoItem)
 			}
 		default:
-			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap)...)
+			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap, m.thinkingVisible(), m.toolOutputModeFor)...)
 		}
 	}
 
@@ -1374,15 +1374,15 @@ func (m *UI) loadMoreMessages() tea.Cmd {
 		switch msg.Role {
 		case message.User:
 			lastUserTime = msg.CreatedAt
-			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap)...)
+			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap, m.thinkingVisible(), m.toolOutputModeFor)...)
 		case message.Assistant:
-			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap)...)
+			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap, m.thinkingVisible(), m.toolOutputModeFor)...)
 			if msg.FinishPart() != nil && msg.FinishPart().Reason == message.FinishReasonEndTurn {
 				infoItem := chat.NewAssistantInfoItem(m.com.Styles, msg, m.com.Config(), time.Unix(lastUserTime, 0))
 				items = append(items, infoItem)
 			}
 		default:
-			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap)...)
+			items = append(items, chat.ExtractMessageItems(m.com.Styles, msg, toolResultMap, m.thinkingVisible(), m.toolOutputModeFor)...)
 		}
 	}
 
@@ -1534,7 +1534,7 @@ func (m *UI) loadNestedToolCalls(items []chat.MessageItem) {
 		// Extract nested tool items.
 		var nestedTools []chat.ToolMessageItem
 		for _, nestedMsg := range nestedMsgPtrs {
-			nestedItems := chat.ExtractMessageItems(m.com.Styles, nestedMsg, nestedToolResultMap)
+			nestedItems := chat.ExtractMessageItems(m.com.Styles, nestedMsg, nestedToolResultMap, m.thinkingVisible(), m.toolOutputModeFor)
 			for _, nestedItem := range nestedItems {
 				if nestedToolItem, ok := nestedItem.(chat.ToolMessageItem); ok {
 					// Mark nested tools as simple (compact) rendering.
@@ -1572,7 +1572,7 @@ func (m *UI) appendSessionMessage(msg message.Message) tea.Cmd {
 	switch msg.Role {
 	case message.User:
 		m.lastUserMessageTime = msg.CreatedAt
-		items := chat.ExtractMessageItems(m.com.Styles, &msg, nil)
+		items := chat.ExtractMessageItems(m.com.Styles, &msg, nil, m.thinkingVisible(), m.toolOutputModeFor)
 		for _, item := range items {
 			if animatable, ok := item.(chat.Animatable); ok {
 				if cmd := animatable.StartAnimation(); cmd != nil {
@@ -1600,7 +1600,7 @@ func (m *UI) appendSessionMessage(msg message.Message) tea.Cmd {
 			}
 		}
 	case message.Assistant:
-		items := chat.ExtractMessageItems(m.com.Styles, &msg, nil)
+		items := chat.ExtractMessageItems(m.com.Styles, &msg, nil, m.thinkingVisible(), m.toolOutputModeFor)
 		for _, item := range items {
 			if animatable, ok := item.(chat.Animatable); ok {
 				if cmd := animatable.StartAnimation(); cmd != nil {
@@ -1667,6 +1667,10 @@ func (m *UI) handleClickFocus(msg tea.MouseClickMsg) (cmd tea.Cmd) {
 // message too.
 func (m *UI) updateSessionMessage(msg message.Message) tea.Cmd {
 	var cmds []tea.Cmd
+	var assistantMsg *message.Message
+	if msg.Role == message.Assistant {
+		assistantMsg = &msg
+	}
 	existingItem := m.chat.MessageItem(msg.ID)
 
 	if existingItem != nil {
@@ -1675,8 +1679,39 @@ func (m *UI) updateSessionMessage(msg message.Message) tea.Cmd {
 		}
 	}
 
-	shouldRenderAssistant := chat.ShouldRenderAssistantMessage(&msg)
+	shouldRenderAssistant := chat.ShouldRenderAssistantMessage(&msg, m.thinkingVisible())
 	isEndTurn := msg.FinishPart() != nil && msg.FinishPart().Reason == message.FinishReasonEndTurn
+	// When thinking is hidden, an assistant message that carried only tool
+	// calls is never extracted; if a later update adds response text, create
+	// the missing item now (before its tool items) so the text appears live
+	// instead of only after a session reload.
+	if assistantMsg != nil && existingItem == nil && shouldRenderAssistant {
+		insertAt := m.chat.Len()
+		for _, tc := range msg.ToolCalls() {
+			if toolItem := m.chat.MessageItem(tc.ID); toolItem != nil {
+				for i := range m.chat.Len() {
+					if m.chat.ItemAt(i) == toolItem {
+						insertAt = i
+						break
+					}
+				}
+				break
+			}
+		}
+		assistantItem := chat.NewAssistantMessageItem(m.com.Styles, assistantMsg)
+		if assistant, ok := assistantItem.(*chat.AssistantMessageItem); ok {
+			assistant.SetThinkingVisible(m.thinkingVisible())
+			if cmd := assistant.StartAnimation(); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
+		m.chat.InsertMessagesAt(insertAt, assistantItem)
+		if m.chat.Follow() {
+			if cmd := m.chat.ScrollToBottomAndAnimate(); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
+	}
 	// If the message of the assistant does not have any response just tool
 	// calls we need to remove it, but keep the info item for end-of-turn
 	// renders so the footer (model/provider/duration) remains visible when,
@@ -1709,7 +1744,10 @@ func (m *UI) updateSessionMessage(msg message.Message) tea.Cmd {
 			}
 		}
 		if existingToolItem == nil {
-			items = append(items, chat.NewToolMessageItem(m.com.Styles, msg.ID, tc, nil, false))
+			toolItem := chat.NewToolMessageItem(m.com.Styles, msg.ID, tc, nil, false)
+			mode, limit := m.toolOutputModeFor(tc.Name)
+			toolItem.SetOutputMode(mode, limit)
+			items = append(items, toolItem)
 		}
 	}
 
@@ -2206,6 +2244,46 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 			return util.NewInfoMsg("Transparent background " + status)
 		})
 		m.dialog.CloseDialog(dialog.CommandsID)
+	case dialog.ActionSetThinkingVisible:
+		cfg := m.com.Config()
+		if cfg != nil && cfg.Options != nil && cfg.Options.TUI != nil {
+			cfg.Options.TUI.ShowThinking = &msg.Visible
+			cmds = append(cmds, m.persistConfigField(config.ScopeGlobal, "options.tui.show_thinking", msg.Visible))
+		}
+		for i := range m.chat.Len() {
+			if item, ok := m.chat.ItemAt(i).(*chat.AssistantMessageItem); ok {
+				item.SetThinkingVisible(msg.Visible)
+			}
+		}
+		// Messages whose only visible content was reasoning are omitted while
+		// thinking is hidden; when thinking is turned back on, restore them so
+		// the transcript matches the setting instead of staying silently
+		// incomplete until the session is reloaded.
+		if msg.Visible {
+			m.restoreOmittedAssistantItems()
+		}
+	case dialog.ActionSetCompactMode:
+		// Apply the layout live, then persist; the workspace write is I/O
+		// and belongs in a tea.Cmd.
+		m.forceCompactMode = msg.Enabled
+		m.updateLayoutAndSize()
+		cmds = append(cmds, func() tea.Msg {
+			if err := m.com.Workspace.SetCompactMode(config.ScopeGlobal, msg.Enabled); err != nil {
+				return util.NewErrorMsg(err)
+			}
+			return nil
+		})
+	case dialog.ActionSetToolOutputMode:
+		cmds = append(cmds, m.applyToolOutputMode(msg.Tool, msg.Mode))
+		// The override can add a new per-tool row; rebuild the open dialog
+		// so it appears without reopening.
+		if dia := m.dialog.Dialog(dialog.PreferencesID); dia != nil {
+			if prefs, ok := dia.(*dialog.Preferences); ok {
+				prefs.Refresh()
+			}
+		}
+	case dialog.ActionSetToolOutputLimit:
+		cmds = append(cmds, m.applyToolOutputLimit(msg.Limit))
 	case dialog.ActionQuit:
 		cmds = append(cmds, tea.Quit)
 	case dialog.ActionEnableDockerMCP:
@@ -3481,6 +3559,169 @@ func (m *UI) toggleCompactMode() tea.Cmd {
 	return nil
 }
 
+// thinkingVisible reads the current thinking display setting. The default is
+// true, which also covers a config that was never loaded or that predates the
+// option, so thinking stays visible unless the user opted out.
+func (m *UI) thinkingVisible() bool {
+	cfg := m.com.Config()
+	if cfg == nil || cfg.Options == nil {
+		return true
+	}
+	return cfg.Options.TUI.ThinkingVisible()
+}
+
+// restoreOmittedAssistantItems inserts assistant items that extraction
+// skipped (their message had no visible content when thinking was hidden) but
+// that the current settings render. Items already in the chat are left
+// untouched, preserving selection and expansion state. It reads from the
+// loaded message state rather than the database, so it performs no I/O in
+// `Update`.
+func (m *UI) restoreOmittedAssistantItems() {
+	if m.session == nil {
+		return
+	}
+	byID := make(map[string]*message.Message, len(m.allSessionMessages))
+	ptrs := make([]*message.Message, len(m.allSessionMessages))
+	for i := range m.allSessionMessages {
+		byID[m.allSessionMessages[i].ID] = &m.allSessionMessages[i]
+		ptrs[i] = &m.allSessionMessages[i]
+	}
+	toolResults := chat.BuildToolResultMap(ptrs)
+	// Scan the current list state each pass and restart at the inserted
+	// assistant item: insertions shift every later index, so a fixed-range
+	// loop would skip the next candidate after the first insertion.
+	for pos := 0; pos < m.chat.Len(); pos++ {
+		item, ok := m.chat.ItemAt(pos).(chat.ToolMessageItem)
+		if !ok {
+			continue
+		}
+		assistantID := item.MessageID()
+		if assistantID == "" || m.chat.MessageItem(assistantID) != nil {
+			continue
+		}
+		assistantMsg := byID[assistantID]
+		if assistantMsg == nil || !chat.ShouldRenderAssistantMessage(assistantMsg, m.thinkingVisible()) {
+			continue
+		}
+		assistantItem := chat.NewAssistantMessageItem(m.com.Styles, assistantMsg)
+		if assistant, ok := assistantItem.(*chat.AssistantMessageItem); ok {
+			assistant.SetThinkingVisible(m.thinkingVisible())
+			// The pill reads the same stored results the tool items render,
+			// exactly as load-time extraction does, so a restored message is
+			// not silently missing its memory provenance.
+			var results []message.ToolResult
+			for _, tc := range assistantMsg.ToolCalls() {
+				if tr, ok := toolResults[tc.ID]; ok {
+					results = append(results, tr)
+				}
+			}
+			if sources := memoryui.SourcesFromResults(results); len(sources) > 0 {
+				assistant.SetMemorySources(sources)
+			}
+		}
+		m.chat.InsertMessagesAt(pos, assistantItem)
+		// pos now holds the inserted assistant item; the tool item sits at
+		// pos+1. The next scan pass starts at pos and only sees already
+		// restored assistants (and the untouched tool item), so progress
+		// is guaranteed and no candidate is skipped.
+		pos--
+	}
+}
+
+// persistConfigField writes a single config field to disk off the update
+// loop. The live value is applied to the in-memory config synchronously in
+// `Update`; only the persistence is deferred, per the no-I/O-in-Update rule.
+func (m *UI) persistConfigField(scope config.Scope, key string, value any) tea.Cmd {
+	return func() tea.Msg {
+		if err := m.com.Workspace.SetConfigField(scope, key, value); err != nil {
+			return util.NewErrorMsg(err)
+		}
+		return nil
+	}
+}
+
+// toolOutputModeFor resolves the result body display mode and short-mode line
+// cap for a tool from the current config. It is display-only: results stay in
+// stored messages and in the model context regardless of the mode.
+func (m *UI) toolOutputModeFor(tool string) (config.ToolOutputMode, int) {
+	cfg := m.com.Config()
+	if cfg == nil || cfg.Options == nil {
+		return config.DefaultToolOutputMode, 0
+	}
+	return cfg.Options.TUI.ToolOutput.ModeFor(tool), cfg.Options.TUI.ToolOutput.LineLimit()
+}
+
+// applyToolOutputMode sets the result body display mode for one tool (an empty
+// tool name sets the default for all tools), persists the choice, and updates
+// the tool items already in the chat list in place.
+func (m *UI) applyToolOutputMode(tool string, mode config.ToolOutputMode) tea.Cmd {
+	cfg := m.com.Config()
+	if cfg == nil || cfg.Options == nil {
+		return util.ReportWarn("Config not loaded")
+	}
+	if cfg.Options.TUI == nil {
+		cfg.Options.TUI = &config.TUIOptions{}
+	}
+	if cfg.Options.TUI.ToolOutput == nil {
+		cfg.Options.TUI.ToolOutput = &config.ToolOutput{}
+	}
+	var key string
+	if tool == "" {
+		cfg.Options.TUI.ToolOutput.Default = mode
+		key = "options.tui.tool_output.default"
+	} else {
+		if cfg.Options.TUI.ToolOutput.PerTool == nil {
+			cfg.Options.TUI.ToolOutput.PerTool = make(map[string]config.ToolOutputMode)
+		}
+		cfg.Options.TUI.ToolOutput.PerTool[tool] = mode
+		key = "options.tui.tool_output.per_tool." + tool
+	}
+
+	for i := range m.chat.Len() {
+		if item, ok := m.chat.ItemAt(i).(chat.ToolMessageItem); ok {
+			toolMode, toolLimit := m.toolOutputModeFor(item.ToolCall().Name)
+			item.SetOutputMode(toolMode, toolLimit)
+		}
+	}
+
+	label := "all tools"
+	if tool != "" {
+		label = tool
+	}
+	return tea.Batch(
+		m.persistConfigField(config.ScopeGlobal, key, string(mode)),
+		util.ReportInfo("Tool output for "+label+" set to "+string(mode)),
+	)
+}
+
+// applyToolOutputLimit sets the short-mode line cap for tool output, persists
+// it, and updates the tool items already in the chat list in place.
+func (m *UI) applyToolOutputLimit(limit int) tea.Cmd {
+	cfg := m.com.Config()
+	if cfg == nil || cfg.Options == nil {
+		return util.ReportWarn("Config not loaded")
+	}
+	if cfg.Options.TUI == nil {
+		cfg.Options.TUI = &config.TUIOptions{}
+	}
+	if cfg.Options.TUI.ToolOutput == nil {
+		cfg.Options.TUI.ToolOutput = &config.ToolOutput{}
+	}
+	cfg.Options.TUI.ToolOutput.Limit = &limit
+
+	for i := range m.chat.Len() {
+		if item, ok := m.chat.ItemAt(i).(chat.ToolMessageItem); ok {
+			toolMode, toolLimit := m.toolOutputModeFor(item.ToolCall().Name)
+			item.SetOutputMode(toolMode, toolLimit)
+		}
+	}
+
+	return tea.Batch(
+		m.persistConfigField(config.ScopeGlobal, "options.tui.tool_output.limit", limit),
+		util.ReportInfo("Short tool output line limit set to "+strconv.Itoa(limit)),
+	)
+}
+
 // startCodebaseIndexing starts codebase indexing in the background.
 func (m *UI) startCodebaseIndexing() tea.Cmd {
 	cfg := m.com.Config()
@@ -4710,6 +4951,10 @@ func (m *UI) openDialog(id string) tea.Cmd {
 		if cmd := m.openNotificationsDialog(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
+	case dialog.PreferencesID:
+		if cmd := m.openPreferencesDialog(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 	case dialog.FilePickerID:
 		if cmd := m.openFilesDialog(); cmd != nil {
 			cmds = append(cmds, cmd)
@@ -5105,6 +5350,18 @@ func (m *UI) openNotificationsDialog() tea.Cmd {
 
 	notificationsDialog := dialog.NewNotifications(m.com)
 	m.dialog.OpenDialog(notificationsDialog)
+	return nil
+}
+
+// openPreferencesDialog opens the display preferences dialog.
+func (m *UI) openPreferencesDialog() tea.Cmd {
+	if m.dialog.ContainsDialog(dialog.PreferencesID) {
+		m.dialog.BringToFront(dialog.PreferencesID)
+		return nil
+	}
+
+	preferencesDialog := dialog.NewPreferences(m.com)
+	m.dialog.OpenDialog(preferencesDialog)
 	return nil
 }
 

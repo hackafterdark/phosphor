@@ -598,6 +598,28 @@ func (l *List) AppendItems(items ...Item) {
 	l.items = append(l.items, items...)
 }
 
+// InsertItems inserts items at the given index, shifting existing items at
+// or after it down. Selection and scroll position stay attached to the same
+// content: anything at or after the insertion point moves down with it.
+func (l *List) InsertItems(idx int, items ...Item) {
+	if len(items) == 0 {
+		return
+	}
+	idx = max(0, min(idx, len(l.items)))
+	merged := make([]Item, 0, len(l.items)+len(items))
+	merged = append(merged, l.items[:idx]...)
+	merged = append(merged, items...)
+	merged = append(merged, l.items[idx:]...)
+	l.items = merged
+
+	if l.selectedIdx >= idx {
+		l.selectedIdx += len(items)
+	}
+	if l.offsetIdx >= idx {
+		l.offsetIdx += len(items)
+	}
+}
+
 // RemoveItem removes the item at the given index from the list.
 func (l *List) RemoveItem(idx int) {
 	if idx < 0 || idx >= len(l.items) {

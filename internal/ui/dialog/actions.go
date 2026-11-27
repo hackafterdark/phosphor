@@ -56,8 +56,29 @@ type (
 		Style string
 	}
 	ActionToggleTransparentBackground struct{}
-	ActionInitializeProject           struct{}
-	ActionSummarize                   struct {
+	// ActionSetThinkingVisible is emitted by the preferences dialog to set
+	// thinking visibility to an explicit value.
+	ActionSetThinkingVisible struct {
+		Visible bool
+	}
+	// ActionSetCompactMode is emitted by the preferences dialog to force the
+	// compact layout on or off to an explicit value.
+	ActionSetCompactMode struct {
+		Enabled bool
+	}
+	// ActionSetToolOutputMode is emitted by the preferences dialog to set the
+	// result body display mode for one tool (empty Tool sets the default).
+	ActionSetToolOutputMode struct {
+		Tool string
+		Mode config.ToolOutputMode
+	}
+	// ActionSetToolOutputLimit is emitted by the preferences dialog to set
+	// the short-mode line cap for tool output.
+	ActionSetToolOutputLimit struct {
+		Limit int
+	}
+	ActionInitializeProject struct{}
+	ActionSummarize         struct {
 		SessionID string
 	}
 	ActionClearPrompt   struct{}

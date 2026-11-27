@@ -214,6 +214,8 @@ func TestConfig_setDefaults(t *testing.T) {
 		require.NotNil(t, cfg.Models)
 		require.NotNil(t, cfg.LSP)
 		require.NotNil(t, cfg.MCP)
+		// show_thinking is absent from the config, so thinking stays visible.
+		require.True(t, cfg.Options.TUI.ThinkingVisible())
 		require.Equal(t, filepath.Join(workingDir, ".phosphor"), cfg.Options.DataDirectory)
 		require.Equal(t, "AGENTS.md", cfg.Options.InitializeAs)
 		for _, path := range defaultContextPaths {

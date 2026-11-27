@@ -100,7 +100,7 @@ func testEnv(t *testing.T) fakeEnv {
 	}
 }
 
-func testSessionAgent(env fakeEnv, large, small fantasy.LanguageModel, systemPrompt string, tools ...fantasy.AgentTool) SessionAgent {
+func testSessionAgent(t *testing.T, env fakeEnv, large, small fantasy.LanguageModel, systemPrompt string, tools ...fantasy.AgentTool) SessionAgent {
 	largeModel := Model{
 		Model: large,
 		CatwalkCfg: catwalk.Model{
@@ -124,10 +124,30 @@ func testSessionAgent(env fakeEnv, large, small fantasy.LanguageModel, systemPro
 		Messages:     env.messages,
 		Tools:        tools,
 	})
+	// The first turn of a session spawns the title generator as a detached
+	// goroutine. Wait for it before the database closes: cleanup registered
+	// here runs before testEnv's cleanup (LIFO), and on Windows deleting the
+	// temp data dir while that goroutine still holds SQLite handles fails
+	// with "used by another process". Mock agents are not *sessionAgent and
+	// spawn no title goroutine, so the wait is skipped for them.
+	if sa, ok := agent.(*sessionAgent); ok {
+		t.Cleanup(func() {
+			done := make(chan struct{})
+			go func() {
+				sa.titleWG.Wait()
+				close(done)
+			}()
+			select {
+			case <-done:
+			case <-time.After(10 * time.Second):
+				t.Error("timed out waiting for session title generation to finish")
+			}
+		})
+	}
 	return agent
 }
 
-func coderAgent(r *vcr.Recorder, env fakeEnv, large, small fantasy.LanguageModel) (SessionAgent, error) {
+func coderAgent(t *testing.T, r *vcr.Recorder, env fakeEnv, large, small fantasy.LanguageModel) (SessionAgent, error) {
 	fixedTime := func() time.Time {
 		t, _ := time.Parse("1/2/2006", "1/1/2025")
 		return t
@@ -185,7 +205,7 @@ func coderAgent(r *vcr.Recorder, env fakeEnv, large, small fantasy.LanguageModel
 		tools.NewWriteTool(nil, env.permissions, env.history, *env.filetracker, env.workingDir, nil),
 	}
 
-	return testSessionAgent(env, large, small, systemPrompt, allTools...), nil
+	return testSessionAgent(t, env, large, small, systemPrompt, allTools...), nil
 }
 
 // createSimpleGoProject creates a simple Go project structure in the given directory.

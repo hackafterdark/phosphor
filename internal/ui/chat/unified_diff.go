@@ -130,11 +130,11 @@ func parseUnifiedDiff(content string) []parsedDiffFile {
 	return result
 }
 
-func toolOutputDiffContentFromUnified(sty *styles.Styles, content string, width int, expanded bool) string {
+func toolOutputDiffContentFromUnified(sty *styles.Styles, content string, width int, opts *ToolRenderOpts) string {
 	files := parseUnifiedDiff(content)
 	if len(files) == 0 {
 		bodyWidth := width - toolBodyLeftPaddingTotal
-		return sty.Tool.Body.Render(toolOutputCodeContent(sty, "result.diff", content, 0, bodyWidth, expanded))
+		return sty.Tool.Body.Render(toolOutputCodeContent(sty, "result.diff", content, 0, bodyWidth, opts))
 	}
 	bodyWidth := width - toolBodyLeftPaddingTotal
 	var blocks []string
@@ -157,11 +157,13 @@ func toolOutputDiffContentFromUnified(sty *styles.Styles, content string, width 
 	}
 	combined := strings.Join(blocks, "\n")
 	lines := strings.Split(combined, "\n")
-	maxLines := responseContextHeight
-	if expanded {
-		maxLines = len(lines)
+	// Diffs are exempt content: collapsed still renders them up to the
+	// short-mode cap.
+	maxLines := toolOutputMaxLines(toolOutputBodyMode(opts.outputMode()), opts.ExpandedContent, len(lines), opts.outputLimit())
+	if maxLines < 0 {
+		return ""
 	}
-	if len(lines) > maxLines && !expanded {
+	if len(lines) > maxLines && !opts.ExpandedContent {
 		truncMsg := sty.Tool.DiffTruncation.
 			Width(bodyWidth).
 			Render(fmt.Sprintf(assistantMessageTruncateFormat, len(lines)-maxLines))

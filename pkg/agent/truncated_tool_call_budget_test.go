@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"charm.land/fantasy"
 	"github.com/hackafterdark/phosphor/pkg/message"
@@ -114,8 +115,21 @@ func newTruncatedCallTestAgent(t *testing.T) (*sessionAgent, fakeEnv, *truncated
 			return fantasy.NewTextResponse("probe ran"), nil
 		},
 	)
-	sa := testSessionAgent(env, model, model, "system", probe).(*sessionAgent)
+	sa := testSessionAgent(t, env, model, model, "system", probe).(*sessionAgent)
 	return sa, env, model
+}
+
+// waitForTitleSave blocks until the background session-title goroutine has
+// written the title. The first turn of a session spawns GenerateTitle as a
+// detached goroutine; if the test ends first, its cleanup closes the database
+// while that goroutine still holds SQLite file handles — on Windows the
+// TempDir RemoveAll then fails with "used by another process".
+func waitForTitleSave(t *testing.T, env fakeEnv, sessionID string) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		s, err := env.sessions.Get(t.Context(), sessionID)
+		return err == nil && s.Title != "" && s.Title != DefaultSessionName
+	}, 5*time.Second, 10*time.Millisecond, "session title should be saved by the background goroutine")
 }
 
 // TestRun_TruncatedToolCallContinuesDespiteNormalFinishReason is the
@@ -150,6 +164,8 @@ func TestRun_TruncatedToolCallContinuesDespiteNormalFinishReason(t *testing.T) {
 	logs := buf.String()
 	require.True(t, strings.Contains(logs, "Step's tool call was truncated mid-argument by the provider despite a normal finish reason, queueing an automatic continuation") &&
 		strings.Contains(logs, "attempt=1"))
+	// Wait for the detached title goroutine before cleanup closes the DB.
+	waitForTitleSave(t, env, sess.ID)
 	// Two steps in the original turn (truncated call, recovery text), plus
 	// one step in the continuation run (the minimal mock does not re-issue
 	// the call, so the continuation itself completes without spending the
@@ -202,4 +218,6 @@ func TestRun_TruncatedToolCallBudgetExhaustionCompletesAsIs(t *testing.T) {
 	logs := buf.String()
 	require.Contains(t, logs, "Truncated-tool-call continuation budget exhausted, completing the turn as-is")
 	require.Equal(t, int32(2), model.calls.Load(), "no recursion beyond the two steps of the turn itself")
+	// Wait for the detached title goroutine before cleanup closes the DB.
+	waitForTitleSave(t, env, sess.ID)
 }

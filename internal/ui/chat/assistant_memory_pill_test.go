@@ -102,7 +102,7 @@ func TestExtractMessageItemsWiresThePillFromToolResults(t *testing.T) {
 	sty := styles.CharmtonePantera()
 	msg, results := memoryTurnMessage(nil)
 
-	items := ExtractMessageItems(&sty, msg, results)
+	items := ExtractMessageItems(&sty, msg, results, true, nil)
 	require.NotEmpty(t, items)
 
 	var assistant *AssistantMessageItem
@@ -124,7 +124,7 @@ func TestExtractMessageItemsNoPillForForeignResults(t *testing.T) {
 		"tc-1": {ToolCallID: "tc-1", Name: "bash", Content: "Recalled 1 memory:\n1. [not-a] (card)\n"},
 	})
 
-	items := ExtractMessageItems(&sty, msg, results)
+	items := ExtractMessageItems(&sty, msg, results, true, nil)
 	for _, item := range items {
 		if a, ok := item.(*AssistantMessageItem); ok {
 			require.NotContains(t, ansi.Strip(a.RawRender(100)), "memories")

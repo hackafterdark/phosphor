@@ -45,7 +45,7 @@ func setupAgent(t *testing.T, pair modelPair) (SessionAgent, fakeEnv) {
 	env := testEnv(t)
 
 	createSimpleGoProject(t, env.workingDir)
-	agent, err := coderAgent(r, env, large, small)
+	agent, err := coderAgent(t, r, env, large, small)
 	require.NoError(t, err)
 	return agent, env
 }
@@ -669,7 +669,7 @@ func BenchmarkBuildSummaryPrompt(b *testing.B) {
 
 func TestPreparePrompt_FiltersImageAttachments(t *testing.T) {
 	env := testEnv(t)
-	sa := testSessionAgent(env, nil, nil, "test prompt")
+	sa := testSessionAgent(t, env, nil, nil, "test prompt")
 	agent := sa.(*sessionAgent)
 
 	ctx := t.Context()
@@ -714,7 +714,7 @@ func TestPreparePrompt_FiltersImageAttachments(t *testing.T) {
 
 func TestPreparePrompt_OrphanedToolUse(t *testing.T) {
 	env := testEnv(t)
-	sa := testSessionAgent(env, nil, nil, "test prompt")
+	sa := testSessionAgent(t, env, nil, nil, "test prompt")
 	agent := sa.(*sessionAgent)
 
 	ctx := t.Context()
@@ -781,7 +781,7 @@ func TestPreparePrompt_OrphanedToolUse(t *testing.T) {
 
 func TestPreparePrompt_OrphanedToolUseMixed(t *testing.T) {
 	env := testEnv(t)
-	sa := testSessionAgent(env, nil, nil, "test prompt")
+	sa := testSessionAgent(t, env, nil, nil, "test prompt")
 	agent := sa.(*sessionAgent)
 
 	ctx := t.Context()
@@ -855,7 +855,7 @@ func TestPreparePrompt_StripsLastToolCall(t *testing.T) {
 	t.Parallel()
 
 	env := testEnv(t)
-	sa := testSessionAgent(env, nil, nil, "test prompt")
+	sa := testSessionAgent(t, env, nil, nil, "test prompt")
 	agent := sa.(*sessionAgent)
 
 	ctx := t.Context()

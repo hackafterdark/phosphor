@@ -481,13 +481,21 @@ func accessCovers(aceMask, requested windows.ACCESS_MASK) bool {
 // their deadline keep their memo entry, so the ACE lingers harmlessly
 // and the next launch re-grants (and re-revokes) it.
 //
-// Multi-instance caveat: if another Phosphor process is confining
-// children in the same workspace when this one exits, that child can
-// lose file access mid-run and its memoized grant will not re-apply
-// until the process relaunches. Concurrent instances over one
-// workspace are rare by design (the trust gate, terminal usage), and
-// the next launch re-grants, so teardown stays unconditional.
+// Multi-instance behavior: the workspace container SID is derived
+// from the workspace path, so concurrent Phosphor instances over one
+// workspace share the same grants. Teardown therefore consults the
+// instance lease directory (see RegisterInstanceLease): if another
+// live instance still holds a lease, revocation is deferred to that
+// instance's own shutdown — exactly like the deadline-missed revoke
+// path, the ACEs linger harmlessly (they are scoped to the container
+// identity) and are revoked at the next launch.
 func CleanupContainerGrants(ctx context.Context) error {
+	// Defer teardown while a sibling instance is still running: its
+	// confined children depend on these grants staying in place.
+	if hasForeignInstanceLeases() {
+		slog.Debug("Deferring sandbox container ACE teardown; another instance is running")
+		return nil
+	}
 	// Bound the wait for aclMu by the caller's deadline: if grantAccess
 	// holds the mutex in a DACL write that is still crawling, shutdown
 	// returns on its deadline instead of inheriting the write's (much

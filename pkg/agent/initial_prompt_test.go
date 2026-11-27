@@ -13,7 +13,7 @@ const initialPrompt = "Explain how the session auto-titling works"
 func TestInitialPromptPreservedAcrossTurns(t *testing.T) {
 	env := testEnv(t)
 	model := &finishStreamModel{text: "done"}
-	agent := testSessionAgent(env, model, model, "system")
+	agent := testSessionAgent(t, env, model, model, "system")
 
 	session, err := env.sessions.Create(t.Context(), "New Session")
 	require.NoError(t, err)
@@ -87,7 +87,7 @@ func TestInitialPromptPreservedAcrossTurns(t *testing.T) {
 func TestSessionAutoTitlingDeferred(t *testing.T) {
 	env := testEnv(t)
 	model := &finishStreamModel{text: "Expected Generated Title"}
-	agent := testSessionAgent(env, model, model, "system")
+	agent := testSessionAgent(t, env, model, model, "system")
 
 	session, err := env.sessions.Create(t.Context(), "New Session")
 	require.NoError(t, err)
@@ -142,7 +142,7 @@ func TestSessionAutoTitlingDeferred(t *testing.T) {
 func TestGenerateTitle_EmptyUserPromptParam(t *testing.T) {
 	env := testEnv(t)
 	model := &finishStreamModel{text: "Expected Generated Title From History"}
-	agent := testSessionAgent(env, model, model, "system")
+	agent := testSessionAgent(t, env, model, model, "system")
 
 	session, err := env.sessions.Create(t.Context(), "New Session")
 	require.NoError(t, err)
@@ -167,7 +167,7 @@ func TestGenerateTitle_EmptyUserPromptParam(t *testing.T) {
 func TestGenerateTitle_EmptyUserPromptParam_DebouncedUpdate(t *testing.T) {
 	env := testEnv(t)
 	model := &finishStreamModel{text: "Expected Generated Title From History"}
-	agent := testSessionAgent(env, model, model, "system")
+	agent := testSessionAgent(t, env, model, model, "system")
 
 	session, err := env.sessions.Create(t.Context(), "New Session")
 	require.NoError(t, err)
@@ -194,7 +194,7 @@ func TestGenerateTitle_EmptyUserPromptParam_DebouncedUpdate(t *testing.T) {
 func TestSessionAutoTitlingSkippedForACP(t *testing.T) {
 	env := testEnv(t)
 	model := &finishStreamModel{text: "ACP Generated Title"}
-	agent := testSessionAgent(env, model, model, "system")
+	agent := testSessionAgent(t, env, model, model, "system")
 
 	session, err := env.sessions.Create(t.Context(), "ACP Session")
 	require.NoError(t, err)

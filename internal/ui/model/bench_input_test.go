@@ -477,7 +477,7 @@ func BenchmarkRealisticKeystroke(b *testing.B) {
 	ui := benchUI(b)
 	ui.allSessionMessages = msgs
 	for i := range msgs {
-		for _, item := range chat.ExtractMessageItems(ui.com.Styles, &msgs[i], nil) {
+		for _, item := range chat.ExtractMessageItems(ui.com.Styles, &msgs[i], nil, true, nil) {
 			ui.chat.AppendMessages(item)
 		}
 	}
@@ -517,7 +517,7 @@ func BenchmarkRealisticRefreshFrame(b *testing.B) {
 	ui := benchUI(b)
 	ui.allSessionMessages = msgs
 	for i := range msgs {
-		for _, item := range chat.ExtractMessageItems(ui.com.Styles, &msgs[i], nil) {
+		for _, item := range chat.ExtractMessageItems(ui.com.Styles, &msgs[i], nil, true, nil) {
 			ui.chat.AppendMessages(item)
 		}
 	}
