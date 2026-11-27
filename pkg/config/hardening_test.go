@@ -1,6 +1,7 @@
 package config
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -576,4 +577,27 @@ func TestHarden_WorkspaceWriteUsesTrustedDataDirectory(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, filepath.Join(want, appName+".json"), path,
 		"workspace-scoped reads and writes must use the trusted data directory")
+
+	// A real workspace-scoped write must land in the trusted file, not the
+	// redirect.
+	require.NoError(t, store.SetConfigField(ScopeWorkspace, "options.debug", true))
+	written, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Contains(t, string(written), `"debug":true`)
+	redirectFile := filepath.Join(redirect, appName+".json")
+	_, err = os.Stat(redirectFile)
+	require.True(t, os.IsNotExist(err),
+		"workspace-scoped writes must never land in the project-selected redirect")
+
+	// Reload must derive the same trusted workspace path and clamp with the
+	// same floor, so the redirect cannot reappear after a reload.
+	require.NoError(t, store.ReloadFromDisk(context.Background()))
+	got, err = filepath.EvalSymlinks(store.Config().Options.DataDirectory)
+	require.NoError(t, err)
+	require.Equal(t, want, got,
+		"reload must revert the project override to the trusted data directory")
+	reloaded, err := store.configPath(ScopeWorkspace)
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join(want, appName+".json"), reloaded,
+		"reload must keep workspace-scoped reads and writes on the trusted file")
 }

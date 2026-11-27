@@ -62,8 +62,10 @@ func spillFullOutput(workspaceDir, sessionID, toolName, content string) (path st
 	}
 	if _, err := f.WriteString(content); err != nil {
 		f.Close()
-		// codeql[go/path-injection] cleanup of the file this call just
-		// created inside the root; see the containment note above.
+		// Cleanup of the file this call just created inside the root; see
+		// the containment note above.
+
+		// codeql[go/path-injection]
 		_ = root.Remove(full)
 		return "", "", err
 	}

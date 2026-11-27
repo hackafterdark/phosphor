@@ -838,9 +838,10 @@ func (s *ConfigStore) reloadFromDiskLocked(ctx context.Context) error {
 
 	// Security hardening: reject workspace/project downgrades of security-critical
 	// fields relative to the trusted user/system baseline (mirrors Load). The
-	// floor is built from the operator"s own data directory, never from the
-	// merged value — see Load.
-	hardenAgainstWorkspaceOverrides(cfg, trustedSecurityFloor(s.workingDir, s.operatorDataDir))
+	// clamp reuses the same floor computed above — the operator"s own data
+	// directory, never the merged value — so the pre-merge workspace path and
+	// the post-merge clamp can never disagree.
+	hardenAgainstWorkspaceOverrides(cfg, floor)
 
 	// Validate hooks after all config merging is complete so matcher
 	// regexes are recompiled on the reloaded config (mirrors Load).
