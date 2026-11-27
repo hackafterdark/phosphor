@@ -161,7 +161,7 @@ outputs, never by truncating them and never by touching the conversation itself.
   "options": {
     "agent": {
       "microcompaction": {
-        "enabled": false,
+        "enabled": true,
         "threshold": 0.50,
         "retention_turns": 8
       }
@@ -172,7 +172,7 @@ outputs, never by truncating them and never by touching the conversation itself.
 
 | Field              | Default | Meaning                                                                 |
 | ------------------ | ------- | ----------------------------------------------------------------------- |
-| `enabled`          | `false` | Opt-in switch; when `false` the pass never runs.                        |
+| `enabled`          | `true`  | On by default; set `false` to disable the pass.                          |
 | `threshold`        | `0.50`  | Fraction of the context window at which elision activates.              |
 | `retention_turns`  | `8`     | Number of most recent turns whose tool outputs are never touched.       |
 

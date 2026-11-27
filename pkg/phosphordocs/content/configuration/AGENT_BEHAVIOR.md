@@ -15,7 +15,7 @@ reasoning.
       "max_consecutive_tool_failures_headless": 8,
       "structural_search_languages": ["go", "typescript"],
       "microcompaction": {
-        "enabled": false,
+        "enabled": true,
         "threshold": 0.5,
         "retention_turns": 8
       }
@@ -35,7 +35,7 @@ reasoning.
 | `max_consecutive_tool_failures` | int | `2` | Consecutive same-tool failures before halting interactive runs (`0` = default of 2, negative = never halt) |
 | `max_consecutive_tool_failures_headless` | int | `8` | Same budget for headless runs / cron (`0` = default of 8, negative = never halt) |
 | `structural_search_languages` | string[] | all | Limit which languages are advertised in the tool description (does not restrict what the tool can search) |
-| `microcompaction.enabled` | bool | `false` | `true` enables deterministic elision of stale tool outputs |
+| `microcompaction.enabled` | bool | `true` | `true` enables deterministic elision of stale tool outputs (on by default; set `false` to disable) |
 | `microcompaction.threshold` | float | `0.5` | Fraction of context window (0–1) before microcompaction triggers |
 | `microcompaction.retention_turns` | int | `8` | Recent turns whose tool outputs are always kept |
 

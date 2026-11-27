@@ -773,8 +773,9 @@ type ToolSearchConfig struct {
 // with short markers in the outbound prompt only, so the stored transcript
 // stays intact and the hot zone of the conversation is never touched.
 type MicroCompactionConfig struct {
-	// Enabled toggles the microcompaction pass. Default: false (opt-in).
-	Enabled bool `json:"enabled,omitempty" jsonschema:"description=Enable deterministic tool-output microcompaction,default=false"`
+	// Enabled toggles the microcompaction pass. Default: true (shipped on).
+	// An unset value is on; set it to false to opt out.
+	Enabled *bool `json:"enabled,omitempty" jsonschema:"description=Enable deterministic tool-output microcompaction,default=true"`
 
 	// Threshold is the fraction of the context window at which elision
 	// starts. Elision stays off until usage crosses this fraction, so short
@@ -786,6 +787,16 @@ type MicroCompactionConfig struct {
 	// untouched as the hot zone. Only tool outputs older than the hot zone
 	// are ever elided. A value of 0 means use the built-in default (8).
 	RetentionTurns int `json:"retention_turns,omitempty" jsonschema:"description=Number of most recent turns whose tool outputs are never elided,default=8"`
+}
+
+// EnabledOrDefault reports whether the microcompaction pass should run. An
+// unset Enabled is on (the feature ships enabled); only an explicit false
+// turns it off.
+func (m *MicroCompactionConfig) EnabledOrDefault() bool {
+	if m == nil || m.Enabled == nil {
+		return true
+	}
+	return *m.Enabled
 }
 
 // LoggingOptions configures application logging behavior. All fields are

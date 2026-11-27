@@ -832,7 +832,7 @@
         "enabled": {
           "type": "boolean",
           "description": "Enable deterministic tool-output microcompaction",
-          "default": false
+          "default": true
         },
         "threshold": {
           "type": "number",
