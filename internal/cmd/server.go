@@ -94,9 +94,9 @@ var serverCmd = &cobra.Command{
 		logFile := filepath.Join(config.GlobalCacheDir(), "server-"+safeHostName(hostURL), "phosphor.log")
 
 		if term.IsTerminal(os.Stderr.Fd()) {
-			phosphorlog.SetupWithConfig(logFile, nil, debug, os.Stderr)
+			phosphorlog.SetupWithConfig(logFile, "", nil, debug, os.Stderr)
 		} else {
-			phosphorlog.SetupWithConfig(logFile, nil, debug)
+			phosphorlog.SetupWithConfig(logFile, "", nil, debug)
 		}
 
 		// Separate logger for HTTP server request logs, written to

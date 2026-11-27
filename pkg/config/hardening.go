@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"slices"
 
-	"github.com/hackafterdark/phosphor/internal/filepathext"
 	"github.com/hackafterdark/phosphor/pkg/shell"
 )
 
@@ -37,18 +36,6 @@ func trustedSecurityFloor(workingDir, dataDir string) *Config {
 		floor = cfg
 	}
 	floor.setDefaults(workingDir, dataDir)
-	// The floor itself must be workspace-contained: a workspace-local
-	// symlink planted at the default data directory would otherwise become
-	// the trusted baseline and redirect state and log writes outside the
-	// workspace. Resolve it and fall back to the plain default when it
-	// escapes (missing paths fail through to lexical containment).
-	if floor.Options != nil {
-		absData, dataErr := filepath.Abs(floor.Options.DataDirectory)
-		absWork, workErr := filepath.Abs(workingDir)
-		if dataErr == nil && workErr == nil && !filepathext.IsInside(absData, absWork) {
-			floor.Options.DataDirectory = filepath.Join(workingDir, defaultDataDirectory)
-		}
-	}
 	return floor
 }
 
@@ -304,4 +291,19 @@ func cloneEgressIsolation(e *EgressIsolationConfig) *EgressIsolationConfig {
 	c := *e
 	c.AllowedHosts = slices.Clone(e.AllowedHosts)
 	return &c
+}
+
+// WorkspaceDataDir returns the workspace root when the config's data
+// directory is the workspace-derived default (the trusted floor keeps it
+// workspace-contained), and "" when it is an operator-selected directory that
+// may live anywhere. Callers that enforce workspace containment on data
+// directory writes should apply the check only to the former.
+func WorkspaceDataDir(workingDir, dataDir string) string {
+	if workingDir == "" || dataDir == "" {
+		return ""
+	}
+	if dataDir == filepath.Join(workingDir, defaultDataDirectory) {
+		return workingDir
+	}
+	return ""
 }

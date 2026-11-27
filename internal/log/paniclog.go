@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"runtime/debug"
 	"sync"
+
+	"github.com/hackafterdark/phosphor/internal/filepathext"
 )
 
 // panicLogMu serializes hookPanicLog calls; panicLogPath records the
@@ -23,40 +25,52 @@ var (
 // writes the crash report to the mirror file in addition to stderr, capturing
 // panic, runtime fault, and fatal-error output alike. Calling SetCrashOutput
 // again overrides any earlier call, so a reconfigured log directory re-points
-// the mirror. Returns false if the mirror cannot be set up.
-func hookPanicLog(logFile string) bool {
+// the mirror. workspaceDir is the workspace root whenever the log directory
+// is workspace-derived (a workspace DataDirectory); it is empty for
+// operator-selected data directories, which may live anywhere. Returns false
+// if the mirror cannot be set up.
+func hookPanicLog(logFile, workspaceDir string) bool {
 	panicLogMu.Lock()
 	defer panicLogMu.Unlock()
 
 	// The panic mirror sits next to the configured log file. logFile is
 	// derived from Options.DataDirectory, which config hardening clamps to
-	// the trusted floor, so no workspace-supplied value reaches this path;
-	// the symlink check below additionally refuses a planted redirect
-	// target.
+	// the trusted floor; the resolved log directory is verified against the
+	// workspace below, and the symlink check refuses a planted redirect
+	// target at the mirror file itself.
 	// codeql[go/path-injection]
-	// The path is trusted by construction and guarded below.
 	panicFile := filepath.Join(filepath.Dir(logFile), "phosphor-panic.log")
 	if panicLogPath == panicFile {
 		return true
 	}
+	// Refuse to mirror crashes into a workspace-derived directory that
+	// resolves outside the workspace (a planted symlink at the data
+	// directory): the crash log is opened on the crash path itself, so a
+	// redirect there is only checked once, here. Disabling the mirror
+	// fails safe. Operator-selected data directories (empty workspaceDir)
+	// are trusted regardless of where they live.
+	if workspaceDir != "" {
+		if absWorkspace, absErr := filepath.Abs(workspaceDir); absErr == nil {
+			if !filepathext.IsInside(filepath.Dir(panicFile), absWorkspace) {
+				return false
+			}
+		}
+	}
 	// codeql[go/path-injection]
-	// panicFile is floor-clamped per the comment above; no workspace-supplied
-	// component reaches this path.
 	if err := os.MkdirAll(filepath.Dir(panicFile), 0o700); err != nil {
 		return false
 	}
 	// Refuse a planted symlink at the mirror path: the crash log is
 	// opened on the crash path itself, and an attacker-controlled
 	// target there would redirect crash output outside the log dir.
+	// Refuse a planted symlink at the mirror path: the crash log is
+	// opened on the crash path itself, and an attacker-controlled
+	// target there would redirect crash output outside the log dir.
 	// codeql[go/path-injection]
-	// same floor-clamped panicFile; the Lstat itself is the planted-symlink
-	// check for this path.
 	if fi, err := os.Lstat(panicFile); err == nil && fi.Mode()&os.ModeSymlink != 0 {
 		return false
 	}
 	// codeql[go/path-injection]
-	// same floor-clamped panicFile, opened only after the symlink check
-	// above.
 	f, err := os.OpenFile(panicFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		return false
@@ -75,7 +89,5 @@ func hookPanicLog(logFile string) bool {
 // PanicLogFile returns the path of the panic mirror file next to logFile.
 func PanicLogFile(logFile string) string {
 	// codeql[go/path-injection]
-	// same floor-clamped logFile as hookPanicLog; no workspace-supplied
-	// component reaches this path.
 	return filepath.Join(filepath.Dir(logFile), "phosphor-panic.log")
 }

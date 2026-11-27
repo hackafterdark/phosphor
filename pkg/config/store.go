@@ -886,7 +886,7 @@ func (s *ConfigStore) reloadFromDiskLocked(ctx context.Context) error {
 	logFile := filepath.Join(cfg.Options.DataDirectory, "logs", "phosphor.log")
 	logCfg := cfg.Logging.ToLogConfig()
 	log.Reset()
-	log.SetupWithConfig(logFile, logCfg, false) // debug flag not available during reload
+	log.SetupWithConfig(logFile, WorkspaceDataDir(s.workingDir, cfg.Options.DataDirectory), logCfg, false) // debug flag not available during reload
 
 	// Mirror startup flow: setup models and agents against NEW config
 	var setupErr error

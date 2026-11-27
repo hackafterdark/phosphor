@@ -19,8 +19,8 @@ func TestPanicHookCapturesPanic(t *testing.T) {
 		// Setup skips the panic mirror inside test binaries (the open
 		// mirror file would wedge t.TempDir cleanup on Windows), so
 		// install it explicitly for the crash-path check.
-		require.True(t, hookPanicLog(logFile), "panic mirror must install")
-		Setup(logFile, false)
+		require.True(t, hookPanicLog(logFile, os.Getenv("PHOSPHOR_PANIC_TEST_DIR")), "panic mirror must install")
+		Setup(logFile, os.Getenv("PHOSPHOR_PANIC_TEST_DIR"), false)
 		panic("boom from panic hook test")
 	}
 
@@ -47,8 +47,8 @@ func TestPanicHookCapturesPanic(t *testing.T) {
 func TestPanicHookCapturesRuntimeFault(t *testing.T) {
 	if os.Getenv("PHOSPHOR_PANIC_TEST_CHILD") == "1" {
 		logFile := filepath.Join(os.Getenv("PHOSPHOR_PANIC_TEST_DIR"), "logs", "phosphor.log")
-		require.True(t, hookPanicLog(logFile), "panic mirror must install")
-		Setup(logFile, false)
+		require.True(t, hookPanicLog(logFile, os.Getenv("PHOSPHOR_PANIC_TEST_DIR")), "panic mirror must install")
+		Setup(logFile, os.Getenv("PHOSPHOR_PANIC_TEST_DIR"), false)
 		s := []int{1, 2, 3}
 		_ = s[2:10]
 		return
@@ -75,12 +75,13 @@ func TestPanicHookCapturesRuntimeFault(t *testing.T) {
 // directory's mirror file, not the first one.
 func TestPanicHookFollowsReconfiguredLogDir(t *testing.T) {
 	if os.Getenv("PHOSPHOR_PANIC_TEST_CHILD") == "1" {
-		first := filepath.Join(os.Getenv("PHOSPHOR_PANIC_TEST_DIR"), "first", "phosphor.log")
-		second := filepath.Join(os.Getenv("PHOSPHOR_PANIC_TEST_DIR"), "second", "phosphor.log")
-		require.True(t, hookPanicLog(first), "first panic mirror must install")
+		childDir := os.Getenv("PHOSPHOR_PANIC_TEST_DIR")
+		first := filepath.Join(childDir, "first", "phosphor.log")
+		second := filepath.Join(childDir, "second", "phosphor.log")
+		require.True(t, hookPanicLog(first, childDir), "first panic mirror must install")
 		Reset()
-		require.True(t, hookPanicLog(second), "second panic mirror must install")
-		Setup(second, false)
+		require.True(t, hookPanicLog(second, childDir), "second panic mirror must install")
+		Setup(second, childDir, false)
 		panic("boom from reconfigured panic hook test")
 	}
 
@@ -103,4 +104,22 @@ func TestPanicHookFollowsReconfiguredLogDir(t *testing.T) {
 	data, err := os.ReadFile(secondPanic)
 	require.NoError(t, err, "second mirror file must exist")
 	require.Contains(t, string(data), "boom from reconfigured panic hook test")
+}
+
+// TestPanicHookRefusesEscapedLogDir verifies a planted symlink at the log
+// directory cannot redirect the crash mirror outside the workspace: the
+// mirror is disabled instead (fail closed).
+func TestPanicHookRefusesEscapedLogDir(t *testing.T) {
+	outside := t.TempDir()
+	work := t.TempDir()
+
+	linkedDir := filepath.Join(work, "logs")
+	require.NoError(t, os.Symlink(outside, linkedDir))
+	// The mirror path itself must exist so the containment check, not the
+	// file-level symlink check, is what refuses the install.
+	require.NoError(t, os.WriteFile(filepath.Join(outside, "phosphor-panic.log"), nil, 0o600))
+
+	t.Chdir(work)
+	require.False(t, hookPanicLog(filepath.Join(linkedDir, "phosphor.log"), work),
+		"a log directory resolving outside the workspace must refuse the panic mirror")
 }

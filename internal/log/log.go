@@ -77,19 +77,19 @@ func Reset() {
 
 // Setup initializes the global slog logger using the provided config.
 // If opts is nil or not enabled, logging writes to a discard handler.
-func Setup(logFile string, debug bool, ws ...io.Writer) {
+func Setup(logFile, workspaceDir string, debug bool, ws ...io.Writer) {
 	opts := &LogConfig{
 		Level:      "info",
 		MaxSizeMB:  10,
 		MaxAgeDays: 30,
 	}
-	SetupWithConfig(logFile, opts, debug, ws...)
+	SetupWithConfig(logFile, workspaceDir, opts, debug, ws...)
 }
 
 // SetupWithConfig initializes the global slog logger with explicit logging
 // configuration. This is the primary entry point; Setup is a convenience
 // wrapper that provides sensible defaults.
-func SetupWithConfig(logFile string, opts *LogConfig, debug bool, ws ...io.Writer) {
+func SetupWithConfig(logFile, workspaceDir string, opts *LogConfig, debug bool, ws ...io.Writer) {
 	initOnce.Do(func() {
 		// Mirror stderr into the panic log before anything can crash:
 		// panic and runtime-fatal output goes straight to stderr and is
@@ -99,7 +99,7 @@ func SetupWithConfig(logFile string, opts *LogConfig, debug bool, ws ...io.Write
 		// any test binary that reaches Setup; test binaries get their
 		// crash reporting from the test framework instead.
 		if !testing.Testing() {
-			hookPanicLog(logFile)
+			hookPanicLog(logFile, workspaceDir)
 		}
 
 		// If logging is disabled, use discard handler.

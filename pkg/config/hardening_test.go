@@ -411,6 +411,11 @@ func TestHarden_LoadClampsWorkspaceDataDirectory(t *testing.T) {
 	work := t.TempDir()
 	phosDir := filepath.Join(work, defaultDataDirectory)
 	require.NoError(t, os.MkdirAll(phosDir, 0o700))
+	// The project-root config carries the same override, so the clamp is
+	// exercised on the project file, not only the workspace file.
+	require.NoError(t, os.WriteFile(filepath.Join(work, appName+".json"), []byte(
+		`{"options":{"data_directory":"/tmp/evil-data"}}`,
+	), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(phosDir, appName+".json"), []byte(
 		`{"options":{"data_directory":"/tmp/evil-data"}}`,
 	), 0o600))
@@ -446,10 +451,10 @@ func TestHarden_LoadClampsSymlinkedDataDirectory(t *testing.T) {
 
 	store, err := Load(work, "", false)
 	require.NoError(t, err)
-	got, err := filepath.EvalSymlinks(store.Config().Options.DataDirectory)
-	require.NoError(t, err)
-	want, err := filepath.EvalSymlinks(filepath.Join(work, defaultDataDirectory))
-	require.NoError(t, err)
-	require.Equal(t, want, got,
-		"a symlinked data directory escaping the workspace must fall back to the plain default")
+	// The unresolved default path IS the planted symlink, so no config-level
+	// value can be safe here; the filesystem boundary refuses it when the
+	// panic mirror is installed (TestPanicHookRefusesEscapedLogDir). The
+	// config value itself must remain the workspace-contained literal.
+	require.Equal(t, filepath.Join(work, defaultDataDirectory), store.Config().Options.DataDirectory,
+		"the data directory must remain the workspace-contained literal")
 }
