@@ -64,6 +64,18 @@ func hardenAgainstWorkspaceOverrides(cfg, floor *Config) int {
 		)
 	}
 
+	// The data directory is where phosphor writes state and logs, and the
+	// panic-log mirror derives from it. A repository may keep or tighten
+	// containment, but an absolute path (or one that escapes the workspace)
+	// must come from the trusted floor, never from workspace/project files:
+	// otherwise a malicious repo redirects the crash-log mirror and
+	// workspace state outside the workspace.
+	if cfg.Options != nil && floor.Options != nil &&
+		cfg.Options.DataDirectory != floor.Options.DataDirectory {
+		cfg.Options.DataDirectory = floor.Options.DataDirectory
+		revert("options.data_directory", "workspace attempted to redirect the data directory outside the trusted floor")
+	}
+
 	// Secure-by-default tri-state masks: the floor keeps them on; a repo may not
 	// switch one off. (nil == on.)
 	floorTriState(&cfg.Security.WireSecretRedactionForce, floor.Security.WireSecretRedactionForce, "security.wire_secret_redaction_force", revert)

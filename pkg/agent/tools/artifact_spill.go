@@ -33,7 +33,8 @@ func spillFullOutput(workspaceDir, sessionID, toolName, content string) (path st
 		return "", "", fmt.Errorf("invalid session id %q for artifact spill", sessionID)
 	}
 	// codeql[go/path-injection] sessionID is validated above to a single
-	// path component and the result is containment-checked below.
+	// path component; every derived path is additionally verified against
+	// the workspace after creation below, fail-closed.
 	dir := filepath.Join(workspaceDir, ".phosphor", "artifacts", sessionID)
 	// A committed symlink at `.phosphor` or `artifacts` would redirect
 	// the spill outside the workspace: check the resolved directory
@@ -46,20 +47,35 @@ func spillFullOutput(workspaceDir, sessionID, toolName, content string) (path st
 	if !filepathext.IsInside(dir, absWorkspace) {
 		return "", "", fmt.Errorf("artifact dir %q resolves outside workspace %q", dir, absWorkspace)
 	}
-	// codeql[go/path-injection] dir is validated above: sessionID is a
-	// single path component and the path is workspace-contained.
+	// codeql[go/path-injection] dir passed the containment check above;
+	// the realpath re-check after creation refuses an ancestor symlink
+	// that appeared between the check and the mkdir (TOCTOU).
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", "", err
 	}
+	// The pre-creation check resolves symlinks once; a concurrently
+	// sandboxed child could swap an ancestor for a symlink to outside the
+	// workspace before the write. Re-check the created directory and fail
+	// closed so a redirected spill never persists.
+	if !filepathext.IsInside(dir, absWorkspace) {
+		return "", "", fmt.Errorf("artifact dir %q resolves outside workspace %q after creation", dir, absWorkspace)
+	}
 	name := fmt.Sprintf("%s-%d.txt", toolName, time.Now().UnixNano())
 	full := filepath.Join(dir, name)
-	// codeql[go/path-injection] full stays under the validated dir; the
-	// file name is internal tool constants plus a nanosecond timestamp.
+	// codeql[go/path-injection] full stays under the dir re-verified above;
+	// the file name is internal tool constants plus a nanosecond timestamp.
 	if err := os.WriteFile(full, []byte(content), 0o600); err != nil {
 		return "", "", err
 	}
-	// codeql[go/path-injection] full is workspace-contained per the check
-	// above, so the relative path cannot escape the workspace.
+	// Fail closed on a post-write swap too: remove the file if it ended up
+	// resolving outside the workspace.
+	if !filepathext.IsInside(full, absWorkspace) {
+		_ = os.Remove(full)
+		return "", "", fmt.Errorf("artifact file %q resolves outside workspace %q after write", full, absWorkspace)
+	}
+	// codeql[go/path-injection] full is workspace-contained per the
+	// post-write re-check, so the relative path cannot escape the
+	// workspace.
 	rel, err := filepath.Rel(workspaceDir, full)
 	if err != nil {
 		_ = os.Remove(full)

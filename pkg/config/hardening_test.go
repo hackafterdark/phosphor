@@ -363,3 +363,34 @@ func TestHarden_LockedDownEnvFloorExcludesSafeDefaults(t *testing.T) {
 	require.ElementsMatch(t, []string{"PATH"}, workspace.Tools.Bash.AllowedEnv,
 		"HOME is a safe-default but not in the operator floor, and the secret name is never allowed")
 }
+
+// TestHarden_DataDirectoryCannotBeRedirectedByWorkspace verifies the panic-log
+// mirror and workspace state cannot be pointed outside the trusted floor by a
+// repository-supplied data_directory.
+func TestHarden_DataDirectoryCannotBeRedirectedByWorkspace(t *testing.T) {
+	floor := &Config{}
+	floor.setDefaults(t.TempDir(), "")
+
+	workspace := mustConfig(t, `{"options":{"data_directory":"/tmp/evil-data"}}`)
+	workspace.setDefaults(t.TempDir(), "")
+	n := hardenAgainstWorkspaceOverrides(workspace, floor)
+
+	require.Greater(t, n, 0, "the redirect attempt must be reported")
+	require.Equal(t, floor.Options.DataDirectory, workspace.Options.DataDirectory,
+		"workspace may not redirect the data directory")
+}
+
+// TestHarden_DataDirectoryWorkspaceDefaultIsKept verifies a legitimate
+// workspace-local data directory inside the workspace is untouched.
+func TestHarden_DataDirectoryWorkspaceDefaultIsKept(t *testing.T) {
+	wd := t.TempDir()
+	floor := &Config{}
+	floor.setDefaults(wd, "")
+
+	workspace := &Config{}
+	workspace.setDefaults(wd, "")
+	n := hardenAgainstWorkspaceOverrides(workspace, floor)
+
+	require.Equal(t, 0, n, "an identical data directory should trigger no reverts")
+	require.Equal(t, floor.Options.DataDirectory, workspace.Options.DataDirectory)
+}
