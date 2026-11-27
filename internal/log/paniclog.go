@@ -34,25 +34,29 @@ func hookPanicLog(logFile string) bool {
 	// the symlink check below additionally refuses a planted redirect
 	// target.
 	// codeql[go/path-injection]
+	// The path is trusted by construction and guarded below.
 	panicFile := filepath.Join(filepath.Dir(logFile), "phosphor-panic.log")
 	if panicLogPath == panicFile {
 		return true
 	}
-	// codeql[go/path-injection] panicFile is floor-clamped per the comment
-	// above; no workspace-supplied component reaches this path.
+	// codeql[go/path-injection]
+	// panicFile is floor-clamped per the comment above; no workspace-supplied
+	// component reaches this path.
 	if err := os.MkdirAll(filepath.Dir(panicFile), 0o700); err != nil {
 		return false
 	}
 	// Refuse a planted symlink at the mirror path: the crash log is
 	// opened on the crash path itself, and an attacker-controlled
 	// target there would redirect crash output outside the log dir.
-	// codeql[go/path-injection] same floor-clamped panicFile; the Lstat
-	// itself is the planted-symlink check for this path.
+	// codeql[go/path-injection]
+	// same floor-clamped panicFile; the Lstat itself is the planted-symlink
+	// check for this path.
 	if fi, err := os.Lstat(panicFile); err == nil && fi.Mode()&os.ModeSymlink != 0 {
 		return false
 	}
-	// codeql[go/path-injection] same floor-clamped panicFile, opened only
-	// after the symlink check above.
+	// codeql[go/path-injection]
+	// same floor-clamped panicFile, opened only after the symlink check
+	// above.
 	f, err := os.OpenFile(panicFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		return false
@@ -70,7 +74,8 @@ func hookPanicLog(logFile string) bool {
 
 // PanicLogFile returns the path of the panic mirror file next to logFile.
 func PanicLogFile(logFile string) string {
-	// codeql[go/path-injection] same floor-clamped logFile as hookPanicLog;
-	// no workspace-supplied component reaches this path.
+	// codeql[go/path-injection]
+	// same floor-clamped logFile as hookPanicLog; no workspace-supplied
+	// component reaches this path.
 	return filepath.Join(filepath.Dir(logFile), "phosphor-panic.log")
 }

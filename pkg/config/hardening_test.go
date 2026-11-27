@@ -394,3 +394,52 @@ func TestHarden_DataDirectoryWorkspaceDefaultIsKept(t *testing.T) {
 	require.Equal(t, 0, n, "an identical data directory should trigger no reverts")
 	require.Equal(t, floor.Options.DataDirectory, workspace.Options.DataDirectory)
 }
+
+// TestHarden_LoadClampsWorkspaceDataDirectory verifies the Load path itself:
+// neither an absolute project-supplied data_directory nor a workspace-local
+// symlink escaping the workspace may redirect the panic-log mirror.
+func TestHarden_LoadClampsWorkspaceDataDirectory(t *testing.T) {
+	originalUseMock := UseMockProviders
+	UseMockProviders = true
+	defer func() { UseMockProviders = originalUseMock; ResetProviders() }()
+	ResetProviders()
+
+	globalDir := t.TempDir()
+	t.Setenv("PHOSPHOR_GLOBAL_CONFIG", globalDir)
+	t.Setenv("PHOSPHOR_GLOBAL_DATA", globalDir)
+
+	work := t.TempDir()
+	phosDir := filepath.Join(work, defaultDataDirectory)
+	require.NoError(t, os.MkdirAll(phosDir, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(phosDir, appName+".json"), []byte(
+		`{"options":{"data_directory":"/tmp/evil-data"}}`,
+	), 0o600))
+
+	store, err := Load(work, "", false)
+	require.NoError(t, err)
+	require.Equal(t, phosDir, store.Config().Options.DataDirectory,
+		"project-supplied absolute data_directory must be reverted to the trusted floor")
+}
+
+// TestHarden_LoadClampsSymlinkedDataDirectory verifies a planted symlink at
+// the default data directory cannot redirect writes outside the workspace.
+func TestHarden_LoadClampsSymlinkedDataDirectory(t *testing.T) {
+	originalUseMock := UseMockProviders
+	UseMockProviders = true
+	defer func() { UseMockProviders = originalUseMock; ResetProviders() }()
+	ResetProviders()
+
+	globalDir := t.TempDir()
+	t.Setenv("PHOSPHOR_GLOBAL_CONFIG", globalDir)
+	t.Setenv("PHOSPHOR_GLOBAL_DATA", globalDir)
+
+	work := t.TempDir()
+	outside := t.TempDir()
+	// .phosphor is a workspace-local symlink pointing outside the workspace.
+	require.NoError(t, os.Symlink(outside, filepath.Join(work, defaultDataDirectory)))
+
+	store, err := Load(work, "", false)
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join(work, defaultDataDirectory), store.Config().Options.DataDirectory,
+		"a symlinked data directory escaping the workspace must fall back to the plain default")
+}

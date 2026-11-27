@@ -106,7 +106,10 @@ func Load(workingDir, dataDir string, debug bool) (*ConfigStore, error) {
 	// project-local config tried to weaken below the trusted user/system baseline,
 	// so an untrusted repository cannot silently disable a secret mask, shrink the
 	// sensitive-file set, or broaden the bash child environment.
-	hardenAgainstWorkspaceOverrides(cfg, trustedSecurityFloor(workingDir, cfg.Options.DataDirectory))
+	// The floor must never inherit the merged data directory: a workspace
+	// or project file could otherwise select its own baseline and skip the
+	// clamp entirely.
+	hardenAgainstWorkspaceOverrides(cfg, trustedSecurityFloor(workingDir, ""))
 
 	// Validate hooks after all config merging is complete so workspace
 	// hooks also get their matcher regexes compiled.

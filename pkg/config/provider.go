@@ -28,6 +28,11 @@ type syncer[T any] interface {
 
 var (
 	providerOnce sync.Once
+	// providerMu serializes the once against ResetProviders: zeroing
+	// providerOnce while another goroutine is inside providerOnce.Do
+	// destroys the mutex the once holds, and Go 1.27's runtime turns that
+	// into a fatal "unlock of unlocked mutex" instead of silent corruption.
+	providerMu   sync.Mutex
 	providerList []catwalk.Provider
 	providerErr  error
 
@@ -36,6 +41,8 @@ var (
 )
 
 func ResetProviders() {
+	providerMu.Lock()
+	defer providerMu.Unlock()
 	providerOnce = sync.Once{}
 	providerList = nil
 	providerErr = nil
@@ -126,6 +133,8 @@ func Providers(cfg *Config) ([]catwalk.Provider, error) {
 			},
 		}, nil
 	}
+	providerMu.Lock()
+	defer providerMu.Unlock()
 	providerOnce.Do(func() {
 		var wg sync.WaitGroup
 		var errs []error
