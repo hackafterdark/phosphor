@@ -41,6 +41,20 @@ func Load(workingDir, dataDir string, debug bool) (*ConfigStore, error) {
 	// Migrate deprecated disable_notifications before loading config.
 	migrateDisableNotifications()
 
+	// Resolve symlinks in the workspace root before any path is derived
+	// from it, so the config, the trusted security floor, and the bounds
+	// checks all agree on one spelling. If the workspace doesn't exist on
+	// disk (e.g. during tests), use it as-is.
+	if resolvedWorkingDir, err := filepath.EvalSymlinks(workingDir); err == nil {
+		workingDir = resolvedWorkingDir
+	}
+
+	// The operator-supplied data directory is trusted input. The security
+	// floor is built from it so the hardening clamp can revert a
+	// workspace/project override without discarding the operator's own
+	// choice.
+	operatorDataDir := dataDir
+
 	configPaths := lookupConfigs(workingDir)
 
 	cfg, loadedPaths, err := loadFromConfigPaths(configPaths)
@@ -59,19 +73,13 @@ func Load(workingDir, dataDir string, debug bool) (*ConfigStore, error) {
 		}
 	}
 
-	// Resolve symlinks in the workspace root to prevent bypass through
-	// symlink traversal in bounds checking. If the workspace doesn't exist
-	// on disk (e.g. during tests), use it as-is.
-	if resolvedWorkingDir, err := filepath.EvalSymlinks(workingDir); err == nil {
-		workingDir = resolvedWorkingDir
-	}
-
 	store := &ConfigStore{
-		config:         cfg,
-		workingDir:     workingDir,
-		globalDataPath: GlobalConfigData(),
-		workspacePath:  filepath.Join(cfg.Options.DataDirectory, fmt.Sprintf("%s.json", appName)),
-		loadedPaths:    loadedPaths,
+		config:          cfg,
+		workingDir:      workingDir,
+		operatorDataDir: operatorDataDir,
+		globalDataPath:  GlobalConfigData(),
+		workspacePath:   filepath.Join(cfg.Options.DataDirectory, fmt.Sprintf("%s.json", appName)),
+		loadedPaths:     loadedPaths,
 	}
 
 	if debug {
@@ -106,10 +114,10 @@ func Load(workingDir, dataDir string, debug bool) (*ConfigStore, error) {
 	// project-local config tried to weaken below the trusted user/system baseline,
 	// so an untrusted repository cannot silently disable a secret mask, shrink the
 	// sensitive-file set, or broaden the bash child environment.
-	// The floor must never inherit the merged data directory: a workspace
-	// or project file could otherwise select its own baseline and skip the
-	// clamp entirely.
-	hardenAgainstWorkspaceOverrides(cfg, trustedSecurityFloor(workingDir, ""))
+	// The floor must be built from the operator"s own data directory, never
+	// from the merged value: a workspace or project file could otherwise
+	// select its own baseline and skip the clamp entirely.
+	hardenAgainstWorkspaceOverrides(cfg, trustedSecurityFloor(workingDir, operatorDataDir))
 
 	// Validate hooks after all config merging is complete so workspace
 	// hooks also get their matcher regexes compiled.
@@ -550,6 +558,13 @@ func safeDataDir(workingDir, dataDir string) (string, bool) {
 	if err != nil {
 		return "", false
 	}
+	// Compare canonical forms. The workspace root may have been typed or
+	// discovered through a symlink, and the caller's candidate may spell the
+	// same tree differently; comparing raw spellings would reject a
+	// legitimate directory that is in fact workspace-contained.
+	if resolved, err := filepath.EvalSymlinks(baseAbs); err == nil {
+		baseAbs = resolved
+	}
 
 	candidate := dataDir
 	if !filepath.IsAbs(candidate) {
@@ -558,6 +573,9 @@ func safeDataDir(workingDir, dataDir string) (string, bool) {
 	candidateAbs, err := filepath.Abs(candidate)
 	if err != nil {
 		return "", false
+	}
+	if resolved, err := filepath.EvalSymlinks(candidateAbs); err == nil {
+		candidateAbs = resolved
 	}
 
 	rel, err := filepath.Rel(baseAbs, candidateAbs)

@@ -507,3 +507,32 @@ func TestHarden_LoadClampsInWorkspaceProjectDataDirectory(t *testing.T) {
 	require.Equal(t, want, got,
 		"a project-supplied in-workspace data_directory must be reverted to the trusted floor")
 }
+
+// TestHarden_OperatorDataDirectoryIsTrusted verifies the hardening clamp
+// treats the --data-dir the operator passed to Load as trusted input: it may
+// name any workspace-contained directory, and a symlinked workspace root must
+// not make the clamp fire on it.
+func TestHarden_OperatorDataDirectoryIsTrusted(t *testing.T) {
+	originalUseMock := UseMockProviders
+	UseMockProviders = true
+	defer func() { UseMockProviders = originalUseMock; ResetProviders() }()
+	ResetProviders()
+
+	globalDir := t.TempDir()
+	t.Setenv("PHOSPHOR_GLOBAL_CONFIG", globalDir)
+	t.Setenv("PHOSPHOR_GLOBAL_DATA", globalDir)
+
+	work := t.TempDir()
+	operatorDir := filepath.Join(work, "custom-data")
+	require.NoError(t, os.MkdirAll(operatorDir, 0o700))
+
+	store, err := Load(work, operatorDir, false)
+	require.NoError(t, err)
+	// Load canonicalizes the workspace root, so compare canonical forms.
+	got, err := filepath.EvalSymlinks(store.Config().Options.DataDirectory)
+	require.NoError(t, err)
+	want, err := filepath.EvalSymlinks(operatorDir)
+	require.NoError(t, err)
+	require.Equal(t, want, got,
+		"the operator's own data directory must survive hardening")
+}

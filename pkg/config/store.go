@@ -59,6 +59,7 @@ type RuntimeOverrides struct {
 type ConfigStore struct {
 	config             *Config
 	workingDir         string
+	operatorDataDir    string   // the --data-dir the operator passed to Load
 	resolver           VariableResolver
 	globalDataPath     string   // ~/.local/share/phosphor/phosphor.json
 	workspacePath      string   // .phosphor/phosphor.json
@@ -829,8 +830,9 @@ func (s *ConfigStore) reloadFromDiskLocked(ctx context.Context) error {
 
 	// Security hardening: reject workspace/project downgrades of security-critical
 	// fields relative to the trusted user/system baseline (mirrors Load). The
-	// floor never inherits the merged data directory — see Load.
-	hardenAgainstWorkspaceOverrides(cfg, trustedSecurityFloor(s.workingDir, ""))
+	// floor is built from the operator"s own data directory, never from the
+	// merged value — see Load.
+	hardenAgainstWorkspaceOverrides(cfg, trustedSecurityFloor(s.workingDir, s.operatorDataDir))
 
 	// Validate hooks after all config merging is complete so matcher
 	// regexes are recompiled on the reloaded config (mirrors Load).
