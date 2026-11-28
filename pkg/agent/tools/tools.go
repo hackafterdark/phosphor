@@ -72,7 +72,7 @@ func NewPermissionDeniedResponse() fantasy.ToolResponse {
 	return resp
 }
 
-// ghAvailable indicates whether the `gh` CLI is available on PATH.
+// ghAvailable indicates whether the "gh" CLI is available on PATH.
 var ghAvailable = func() bool {
 	if testing.Testing() {
 		return false
@@ -80,6 +80,9 @@ var ghAvailable = func() bool {
 	_, err := exec.LookPath("gh")
 	return err == nil
 }()
+
+// GhAvailable reports whether the "gh" CLI is available on PATH.
+func GhAvailable() bool { return ghAvailable }
 
 // toolDescriptionData is the common data structure for tool description templates.
 type toolDescriptionData struct {

@@ -108,3 +108,31 @@ func TestPromptProfileResolution(t *testing.T) {
 	// - Workflow is resolved from embedded default because both workspace and global workflow are absent.
 	assert.Contains(t, res, "Workflow: For every task, follow this sequence internally")
 }
+
+func TestPromptGitGhToolGuidance(t *testing.T) {
+	tmpl := `{{- if .GitGhToolsEnabled}}
+<git_gh_guidance>
+use the git tool
+</git_gh_guidance>
+{{- end}}`
+
+	p, err := prompt.NewPrompt("test_prompt", tmpl)
+	require.NoError(t, err)
+
+	// Enabled by default: the guidance block renders.
+	store := config.NewTestStore(&config.Config{Options: &config.Options{}})
+	res, err := p.Build(context.Background(), "provider", "model", store)
+	require.NoError(t, err)
+	assert.Contains(t, res, "<git_gh_guidance>")
+
+	// Disabled via options.disabled_tools: the block is omitted so the
+	// model is never told to prefer tools it cannot see.
+	store2 := config.NewTestStore(&config.Config{
+		Options: &config.Options{
+			DisabledTools: []string{"git", "gh"},
+		},
+	})
+	res2, err := p.Build(context.Background(), "provider", "model", store2)
+	require.NoError(t, err)
+	assert.NotContains(t, res2, "<git_gh_guidance>")
+}

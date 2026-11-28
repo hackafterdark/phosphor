@@ -460,8 +460,6 @@ func (c *coordinator) run(ctx context.Context, accept *AcceptedRun, sessionID st
 	})
 	logTurnSkillUsage(sessionID, prompt, c.activeSkills, c.skillTracker, beforeLoaded)
 
-
-
 	if c.isBadRequest(originalErr) {
 		// Retry once on Bad Request — vLLM's tool call parser can produce
 		// malformed output that triggers context overflow. The model often
@@ -1074,6 +1072,12 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, isSubA
 	// servers and custom tool definitions must not be registered. When the decision
 	// denies them, the agent runs with only the built-in native tools.
 	allowRepoTooling := config.WorkspaceToolingAllowed(c.cfg.WorkingDir())
+	// Bash's description steers git/gh commands to the mediated tools; the
+	// steering is only truthful while those tools are actually reachable
+	// (workspace trust AND agent tool allowlist).
+	repoTooling := allowRepoTooling &&
+		(slices.Contains(agent.AllowedTools, tools.GitToolName) ||
+			slices.Contains(agent.AllowedTools, tools.GhToolName))
 
 	if slices.Contains(agent.AllowedTools, AgentToolName) {
 		agentTool, err := c.agentTool(ctx)
@@ -1122,7 +1126,7 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, isSubA
 	allTools = append(
 		allTools,
 		tools.NewUpdateGoalTool(c.goalService),
-		tools.NewBashTool(c.permissions, c.cfg.WorkingDir(), c.cfg.Config().Tools.Bash, c.cfg.Config().Options.Attribution, modelID, c.redactionPolicy),
+		tools.NewBashTool(c.permissions, c.cfg.WorkingDir(), c.cfg.Config().Tools.Bash, c.cfg.Config().Options.Attribution, modelID, c.redactionPolicy, repoTooling),
 		tools.NewPhosphorInfoTool(c.cfg, c.lspManager, c.allSkills, c.activeSkills, c.skillTracker),
 	)
 
@@ -1158,6 +1162,22 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent, isSubA
 		tools.NewWriteTool(c.lspManager, c.permissions, c.history, c.filetracker, c.cfg.WorkingDir(), c.redactionPolicy),
 		tools.NewAppendTool(c.lspManager, c.permissions, c.history, c.filetracker, c.cfg.WorkingDir(), c.redactionPolicy),
 	)
+
+	// Add the mediated git tool for trusted workspaces only: the tool runs
+	// host-side with credentials, so an untrusted workspace must not
+	// expose it. Non-git (greenfield) workspaces get access for `git
+	// init` only; all other subcommands fail the workspace precondition
+	// until a repository exists, and remote operations stay disabled until
+	// the user configures an origin remote.
+	if allowRepoTooling {
+		allTools = append(allTools, tools.NewGitTool(c.permissions, c.cfg.WorkingDir(), c.cfg.Config().Tools.Git, c.redactionPolicy))
+		// The mediated gh tool runs host-side with the host's GitHub
+		// credential, pinned to the workspace repository via an
+		// approved origin remote and host-injected --repo.
+		if tools.GhAvailable() {
+			allTools = append(allTools, tools.NewGhTool(c.permissions, c.cfg.WorkingDir(), c.cfg.Config().Tools.Gh, c.redactionPolicy))
+		}
+	}
 
 	// Add LSP tools if user has configured LSPs or auto_lsp is enabled (nil or true).
 	if len(c.cfg.Config().LSP) > 0 || c.cfg.Config().Options.AutoLSP == nil || *c.cfg.Config().Options.AutoLSP {
@@ -1451,16 +1471,16 @@ func (c *coordinator) buildAgentModels(ctx context.Context, isSubAgent bool) (Mo
 		}
 
 		return Model{
-			Model:      largeModel,
-			CatwalkCfg: *largeCatwalkModel,
-			ModelCfg:   largeModelCfg,
-			FlatRate:   largeProviderCfg.FlatRate,
-		}, Model{
-			Model:      smallModel,
-			CatwalkCfg: *smallCatwalkModel,
-			ModelCfg:   smallModelCfg,
-			FlatRate:   smallProviderCfg.FlatRate,
-		}, nil
+				Model:      largeModel,
+				CatwalkCfg: *largeCatwalkModel,
+				ModelCfg:   largeModelCfg,
+				FlatRate:   largeProviderCfg.FlatRate,
+			}, Model{
+				Model:      smallModel,
+				CatwalkCfg: *smallCatwalkModel,
+				ModelCfg:   smallModelCfg,
+				FlatRate:   smallProviderCfg.FlatRate,
+			}, nil
 	}
 
 	// Small model not configured — large model will be used for title generation.

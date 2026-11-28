@@ -65,6 +65,24 @@ These rules apply whenever creating or updating commit messages, PR titles, or P
 - Good: "Improve color name lookup performance while keeping startup fast"
 </git_message_quality>
 
+{{- if .RepoTooling }}
+<repo_tooling>
+# Mediated git/gh tools
+
+- Use the dedicated `git` and `gh` tools for all git and GitHub
+  operations instead of `bash`. Do NOT run `git` or `gh` commands
+  through `bash` while those tools are available: the mediated tools
+  perform repo-pinned host-side authentication without breaking the
+  sandbox.
+- Only use `bash` for git/gh when the operation is explicitly
+  unsupported by the mediated tools (e.g., `git clone`, `gh api`,
+  `git submodule`), and explain why before requesting
+  `sandbox="escalate"`.
+- If a mediated tool reports an operation as blocked by security
+  policy, do NOT retry that command through `bash` or escalation;
+  resolve the issue or inform the user.
+</repo_tooling>
+{{- else }}
 <commit_messages>
 Commit messages are for future readers scanning history. Before committing:
 
@@ -123,7 +141,10 @@ Co-Authored-By: Phosphor <phosphor@charm.land>
 
 Notes: Use "git commit -am" when possible, don't stage unrelated files, NEVER update config, don't push, no -i flags, no empty commits, return empty response, when rebasing always use -m.
 </git_commits>
+{{- end }}
 
+{{- if .RepoTooling }}
+{{- else }}
 <pull_requests>
 {{ if .GhAvailable -}}
    Use the `gh` command for ALL GitHub tasks.
@@ -177,6 +198,7 @@ Important:
 - Return empty response - user sees gh output
 - Never update git config
 </pull_requests>
+{{- end }}
 
 <examples>
 Good: pytest /foo/bar/tests

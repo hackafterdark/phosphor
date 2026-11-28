@@ -21,6 +21,8 @@ Phosphor provides a comprehensive suite of agent tools organized by function. Ea
 | Tool | Description |
 |------|-------------|
 | `bash` | Execute shell commands with background execution support, output truncation, and path validation. |
+| `git` | Mediated Git operations pinned to the workspace repository, host-side with neutralized config and tiered approvals. See [Mediated git and gh tools](GIT_GH_MEDIATION.md). |
+| `gh` | Mediated GitHub operations pinned to the workspace repository via host-injected `--repo`, with untrusted-output wrapping. See [Mediated git and gh tools](GIT_GH_MEDIATION.md). |
 
 ## Background Job Management
 

@@ -742,11 +742,33 @@ func TestConfig_setupAgentsWithDisabledTools(t *testing.T) {
 	systemAgent, ok := cfg.Agents[AgentSystem]
 	require.True(t, ok)
 
-	assert.Equal(t, []string{"agent", "bash", "phosphor_info", "phosphor_logs", "phosphor_trace", "job_output", "job_kill", "multiedit", "update_goal", "lsp_diagnostics", "lsp_references", "lsp_restart", "fetch", "agentic_fetch", "glob", "scan_secrets", "ls", "structural_search", "reload_queries", "sourcegraph", "semantic_search", "workspace_search", "memory", "memory_search", "memory_read", "todos", "view", "write", "append", "list_mcp_resources", "read_mcp_resource", "tool_search"}, systemAgent.AllowedTools)
+	assert.Equal(t, []string{"agent", "bash", "phosphor_info", "phosphor_logs", "phosphor_trace", "job_output", "job_kill", "multiedit", "update_goal", "lsp_diagnostics", "lsp_references", "lsp_restart", "fetch", "agentic_fetch", "git", "gh", "glob", "scan_secrets", "ls", "structural_search", "reload_queries", "sourcegraph", "semantic_search", "workspace_search", "memory", "memory_search", "memory_read", "todos", "view", "write", "append", "list_mcp_resources", "read_mcp_resource", "tool_search"}, systemAgent.AllowedTools)
 
 	taskAgent, ok := cfg.Agents[AgentTask]
 	require.True(t, ok)
 	assert.Equal(t, []string{"glob", "ls", "structural_search", "sourcegraph", "memory_search", "memory_read", "view"}, taskAgent.AllowedTools)
+}
+
+func TestConfig_setupAgentsWithGitGhDisabled(t *testing.T) {
+	cfg := &Config{
+		Options: &Options{
+			DisabledTools: []string{"git", "gh"},
+		},
+	}
+
+	cfg.SetupAgents()
+	systemAgent, ok := cfg.Agents[AgentSystem]
+	require.True(t, ok)
+	assert.NotContains(t, systemAgent.AllowedTools, "git")
+	assert.NotContains(t, systemAgent.AllowedTools, "gh")
+
+	// Enabled by default when not disabled.
+	cfg = &Config{Options: &Options{}}
+	cfg.SetupAgents()
+	systemAgent, ok = cfg.Agents[AgentSystem]
+	require.True(t, ok)
+	assert.Contains(t, systemAgent.AllowedTools, "git")
+	assert.Contains(t, systemAgent.AllowedTools, "gh")
 }
 
 func TestConfig_setupAgentsWithEveryReadOnlyToolDisabled(t *testing.T) {
@@ -766,7 +788,7 @@ func TestConfig_setupAgentsWithEveryReadOnlyToolDisabled(t *testing.T) {
 	cfg.SetupAgents()
 	systemAgent, ok := cfg.Agents[AgentSystem]
 	require.True(t, ok)
-	assert.Equal(t, []string{"agent", "bash", "phosphor_info", "phosphor_logs", "phosphor_trace", "job_output", "job_kill", "download", "edit", "multiedit", "update_goal", "lsp_diagnostics", "lsp_references", "lsp_restart", "fetch", "agentic_fetch", "scan_secrets", "reload_queries", "semantic_search", "workspace_search", "memory", "memory_search", "memory_read", "todos", "write", "append", "list_mcp_resources", "read_mcp_resource", "tool_search"}, systemAgent.AllowedTools)
+	assert.Equal(t, []string{"agent", "bash", "phosphor_info", "phosphor_logs", "phosphor_trace", "job_output", "job_kill", "download", "edit", "multiedit", "update_goal", "lsp_diagnostics", "lsp_references", "lsp_restart", "fetch", "agentic_fetch", "git", "gh", "scan_secrets", "reload_queries", "semantic_search", "workspace_search", "memory", "memory_search", "memory_read", "todos", "write", "append", "list_mcp_resources", "read_mcp_resource", "tool_search"}, systemAgent.AllowedTools)
 
 	taskAgent, ok := cfg.Agents[AgentTask]
 	require.True(t, ok)

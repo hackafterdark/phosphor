@@ -27,7 +27,7 @@ func TestCompositionalChains_PermissionRequiredForChains(t *testing.T) {
 		allow:  false,
 	}
 	attribution := &config.Attribution{TrailerStyle: config.TrailerStyleNone}
-	tool := NewBashTool(perms, workingDir, config.ToolBash{}, attribution, "test-model", nil)
+	tool := NewBashTool(perms, workingDir, config.ToolBash{}, attribution, "test-model", nil, false)
 
 	// Chained command should trigger permission request.
 	resp := runBashToolWithPerms(t, tool, ctx, BashParams{
@@ -108,7 +108,7 @@ func TestCompositionalChains_ChainTriggersPermission(t *testing.T) {
 		allow:  true,
 	}
 	attribution := &config.Attribution{TrailerStyle: config.TrailerStyleNone}
-	tool := NewBashTool(perms, workingDir, config.ToolBash{}, attribution, "test-model", nil)
+	tool := NewBashTool(perms, workingDir, config.ToolBash{}, attribution, "test-model", nil, false)
 
 	// Plain ls should NOT trigger permission check.
 	resp := runBashToolWithPerms(t, tool, ctx, BashParams{

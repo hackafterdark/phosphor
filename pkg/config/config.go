@@ -1112,8 +1112,59 @@ type Tools struct {
 	Ls   ToolLs   `json:"ls,omitzero"`
 	Grep ToolGrep `json:"grep,omitzero"`
 	Bash ToolBash `json:"bash,omitzero"`
+	Gh   ToolGh   `json:"gh,omitzero"`
+	Git  ToolGit  `json:"git,omitzero"`
 	// WebFetch configures the web_fetch and web_search tools.
 	WebFetch ToolWebFetch `json:"web_fetch,omitzero"`
+}
+
+// Git push policy values for tools.git.push_policy.
+const (
+	// GitPushPolicyPrompt requires interactive approval for every push
+	// and fails closed in headless runs (the default).
+	GitPushPolicyPrompt = "prompt"
+	// GitPushPolicyFeatureBranches lets unattended (YOLO and headless)
+	// runs push non-default branches without a prompt. Default-branch
+	// pushes, workflow-touching pushes, force pushes, and secret-gate
+	// hits remain gated or blocked regardless.
+	GitPushPolicyFeatureBranches = "feature_branches"
+)
+
+// ToolGit holds configuration for the mediated git tool's approval
+// posture.
+type ToolGit struct {
+	// PushPolicy selects how git push is approved. "prompt" (default)
+	// requires interactive approval for every push and fails closed in
+	// headless runs. "feature_branches" additionally allows unattended
+	// pushes to non-default branches; default-branch pushes and
+	// workflow-touching pushes stay gated. Workspace files may not widen
+	// this past the operator's configured value.
+	PushPolicy string `json:"push_policy,omitempty" jsonschema:"description=Approval posture for git push: 'prompt' (default, always interactive) or 'feature_branches' (unattended pushes to non-default branches allowed). enum=prompt,enum=feature_branches."`
+}
+
+// GitPushPolicy returns the effective push policy, defaulting to
+// "prompt" when unset or unrecognized.
+func (t ToolGit) GitPushPolicy() string {
+	switch t.PushPolicy {
+	case GitPushPolicyFeatureBranches:
+		return GitPushPolicyFeatureBranches
+	default:
+		return GitPushPolicyPrompt
+	}
+}
+
+// ToolGh holds configuration for the mediated gh tool's credential
+// posture.
+type ToolGh struct {
+	// TokenEnv names an environment variable holding a repo-scoped
+	// fine-grained personal access token. When set and the variable is
+	// populated, its value is injected as GH_TOKEN into the host-side gh
+	// subprocess and GITHUB_TOKEN is stripped from that subprocess, so
+	// the override unambiguously selects the credential. The token value
+	// itself lives in the environment, never in the config file, and is
+	// never logged or returned to the model. When unset or empty, gh
+	// falls back to host authentication (gh auth login).
+	TokenEnv string `json:"token_env,omitempty" jsonschema:"description=Name of an environment variable holding a repo-scoped fine-grained PAT injected as GH_TOKEN into host-side gh calls."`
 }
 
 // ToolWebFetch holds configuration for the web_fetch and web_search tools.
@@ -2051,6 +2102,8 @@ func allToolNames() []string {
 		"lsp_restart",
 		"fetch",
 		"agentic_fetch",
+		"git",
+		"gh",
 		"glob",
 		"grep",
 		"scan_secrets",

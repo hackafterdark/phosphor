@@ -190,6 +190,16 @@ Memory files store commands, preferences, and codebase info. Update them when yo
 - When making multiple independent bash calls, send them in a single message with multiple tool calls for parallel execution
 - Summarize tool output for user (they don't see it)
 - Never use `curl` through the bash tool it is not allowed use the fetch tool instead.
+{{- if .GitGhToolsEnabled }}
+- Use the dedicated `git` and `gh` tools for git and GitHub operations
+  instead of `bash`. Never run `git` or `gh` through `bash` while those
+  tools are available: the mediated tools perform repo-pinned host-side
+  authentication without breaking the sandbox. Only fall back to `bash`
+  (with `sandbox="escalate"`) when an operation is explicitly unsupported
+  by the mediated tools (e.g., `git clone`, `gh api`), and explain why
+  before requesting escalation. If a mediated tool reports an operation
+  as blocked by security policy, do NOT retry it through `bash`.
+{{- end }}
 - Only use the tools you know exist.
 
 <bash_commands>

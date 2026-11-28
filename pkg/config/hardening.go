@@ -177,6 +177,14 @@ func hardenAgainstWorkspaceOverrides(cfg, floor *Config) int {
 		"tools.bash.allowed_env", shell.SafeDefaultEnv(), revert,
 	)
 
+	// Git push policy is operator-floored: "prompt" is stricter than
+	// "feature_branches", so a workspace may never widen the policy past
+	// the trusted baseline.
+	if gitPushPolicyRank(cfg.Tools.Git.GitPushPolicy()) < gitPushPolicyRank(floor.Tools.Git.GitPushPolicy()) {
+		cfg.Tools.Git.PushPolicy = floor.Tools.Git.PushPolicy
+		revert("tools.git.push_policy", "workspace attempted to loosen the git push policy")
+	}
+
 	// Web tools.
 	if !floor.Tools.WebFetch.AllowRawIPs && cfg.Tools.WebFetch.AllowRawIPs {
 		cfg.Tools.WebFetch.AllowRawIPs = false
@@ -255,6 +263,18 @@ func noBroadenAllowList(current, floor []string, name string, defaultFloor []str
 		return out
 	}
 	return current
+}
+
+// gitPushPolicyRank orders push policies by strictness: higher is
+// stricter/safer. Unknown values rank at the strictest level via the
+// getter's default, so this map only needs the recognized values.
+func gitPushPolicyRank(policy string) int {
+	switch policy {
+	case GitPushPolicyFeatureBranches:
+		return 0
+	default:
+		return 1
+	}
 }
 
 func plural(items []string) string {

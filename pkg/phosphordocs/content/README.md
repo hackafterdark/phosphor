@@ -64,6 +64,7 @@ Search it with the `phosphor_docs` tool, or open a file below with the
 - [Structural Search Language Configuration](phosphor://docs/structural_search/CONFIGURATION.md)
 - [Structural Search Language Notes](phosphor://docs/structural_search/LANGUAGE_NOTES.md)
 - [Tree-Sitter Structural Search](phosphor://docs/structural_search/README.md)
+- [Mediated `git` and `gh` Tools](phosphor://docs/tools/GIT_GH_MEDIATION.md)
 - [Agent Tools Overview](phosphor://docs/tools/OVERVIEW.md)
 - [Scan Secrets](phosphor://docs/tools/SCAN_SECRETS.md)
 - [Semantic Search](phosphor://docs/tools/SEMANTIC_SEARCH.md)

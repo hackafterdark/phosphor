@@ -190,6 +190,8 @@ completely hidden from the agent — it will not know they exist.
 ```
 
 To disable tools exposed by MCP servers, see [Disabling MCP Tools](#disabling-mcp-tools).
+The mediated `git` and `gh` tools are enabled by default and can be turned
+off the same way — see [Mediated `git` and `gh` Tools](../tools/GIT_GH_MEDIATION.md).
 
 ---
 

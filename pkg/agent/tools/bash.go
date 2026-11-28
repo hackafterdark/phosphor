@@ -81,6 +81,7 @@ type bashDescriptionData struct {
 	ModelID         string
 	RgAvailable     bool
 	GhAvailable     bool
+	RepoTooling     bool
 	WorkspaceRoot   string
 	SandboxMode     string
 }
@@ -313,7 +314,7 @@ func appendSandboxGuidance(stdout string, exitCode int, sandboxActive, escalated
 	return stdout + "\n\n" + sandboxDenialGuidance
 }
 
-func bashDescription(workspaceRoot string, cfg config.ToolBash, attribution *config.Attribution, modelID string) string {
+func bashDescription(workspaceRoot string, cfg config.ToolBash, attribution *config.Attribution, modelID string, repoTooling bool) string {
 	bannedCommandsStr := strings.Join(effectiveBannedCommands(cfg), ", ")
 	var attr config.Attribution
 	if attribution != nil {
@@ -327,6 +328,7 @@ func bashDescription(workspaceRoot string, cfg config.ToolBash, attribution *con
 		ModelID:         modelID,
 		RgAvailable:     getRg() != "",
 		GhAvailable:     ghAvailable,
+		RepoTooling:     repoTooling,
 		WorkspaceRoot:   workspaceRoot,
 		SandboxMode:     cfg.BashSandboxMode(),
 	}); err != nil {
@@ -411,10 +413,10 @@ func blockFuncs(ctx context.Context, cfg config.ToolBash) []shell.BlockFunc {
 	return funcs
 }
 
-func NewBashTool(permissions permission.Service, workingDir string, bashCfg config.ToolBash, attribution *config.Attribution, modelID string, policy *Policy) fantasy.AgentTool {
+func NewBashTool(permissions permission.Service, workingDir string, bashCfg config.ToolBash, attribution *config.Attribution, modelID string, policy *Policy, repoTooling bool) fantasy.AgentTool {
 	return fantasy.NewAgentTool(
 		BashToolName,
-		string(bashDescription(workingDir, bashCfg, attribution, modelID)),
+		string(bashDescription(workingDir, bashCfg, attribution, modelID, repoTooling)),
 		func(ctx context.Context, params BashParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {
 			ctx, span := otel.StartSpan(ctx, "execute_tool bash")
 			defer span.End()

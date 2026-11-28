@@ -62,10 +62,10 @@ func TestBashDescriptionSandboxGuidanceGated(t *testing.T) {
 	t.Parallel()
 
 	// The escalation contract is only advertised when the sandbox is on.
-	off := bashDescription("/ws", config.ToolBash{SandboxMode: "off"}, nil, "test-model")
+	off := bashDescription("/ws", config.ToolBash{SandboxMode: "off"}, nil, "test-model", false)
 	require.NotContains(t, off, "sandbox=\"escalate\"")
 
-	on := bashDescription("/ws", config.ToolBash{SandboxMode: "workspace"}, nil, "test-model")
+	on := bashDescription("/ws", config.ToolBash{SandboxMode: "workspace"}, nil, "test-model", false)
 	require.Contains(t, on, "sandbox=\"escalate\"")
 	require.True(t, strings.Contains(on, "never request escalation preemptively"))
 }

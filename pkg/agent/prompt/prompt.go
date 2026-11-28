@@ -61,6 +61,7 @@ type PromptDat struct {
 	AgentConfig               *config.AgentConfig
 	WorkingDir                string
 	IsGitRepo                 bool
+	GitGhToolsEnabled         bool
 	Platform                  string
 	Date                      string
 	GitStatus                 string
@@ -478,6 +479,7 @@ func (p *Prompt) promptData(ctx context.Context, provider, model string, store *
 		AgentConfig:               agentCfg,
 		WorkingDir:                filepath.ToSlash(workingDir),
 		IsGitRepo:                 isGit,
+		GitGhToolsEnabled:         gitGhToolsEnabled(cfg, store.WorkingDir()),
 		Platform:                  platform,
 		Date:                      p.now().Format("1/2/2006"),
 		AvailSkillXML:             availSkillXML,
@@ -506,6 +508,22 @@ func (p *Prompt) promptData(ctx context.Context, provider, model string, store *
 func isGitRepo(dir string) bool {
 	_, err := os.Stat(filepath.Join(dir, ".git"))
 	return err == nil
+}
+
+// gitGhToolsEnabled reports whether the mediated git and gh tools reach
+// the agent in this workspace, mirroring the coordinator's registration
+// rules. The system prompt's tool-preference guidance is conditioned on
+// this so the model is never told to prefer tools it cannot see.
+func gitGhToolsEnabled(cfg *config.Config, workingDir string) bool {
+	if !config.WorkspaceToolingAllowed(workingDir) {
+		return false
+	}
+	for _, name := range cfg.Options.DisabledTools {
+		if name == "git" || name == "gh" {
+			return false
+		}
+	}
+	return true
 }
 
 func getGitStatus(ctx context.Context, dir string) (string, error) {

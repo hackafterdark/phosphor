@@ -601,3 +601,31 @@ func TestHarden_WorkspaceWriteUsesTrustedDataDirectory(t *testing.T) {
 	require.Equal(t, filepath.Join(want, appName+".json"), reloaded,
 		"reload must keep workspace-scoped reads and writes on the trusted file")
 }
+
+func TestHarden_WorkspaceCannotWidenGitPushPolicy(t *testing.T) {
+	// The operator's "prompt" baseline can never be widened to
+	// "feature_branches" by a workspace file.
+	floor := &Config{}
+	floor.setDefaults(t.TempDir(), "")
+	floor.Tools.Git.PushPolicy = GitPushPolicyPrompt
+
+	workspace := mustConfig(t, `{"tools":{"git":{"push_policy":"feature_branches"}}}`)
+	n := hardenAgainstWorkspaceOverrides(workspace, floor)
+	require.Greater(t, n, 0, "expected the push policy to be reverted")
+	require.Equal(t, GitPushPolicyPrompt, workspace.Tools.Git.GitPushPolicy())
+
+	// An unset operator baseline acts as the strict default: the policy
+	// itself defaults to "prompt", so a workspace cannot widen past it
+	// either. A workspace may only tighten, never widen.
+	floor2 := &Config{}
+	floor2.setDefaults(t.TempDir(), "")
+	workspace2 := mustConfig(t, `{"tools":{"git":{"push_policy":"feature_branches"}}}`)
+	hardenAgainstWorkspaceOverrides(workspace2, floor2)
+	require.Equal(t, GitPushPolicyPrompt, workspace2.Tools.Git.GitPushPolicy())
+
+	floor3 := &Config{}
+	floor3.Tools.Git.PushPolicy = GitPushPolicyFeatureBranches
+	workspace3 := mustConfig(t, `{"tools":{"git":{"push_policy":"prompt"}}}`)
+	hardenAgainstWorkspaceOverrides(workspace3, floor3)
+	require.Equal(t, GitPushPolicyPrompt, workspace3.Tools.Git.GitPushPolicy())
+}
